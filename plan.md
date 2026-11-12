@@ -4,7 +4,9 @@ This plan covers two things: rebuilding the existing Kotlin POS in React Native 
 
 It is based on a full read of the old app (`arossmanalo/Laundry-Pos`, commit `7e6bcf4`, about 5,500 lines of Kotlin) and the two draft files in this repo (`machine_pulser/machine_pulser.ino`, `ArduinoPulser.kt`).
 
-Nothing here is built yet. Items marked **Decision** are choices I made that you can overrule; section 11 lists the questions only you can answer.
+Nothing here is built yet. Items marked **Decision** are choices I made that you can overrule; section 11 records the answers you gave on 2026-11-12 and the one question still open.
+
+**Change from the old app:** the new app sells one service only, Wash-Dry-Fold. `WASH` and `WASH_DRY` are removed. Section 1 still describes all three because that is what the old app does and what old data contains.
 
 ---
 
@@ -69,7 +71,8 @@ Roles are `OWNER`, `ADMIN`, `EMPLOYEE`. A low-stock alert pops up once after log
 | Money stored as floating point. | Integer centavos everywhere; format only at display. |
 | Add-ons stored as one text string (`"Fabcon x2"`). | `order_items` table with item, quantity, unit price. |
 | Payments are not recorded individually; a later payment overwrites the channel and GCash reference of the earlier one. | `payments` table, one row per payment. |
-| Revenue reports count money by the order's date, not the date it was paid. | See question Q5. |
+| Revenue reports count money by the order's date, not the date it was paid. | Revenue is counted on the day each payment was received. Wherever a payment appears, the order's placed date is shown beside it (section 4.1). |
+| Three services, each with its own price, on/off switch and a "default service" setting. | One service, Wash-Dry-Fold, with one price per load. The service picker, availability switches and default-service setting are removed. |
 | Next ID is found by text sort, which breaks after 9999 (`T10000` sorts before `T9999`). | Numeric sequence column; display ID is formatted from it. |
 | Deleting an order hard-deletes it and does not undo loyalty or stock. | Void instead of delete (see 5.6). Voiding reverses loyalty and add-on stock. |
 | Low-stock check uses `<` in one place and `<=` in another. | One rule: stock ≤ threshold. |
@@ -167,11 +170,21 @@ All money is integer centavos. All timestamps are epoch milliseconds. IDs keep t
 
 - `order_items`: orderId, inventoryItemId, nameSnapshot, quantity, unitPriceCentavos
 - `payments`: id, orderId, amountCentavos, channel, gcashReference, cashReceivedCentavos, receivedAt, receivedByUserId
-- `settings`: key, value (prices, enabled services, default service, statuses, printer, machine settings)
+- `settings`: key, value (price per load, statuses, printer, receipt text, machine settings)
 - `machines`: id, name, type (`WASHER` or `DRYER`), hardwareChannel (the `n` in `P<n>`), enabled, sortOrder
 - `machine_unlocks`: see 5.5
 
 `amountPaid` and `outstandingBalance` are no longer stored columns; they are computed from `payments`. This removes the class of bug where they drift apart.
+
+`orders.service` is kept as a column even though new orders are always `WASH_DRY_FOLD`, because imported orders from the old app can be `WASH` or `WASH_DRY`. Old services are read-only history: they show in lists and reports but cannot be chosen for a new order.
+
+### 4.1 Reporting dates
+
+- Revenue belongs to the day a payment was received (`payments.receivedAt`), not the day the order was placed.
+- Every place that lists a payment or a paid order shows both dates: "Paid 14 Nov · Placed 12 Nov". When the two are the same day, it shows once.
+- Report rows where the payment day differs from the placed day carry a small "placed earlier" marker, so a payment for an older order is not mistaken for a new sale.
+- Order counts and load counts stay on the placed date, since that is when the work came in. Report headings say which date each figure uses.
+- Expect historical totals to differ from the old app for periods with pay-later or part-paid orders.
 
 ---
 
@@ -214,16 +227,12 @@ No sketch change is required for this phase. The sketch already supports everyth
 
 "An order exists" is not enough on its own: one order could be used to unlock every machine all day. The rule needs a quantity.
 
-**Decision:** each order carries an unlock allowance derived from what was sold.
-
-| Service | Washer unlocks | Dryer unlocks |
-|---|---|---|
-| `WASH` | loadCount | 0 |
-| `WASH_DRY` | loadCount | loadCount |
-| `WASH_DRY_FOLD` | loadCount | loadCount |
+**Confirmed:** each load on an order allows one washer unlock and one dryer unlock. An order for 3 loads can unlock a washer 3 times and a dryer 3 times.
 
 - A free promo load still counts as a load.
-- An unlock is allowed when: the order exists and is not voided, the order's status is not `COMPLETED` or `AUDITED`, the machine is enabled and its type has allowance left on that order, the controller is `ready`, and the payment condition in Q1 is met.
+- Payment is not a condition. A pay-later or part-paid order unlocks the same as a paid one.
+- An unlock is allowed when: the order exists and is not voided, the order's status is not `COMPLETED` or `AUDITED`, the machine is enabled and its type has allowance left on that order, and the controller is `ready`.
+- Orders imported from the old app with `WASH` or `WASH_DRY` get no allowance. They are history, not live work.
 - Allowance is used up only when the Arduino replies `OK`. A timeout does not use allowance but is logged.
 - Anything outside the allowance needs the owner PIN (5.4).
 - `unlockPolicy.ts` returns either "allowed" or a specific reason ("No dryer unlocks left on this order"), and the screen shows that reason.
@@ -257,7 +266,7 @@ No sketch change is required for this phase. The sketch already supports everyth
 ### 5.6 Closing the obvious loopholes
 
 - **Create order, unlock, delete order.** Orders are voided, never deleted. A voided order keeps its unlock log entries, and those entries are flagged in the owner view.
-- **Fake pay-later order.** Covered by Q1, and unpaid orders with unlocks are flagged in the owner view.
+- **Fake pay-later order.** Unpaid orders can unlock, by your decision, so this stays possible. The control is review: unpaid orders with unlocks are flagged in the owner view, and an order cannot be removed, only voided by an admin or the owner with a reason.
 - **Unplugging the Arduino.** Locks are fail-secure (locked without power), so this gains nothing. Disconnects are visible in the status chip.
 - **Machine settings.** Adding machines, changing channels, test pulses and the "simulate hardware" switch are owner-only.
 
@@ -268,7 +277,7 @@ Limits to be honest about: the app cannot know whether a door actually opened or
 - **Machines tab** (everyone): grid of machines by type, showing name, last unlock time and order, and connection status. Tapping a machine offers "Unlock for order…" (lists open orders with allowance left for that machine type) and "Override".
 - **Order details**: a Machines section showing allowance used and remaining ("Washer 1 of 2, Dryer 0 of 2"), an "Unlock machine" button that lists free machines of the needed type, and that order's unlock history.
 - **After creating an order**: the confirmation offers "Unlock a washer now" so the common path is two taps.
-- **Settings → Machines** (owner): machine list editor, connection status and reconnect, test pulse per machine (logged as `TEST`), simulate-hardware switch, change owner PIN, payment condition from Q1.
+- **Settings → Machines** (owner): machine list editor, connection status and reconnect, test pulse per machine (logged as `TEST`), simulate-hardware switch, change owner PIN.
 
 ---
 
@@ -281,7 +290,8 @@ The old app's "Export Data" produces one JSON file with `customers`, `expenses`,
 - The old add-ons text is kept as a note on the order. It cannot be reliably split back into items.
 - Normalise channel and status text. Keep original IDs.
 - Users are imported without passwords; the owner sets new passwords after import. (The old file contains them in plain text, and they should not be carried forward.)
-- Prices, enabled services and custom statuses are not in the old file and are re-entered in Settings once.
+- Old `WASH` and `WASH_DRY` orders are imported with their original service and totals, as read-only history.
+- The price per load and custom statuses are not in the old file and are re-entered in Settings once.
 - The import runs in a single database transaction and reports counts before committing, so a bad file changes nothing.
 
 The new app's own backup format is versioned and includes every table, including machines and the unlock log.
@@ -311,7 +321,7 @@ Done when: unit tests pass and cover every rule in 1.2, using values checked aga
 1. First-run setup (owner account + PIN), login, session restore, logout.
 2. Tab shell with role-based tabs; New Order button in the app bar.
 3. Customers (list, search, add, edit, delete, promo progress, history).
-4. New Order form (customer search with quick-create, service, weight and loads, add-ons, promo banner, payment method/channel, GCash reference, cash change, owner backdating).
+4. New Order form (customer search with quick-create, weight and loads, add-ons, promo banner, payment method/channel, GCash reference, cash change, owner backdating).
 5. Transactions list with all filters; order details with status update and receive payment; void with reason.
 6. Dashboard.
 
@@ -321,14 +331,14 @@ Done when: a complete order can be taken, paid in two parts, moved through statu
 1. Inventory (add, restock, consume, auto-consume, add-on price, low-stock badge and login alert).
 2. Staff management with the owner/admin role rules.
 3. Expenses and Reports (Summary, Yearly, Full Analysis, share as text).
-4. Settings (prices, service availability, default service, statuses).
+4. Settings (price per load, statuses, receipt header and footer).
 5. Receipt printing wired to order creation and reprint; printer selection.
 6. Backup export/import and legacy import.
 
 Done when: every row in table 1.1 works on the tablet, and a real export from the old app imports cleanly with matching totals.
 
 ### Phase 4: Machine integration (LED prototype)
-1. `machines` and `machine_unlocks` tables; default seed of six machines on channels 1–6 (types editable).
+1. `machines` and `machine_unlocks` tables. Before seeding, settle the open question in section 11: how many washers and dryers, and which channel each is on. Until then the table starts empty and machines are added in Settings.
 2. `MachineController` interface, `protocol.ts`, `MockMachineController`, with tests.
 3. `UsbSerialMachineController` on the module from Phase 0, with reply reading, `READY` wait, reconnect and command queue.
 4. `unlockPolicy` and `unlockService` with tests for every allow/deny case in 5.3.
@@ -336,7 +346,7 @@ Done when: every row in table 1.1 works on the tablet, and a real export from th
 6. Machines tab, order-details section, post-order shortcut, Settings → Machines, owner log view.
 
 Done when, on the tablet with the LED board:
-- An order for 2 loads of `WASH_DRY` lights exactly 2 washer LEDs and 2 dryer LEDs, then refuses a third of either with a clear message.
+- An unpaid (pay-later) order for 2 loads lights exactly 2 washer LEDs and 2 dryer LEDs, then refuses a third of either with a clear message.
 - With no order selected, nothing can be pulsed without the owner PIN.
 - An override with the correct PIN pulses and is logged with its reason; a wrong PIN is logged and five in a row locks overrides.
 - Unplugging the cable shows "disconnected" and unlock attempts are logged as `NOT_CONNECTED`; plugging it back reconnects without restarting the app.
@@ -359,7 +369,7 @@ Done when: the shop runs a full day on the new app only.
 ## 8. Testing approach
 
 - **Domain rules:** unit tests, written before the screens, with expected values taken from the old code's behaviour.
-- **Unlock rules:** table-driven tests over service × loads × prior unlocks × order state × payment state.
+- **Unlock rules:** table-driven tests over loads × machine type × prior unlocks × order state, including a check that payment state makes no difference.
 - **Protocol:** tests for encoding and for parsing `READY`, `OK P3`, `ERR x`, partial lines and noise.
 - **Services:** run against an in-memory SQLite database with `MockMachineController` and `MockReceiptPrinter`.
 - **Screens:** a few flow tests (create order, receive payment, unlock) with React Native Testing Library.
@@ -389,18 +399,23 @@ Done when: the shop runs a full day on the new app only.
 
 ---
 
-## 11. Questions for you
+## 11. Decisions and open questions
 
-Each has a default I will use if you do not answer.
+Answered on 2026-11-12:
 
-| # | Question | Default |
+| # | Topic | Decision |
 |---|---|---|
-| Q1 | Must an order be paid before a machine can be unlocked? `CLAUDE.md` says "paid customer orders", but the current app allows Pay Later and down payments. Options: any order / some payment made / fully paid. | Any existing order can unlock; unlocks on unpaid orders are flagged for the owner. Changeable in Settings. |
-| Q2 | How many washers and dryers are there, and which is on which pin? The sketch has six channels. | Six machines, 1–3 washers and 4–6 dryers, editable in Settings. |
-| Q3 | Is the unlock allowance in 5.3 right: one washer unlock per load, plus one dryer unlock per load for the two dry services? Does one load ever need two dryer cycles as a normal thing? | As written; extra cycles go through the owner PIN. |
-| Q4 | Who may void an order: admin and owner (as with delete today), or owner only? | Admin and owner, with a required reason. |
-| Q5 | Should revenue reports count money on the day it was paid, or on the day the order was placed (the current behaviour)? | Day it was paid. This will make some historical totals differ from the old app. |
-| Q6 | The old app has a background sync to a server at a LAN address. Is that server in use? | Not in use; sync is dropped. |
-| Q7 | Should `ADMIN` be able to use the override, or only the owner PIN? | Owner PIN only. |
-| Q8 | Is the GCash QR in the old app a placeholder (`dummy_qr`)? If there is a real one, I need the image. | Placeholder kept; replaceable in Settings. |
-| Q9 | Shop name and footer on the receipt: keep "AR LAUNDRY SHOP" and the current footer lines? | Keep, editable in Settings. |
+| Q1 | Payment before unlock | Not required. Any existing order can unlock, paid or not. Unlocks on unpaid orders are flagged for the owner. |
+| Q3 | Services and allowance | Wash-Dry-Fold is the only service. Each load allows one washer unlock and one dryer unlock. Extra cycles go through the owner PIN. |
+| Q4 | Who may void an order | Admin and owner, with a required reason. |
+| Q5 | Revenue date | Counted on the day it was paid, with the placed date shown alongside (section 4.1). |
+| Q6 | Background sync | Not in use. Dropped. |
+| Q7 | Override | Owner PIN only. Admins cannot override. |
+| Q8 | GCash QR | Placeholder image kept for now. |
+| Q9 | Receipt text | Keep "AR LAUNDRY SHOP" and the current footer. |
+
+Still open:
+
+| # | Question | When it is needed |
+|---|---|---|
+| Q2 | How many washers and dryers are there, and which Arduino channel is each on? | Start of Phase 4. Nothing before that depends on it. |
