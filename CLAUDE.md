@@ -4,7 +4,7 @@ POS app for our family laundry shop. It currently runs as a Kotlin Android app o
 
 ## Working rules
 
-- Commit after each milestone so progress isn't lost mid-task.
+- Commit after each milestone so progress isn't lost mid-task, and push to `origin` (https://github.com/arossmanalo/Machine-Integrated-Point-of-Sale-System) every time you commit.
 - Do not add Claude as an author or co-author in commits (no `Co-Authored-By` lines, no "Generated with Claude" footers).
 - The old Kotlin code is messy. Treat it as a reference for what the app does (features, business rules, data), not for how it should be built.
 
