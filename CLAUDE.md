@@ -38,6 +38,7 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 
 - `machine_pulser/machine_pulser.ino`: the Arduino sketch. It's non-blocking, so several machines can pulse at once.
 - `ArduinoPulser.kt`: the Kotlin USB client built on `usb-serial-for-android` (mik3y). It handles connect, USB permission, and `pulse(n)`.
+- Both files are working drafts, not final. They can still be changed (including the serial protocol) if the design needs it; if the protocol changes, update the sketch, the app client, and this file together.
 
 ### React Native notes
 
