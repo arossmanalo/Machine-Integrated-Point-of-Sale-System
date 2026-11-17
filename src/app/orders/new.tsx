@@ -52,7 +52,6 @@ export default function NewOrder() {
   const [addingCustomer, setAddingCustomer] = useState(false);
   const [weightText, setWeightText] = useState('');
   const [loads, setLoads] = useState(1);
-  const [loadsEdited, setLoadsEdited] = useState(false);
   const [addOns, setAddOns] = useState<Record<string, number>>({});
   const [showAddOns, setShowAddOns] = useState(false);
   const [method, setMethod] = useState<PaymentMethod>('FULL_PAYMENT');
@@ -86,7 +85,7 @@ export default function NewOrder() {
 
   function changeWeight(text: string) {
     setWeightText(text);
-    if (!loadsEdited) setLoads(loadRangeForWeight(parseWeight(text)).recommended);
+    setLoads(loadRangeForWeight(parseWeight(text)).recommended);
   }
 
   async function save() {
@@ -192,18 +191,15 @@ export default function NewOrder() {
               <Stepper
                 label="loads"
                 value={loads}
-                min={1}
-                max={50}
-                onChange={(value) => {
-                  setLoads(value);
-                  setLoadsEdited(true);
-                }}
+                min={range.min}
+                max={range.max}
+                onChange={setLoads}
               />
               <Text variant="caption" tone="muted">
                 {weight > 0
                   ? range.min === range.max
-                    ? `${range.min} load${range.min === 1 ? '' : 's'} suggested for ${weight} kg`
-                    : `${range.min} to ${range.max} loads suggested for ${weight} kg`
+                    ? `${range.min} load${range.min === 1 ? '' : 's'} for ${weight} kg`
+                    : `${range.min} ${range.max - range.min === 1 ? 'or' : 'to'} ${range.max} loads allowed for ${weight} kg`
                   : 'Up to 8 kg per load'}
               </Text>
             </View>

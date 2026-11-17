@@ -11,7 +11,7 @@ import {
   type PaymentMethod,
 } from '@/domain/payments';
 import { can } from '@/domain/permissions';
-import { computeOrderTotal, CURRENT_SERVICE, type OrderTotal } from '@/domain/pricing';
+import { computeOrderTotal, CURRENT_SERVICE, loadRangeForWeight, type OrderTotal } from '@/domain/pricing';
 import { INITIAL_STATUS, normalizeStatus, selectableStatuses } from '@/domain/statuses';
 import {
   customers,
@@ -148,6 +148,16 @@ export function createOrder(ctx: ServiceContext, actor: Actor, input: NewOrderIn
   }
   if (!Number.isInteger(input.loads) || input.loads < 1 || input.loads > MAX_LOADS) {
     throw new UserFacingError(`Loads must be a whole number from 1 to ${MAX_LOADS}.`);
+  }
+  const range = loadRangeForWeight(input.weightKg);
+  if (input.loads < range.min || input.loads > range.max) {
+    const allowed =
+      range.min === range.max
+        ? `${range.min}`
+        : `${range.min} ${range.max - range.min === 1 ? 'or' : 'to'} ${range.max}`;
+    throw new UserFacingError(
+      `${input.weightKg} kg is ${allowed} load${range.max === 1 ? '' : 's'}. A load is 8 kg, up to 10 kg at most.`,
+    );
   }
   const now = ctx.now();
   let placedAt = now;

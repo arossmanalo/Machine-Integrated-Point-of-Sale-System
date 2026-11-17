@@ -75,10 +75,18 @@ describe('createOrder', () => {
     expect(stock[detergent]).toBe(18);
   });
 
+  it('allows up to 2 kg over per load, but no fewer or extra loads', () => {
+    const { ctx, order } = setup();
+    expect(createOrder(ctx, testEmployee, order({ weightKg: 10, loads: 1 })).loadCount).toBe(1);
+    expect(createOrder(ctx, testEmployee, order({ weightKg: 10, loads: 2 })).loadCount).toBe(2);
+    expect(createOrder(ctx, testEmployee, order({ weightKg: 18, loads: 2 })).loadCount).toBe(2);
+    expect(() => createOrder(ctx, testEmployee, order({ weightKg: 10.5, loads: 1 }))).toThrow('2 loads');
+  });
+
   it('uses a new price per load when the setting changes', () => {
     const { ctx, order } = setup();
     setSetting(ctx.db, 'pricePerLoad', 25000);
-    expect(createOrder(ctx, testEmployee, order({ loads: 1 })).total).toBe(25000);
+    expect(createOrder(ctx, testEmployee, order({ loads: 1, weightKg: 8 })).total).toBe(25000);
   });
 
   it('applies the 10+1 promo automatically and spends 10 loyalty loads', () => {
@@ -105,6 +113,10 @@ describe('createOrder', () => {
     const { ctx, order, fabcon } = setup();
     expect(() => createOrder(ctx, testEmployee, order({ weightKg: 0 }))).toThrow('weight');
     expect(() => createOrder(ctx, testEmployee, order({ loads: 0 }))).toThrow('Loads');
+    expect(() => createOrder(ctx, testEmployee, order({ weightKg: 1, loads: 8 }))).toThrow('1 kg is 1 load.');
+    expect(() => createOrder(ctx, testEmployee, order({ weightKg: 21, loads: 2 }))).toThrow('21 kg is 3 loads');
+    expect(() => createOrder(ctx, testEmployee, order({ weightKg: 18, loads: 4 }))).toThrow('2 or 3 loads');
+    expect(() => createOrder(ctx, testEmployee, order({ weightKg: 80, loads: 11 }))).toThrow('8 to 10 loads');
     expect(() => createOrder(ctx, testEmployee, order({ channel: 'GCASH' }))).toThrow('GCash');
     expect(() =>
       createOrder(ctx, testEmployee, order({ paymentMethod: 'DOWN_PAYMENT', downPayment: 0 })),
