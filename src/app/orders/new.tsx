@@ -204,7 +204,14 @@ export default function NewOrder() {
               </Text>
             </View>
           </Row>
-          {addOnItems.length > 0 && (
+          <Text variant="label">Add-ons</Text>
+          {addOnItems.length === 0 ? (
+            <Text tone="muted">
+              {can.manageInventoryItems(actor.role)
+                ? 'None for sale yet. In Stock, give an item (fabric softener, detergent, plastic bag) an add-on price above ₱0 and it appears here.'
+                : 'None for sale yet. Ask an admin to set add-on prices in Stock.'}
+            </Text>
+          ) : (
             <Panel>
               {addOnItems.map((item, index) => (
                 <ListRow
