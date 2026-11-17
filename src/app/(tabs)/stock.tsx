@@ -45,7 +45,7 @@ export default function Stock() {
               title={items.length === 0 ? 'No stock items yet' : 'Nothing matches'}
               body={
                 items.length === 0
-                  ? 'Add detergent, fabric softener and other supplies to track them. Items with an add-on price can be sold with orders.'
+                  ? 'Add detergent, fabric softener and other supplies to track them. Turn on "Sell as an add-on" for items staff can add to orders.'
                   : 'Try another name.'
               }
             />
@@ -57,7 +57,7 @@ export default function Stock() {
                 subtitle={[
                   `${item.id}`,
                   item.autoConsume ? '1 used per load' : null,
-                  item.addOnPrice > 0 ? `Add-on ${formatPeso(item.addOnPrice)}` : null,
+                  item.isAddOn ? `Add-on ${formatPeso(item.addOnPrice)}` : null,
                 ]
                   .filter(Boolean)
                   .join(' · ')}
@@ -152,6 +152,7 @@ function ItemDialog({ item, onClose }: { item: InventoryItemRow | null; onClose:
   const [thresholdText, setThresholdText] = useState(String(item?.lowStockThreshold ?? 5));
   const [priceText, setPriceText] = useState(item ? centavosToInput(item.addOnPrice) : '0');
   const [autoConsume, setAutoConsume] = useState(item?.autoConsume ?? false);
+  const [isAddOn, setIsAddOn] = useState(item?.isAddOn ?? false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const price = parsePesoInput(priceText);
 
@@ -162,7 +163,8 @@ function ItemDialog({ item, onClose }: { item: InventoryItemRow | null; onClose:
       currentStock: Number(stockText),
       lowStockThreshold: Number(thresholdText),
       autoConsume,
-      addOnPrice: price ?? -1,
+      isAddOn,
+      addOnPrice: isAddOn ? (price ?? -1) : (item?.addOnPrice ?? 0),
     };
     const result = await action.run((c) => {
       if (item) updateInventoryItem(c, item.id, input);
@@ -196,7 +198,7 @@ function ItemDialog({ item, onClose }: { item: InventoryItemRow | null; onClose:
       }
     >
       <TextField label="Name" value={name} onChangeText={setName} autoCapitalize="words" />
-      <Row wrap>
+      <Row wrap style={{ alignItems: 'flex-start' }}>
         <TextField label="In stock" value={stockText} onChangeText={setStockText} keyboardType="number-pad" style={{ flex: 1 }} />
         <TextField label="Unit" value={unit} onChangeText={setUnit} autoCapitalize="none" hint="pcs, L, kg, scoops" style={{ flex: 1 }} />
       </Row>
@@ -207,21 +209,35 @@ function ItemDialog({ item, onClose }: { item: InventoryItemRow | null; onClose:
         keyboardType="number-pad"
         hint="Warn when stock reaches this number."
       />
-      <TextField
-        label="Add-on price"
-        value={priceText}
-        onChangeText={setPriceText}
-        keyboardType="decimal-pad"
-        prefix="₱"
-        hint="Above 0 lets staff add it to orders. 0 keeps it as a supply only."
-        error={price === null ? 'Enter an amount like 15 or 15.50.' : null}
-      />
       <Toggle
         label="Use one per load"
         description="Takes one unit off for every load ordered, such as detergent."
         value={autoConsume}
         onChange={setAutoConsume}
       />
+      <Toggle
+        label="Sell as an add-on"
+        description="Staff can add it to an order from New order. Selling one takes it off stock."
+        value={isAddOn}
+        onChange={setIsAddOn}
+      />
+      {isAddOn && (
+        <TextField
+          label="Add-on price"
+          value={priceText}
+          onChangeText={setPriceText}
+          keyboardType="decimal-pad"
+          prefix="₱"
+          hint="Charged for each one added to an order."
+          error={
+            price === null
+              ? 'Enter an amount like 15 or 15.50.'
+              : price === 0
+                ? 'Set a price above ₱0 to sell it.'
+                : null
+          }
+        />
+      )}
       {confirmRemove && <Notice tone="danger">The item is hidden from stock and add-ons. Past orders keep it.</Notice>}
       {action.error && <Notice tone="danger">{action.error}</Notice>}
     </Dialog>

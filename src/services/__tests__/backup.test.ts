@@ -83,7 +83,8 @@ describe('legacy import', () => {
     expect(summary).toMatchObject({ customers: 2, orders: 2, payments: 2, inventoryItems: 2, expenses: 1, users: 2 });
 
     expect(listExpenses(ctx)[0].cost).toBe(152050);
-    expect(listInventory(ctx).find((i) => i.name === 'Fabcon')?.addOnPrice).toBe(1500);
+    expect(listInventory(ctx).find((i) => i.name === 'Fabcon')).toMatchObject({ addOnPrice: 1500, isAddOn: true });
+    expect(listInventory(ctx).find((i) => i.name === 'Detergent')?.isAddOn).toBe(false);
 
     const first = getOrderDetail(ctx, 'T0001');
     expect(first?.order.total).toBe(47000);
@@ -165,6 +166,18 @@ describe('full backup', () => {
     expect(listUnlocks(fresh, { start: 0, end: Number.MAX_SAFE_INTEGER })).toHaveLength(1);
     expect(getSetting(fresh.db, 'pricePerLoad')).toBe(25000);
     await expect(logIn(fresh, 'Aryl', 'secret123')).resolves.toMatchObject({ role: 'OWNER' });
+  });
+
+  it('treats priced items in a backup from before the add-on switch as add-ons', async () => {
+    const { ctx, owner } = await setup();
+    importLegacyExport(ctx, owner, legacyExport);
+    const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
+    for (const item of backup.tables.inventoryItems) delete item.isAddOn;
+
+    const fresh = createTestContext();
+    restoreBackup(fresh, owner, backup);
+    const flags = Object.fromEntries(listInventory(fresh).map((i) => [i.name, i.isAddOn]));
+    expect(flags).toEqual({ Detergent: false, Fabcon: true });
   });
 
   it('rejects a file with a bad row and leaves data alone', async () => {

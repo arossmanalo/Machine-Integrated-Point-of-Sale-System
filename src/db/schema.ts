@@ -41,6 +41,8 @@ export const inventoryItems = sqliteTable('inventory_items', {
   lowStockThreshold: integer('low_stock_threshold').notNull().default(5),
   unit: text('unit').notNull(),
   autoConsume: bool('auto_consume').notNull().default(false),
+  /** Offered on the New order screen at addOnPrice. */
+  isAddOn: bool('is_add_on').notNull().default(false),
   addOnPrice: integer('add_on_price').notNull().default(0),
   archivedAt: integer('archived_at'),
 });

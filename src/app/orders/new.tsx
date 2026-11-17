@@ -54,6 +54,7 @@ export default function NewOrder() {
   const [loads, setLoads] = useState(1);
   const [loadsEdited, setLoadsEdited] = useState(false);
   const [addOns, setAddOns] = useState<Record<string, number>>({});
+  const [showAddOns, setShowAddOns] = useState(false);
   const [method, setMethod] = useState<PaymentMethod>('FULL_PAYMENT');
   const [channel, setChannel] = useState<PaymentChannel>('CASH');
   const [downText, setDownText] = useState('');
@@ -63,13 +64,16 @@ export default function NewOrder() {
 
   const customers = useData(listCustomers);
   const customer = useData((c) => (customerId ? (getCustomer(c, customerId) ?? null) : null), [customerId]);
-  const addOnItems = useData((c) => listInventory(c).filter((item) => item.addOnPrice > 0));
+  const addOnItems = useData((c) => listInventory(c).filter((item) => item.isAddOn));
   const printingEnabled = useData((c) => getSetting(c.db, 'printingEnabled'));
   const selections = Object.entries(addOns).map(([itemId, quantity]) => ({ itemId, quantity }));
   const quote = useData(
     (c) => quoteOrder(c, customer, loads, selections),
     [customer, loads, JSON.stringify(addOns)],
   );
+
+  const addOnCount = quote.addOnLines.reduce((sum, line) => sum + line.quantity, 0);
+  const addOnSummary = quote.addOnLines.map((line) => `${line.item.name} × ${line.quantity}`).join(', ');
 
   const weight = parseWeight(weightText);
   const range = loadRangeForWeight(weight);
@@ -204,12 +208,25 @@ export default function NewOrder() {
               </Text>
             </View>
           </Row>
-          <Text variant="label">Add-ons</Text>
-          {addOnItems.length === 0 ? (
+          <Row wrap>
+            <Button
+              label={addOnCount > 0 ? `Add-ons (${addOnCount})` : 'Add-ons'}
+              kind="secondary"
+              icon={showAddOns ? 'chevron-up' : 'chevron-down'}
+              onPress={() => setShowAddOns((open) => !open)}
+              accessibilityHint={showAddOns ? 'Hides the add-on list' : 'Shows the add-on list'}
+            />
+            {!showAddOns && addOnCount > 0 && (
+              <Text tone="muted" style={styles.flex}>
+                {addOnSummary}
+              </Text>
+            )}
+          </Row>
+          {!showAddOns ? null : addOnItems.length === 0 ? (
             <Text tone="muted">
               {can.manageInventoryItems(actor.role)
-                ? 'None for sale yet. In Stock, give an item (fabric softener, detergent, plastic bag) an add-on price above ₱0 and it appears here.'
-                : 'None for sale yet. Ask an admin to set add-on prices in Stock.'}
+                ? 'None for sale yet. In Stock, open an item, turn on "Sell as an add-on" and set its price.'
+                : 'None for sale yet. Ask an admin to mark add-ons in Stock.'}
             </Text>
           ) : (
             <Panel>

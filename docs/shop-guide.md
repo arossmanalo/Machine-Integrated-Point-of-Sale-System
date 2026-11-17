@@ -9,7 +9,7 @@
 1. Tap **New order**.
 2. Find the customer by name or phone. If they are new, tap **Add … as a new customer**.
 3. Enter the weight. The app suggests the number of loads (up to 8 kg per load). Change it with − and + if needed.
-4. Add any add-ons (fabric softener and so on).
+4. For add-ons (fabric softener and so on), tap **Add-ons** to open the list and set how many. Only items an admin marked "Sell as an add-on" in Stock, with a price, are listed.
 5. If the customer has 10 or more loads saved up, one load is free. The app does this by itself and shows it.
 6. Choose how they pay: **Full payment**, **Down payment** or **Pay later**. For GCash, type the reference number.
 7. Tap **Save order**. The receipt prints if printing is on.

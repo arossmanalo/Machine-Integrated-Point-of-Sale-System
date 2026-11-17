@@ -50,7 +50,7 @@ Roles are `OWNER`, `ADMIN`, `EMPLOYEE`. A low-stock alert pops up once after log
 
 **Inventory**
 - Items flagged auto-consume lose 1 unit per load on every order (skipped silently if stock is less than the load count).
-- Items with an add-on price above 0 appear as add-ons in the order form; chosen quantities are deducted from stock.
+- Items switched to "Sell as an add-on" (with a price above 0) appear behind the Add-ons button in the order form; chosen quantities are deducted from stock.
 
 **Order statuses**
 - Built in: `PENDING`, `WASHING`, `READY`, `COMPLETED`, `AUDITED` (`AUDITED` selectable by admin/owner only).

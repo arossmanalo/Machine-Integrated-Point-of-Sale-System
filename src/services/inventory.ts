@@ -11,6 +11,7 @@ export interface InventoryInput {
   lowStockThreshold: number;
   unit: string;
   autoConsume: boolean;
+  isAddOn: boolean;
   addOnPrice: number;
 }
 
@@ -24,6 +25,9 @@ function clean(input: InventoryInput): InventoryInput {
   }
   if (!Number.isInteger(input.addOnPrice) || input.addOnPrice < 0) {
     throw new UserFacingError('The add-on price cannot be negative.');
+  }
+  if (input.isAddOn && input.addOnPrice === 0) {
+    throw new UserFacingError('Set an add-on price above ₱0, or turn off "Sell as an add-on".');
   }
   return { ...input, name, unit: input.unit.trim() };
 }

@@ -87,7 +87,7 @@ function resolveAddOns(db: Db, selections: AddOnSelection[]): OrderQuote['addOnL
   const items = db.select().from(inventoryItems).where(inArray(inventoryItems.id, ids)).all();
   return wanted.map((selection) => {
     const item = items.find((i) => i.id === selection.itemId);
-    if (!item || item.archivedAt !== null || item.addOnPrice <= 0) {
+    if (!item || item.archivedAt !== null || !item.isAddOn || item.addOnPrice <= 0) {
       throw new UserFacingError('One of the add-ons is no longer for sale. Remove it and try again.');
     }
     return { item, quantity: selection.quantity };

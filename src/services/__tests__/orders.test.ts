@@ -1,7 +1,7 @@
 import { createTestContext, testEmployee, testOwner } from '@/db/testing';
 
 import { createCustomer, getCustomer } from '../customers';
-import { adjustStock, createInventoryItem, listInventory } from '../inventory';
+import { adjustStock, createInventoryItem, listInventory, updateInventoryItem } from '../inventory';
 import {
   createOrder,
   getOrderDetail,
@@ -23,6 +23,7 @@ function setup() {
     lowStockThreshold: 2,
     unit: 'pcs',
     autoConsume: false,
+    isAddOn: true,
     addOnPrice: 1500,
   });
   const detergent = createInventoryItem(ctx, {
@@ -31,6 +32,7 @@ function setup() {
     lowStockThreshold: 5,
     unit: 'scoops',
     autoConsume: true,
+    isAddOn: false,
     addOnPrice: 0,
   });
   const order = (overrides: Partial<NewOrderInput> = {}): NewOrderInput => ({
@@ -180,6 +182,54 @@ describe('status and void', () => {
     expect(listInventory(ctx).find((i) => i.id === fabcon)?.currentStock).toBe(10);
     expect(getOrderDetail(ctx, created.id)?.order.voidReason).toBe('Entered twice');
     expect(() => updateOrderStatus(ctx, testOwner, created.id, 'READY')).toThrow('voided');
+  });
+});
+
+describe('add-ons', () => {
+  it('only items marked as add-ons can be sold, and they need a price', () => {
+    const { ctx, order, detergent } = setup();
+    const supplyWithPrice = createInventoryItem(ctx, {
+      name: 'Bleach',
+      currentStock: 5,
+      lowStockThreshold: 1,
+      unit: 'pcs',
+      autoConsume: false,
+      isAddOn: false,
+      addOnPrice: 2000,
+    });
+    for (const itemId of [detergent, supplyWithPrice]) {
+      expect(() => createOrder(ctx, testEmployee, order({ addOns: [{ itemId, quantity: 1 }] }))).toThrow(
+        'no longer for sale',
+      );
+    }
+    expect(() =>
+      createInventoryItem(ctx, {
+        name: 'Plastic bag',
+        currentStock: 50,
+        lowStockThreshold: 10,
+        unit: 'pcs',
+        autoConsume: false,
+        isAddOn: true,
+        addOnPrice: 0,
+      }),
+    ).toThrow('above ₱0');
+  });
+
+  it('turning the switch off keeps the price for next time', () => {
+    const { ctx, fabcon, order } = setup();
+    updateInventoryItem(ctx, fabcon, {
+      name: 'Fabcon',
+      currentStock: 10,
+      lowStockThreshold: 2,
+      unit: 'pcs',
+      autoConsume: false,
+      isAddOn: false,
+      addOnPrice: 1500,
+    });
+    expect(listInventory(ctx).find((i) => i.id === fabcon)).toMatchObject({ isAddOn: false, addOnPrice: 1500 });
+    expect(() => createOrder(ctx, testEmployee, order({ addOns: [{ itemId: fabcon, quantity: 1 }] }))).toThrow(
+      'no longer for sale',
+    );
   });
 });
 

@@ -89,9 +89,11 @@ const tableSchemas = {
     lowStockThreshold: int,
     unit: text,
     autoConsume: z.boolean(),
+    // Backups made before the add-on switch existed sold every item priced above 0.
+    isAddOn: z.boolean().optional(),
     addOnPrice: int,
     archivedAt: maybeInt,
-  }),
+  }).transform((item) => ({ ...item, isAddOn: item.isAddOn ?? item.addOnPrice > 0 })),
   orders: z.object({
     id: text,
     customerId: text,
@@ -375,6 +377,7 @@ export function importLegacyExport(
           lowStockThreshold: Math.max(0, item.lowStockThreshold),
           unit: item.unit,
           autoConsume: item.autoConsume,
+          isAddOn: item.addOnPrice > 0,
           addOnPrice: pesosToCentavos(Math.max(0, item.addOnPrice)),
           archivedAt: null,
         })
