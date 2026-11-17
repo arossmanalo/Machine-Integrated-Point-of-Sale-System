@@ -37,8 +37,9 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 ### Existing code
 
 - `machine_pulser/machine_pulser.ino`: the Arduino sketch. It's non-blocking, so several machines can pulse at once.
-- `ArduinoPulser.kt`: the Kotlin USB client built on `usb-serial-for-android` (mik3y). It handles connect, USB permission, and `pulse(n)`.
-- Both files are working drafts, not final. They can still be changed (including the serial protocol) if the design needs it; if the protocol changes, update the sketch, the app client, and this file together.
+- `modules/machine-serial/`: local Expo module (Kotlin, `usb-serial-for-android` 3.9.0 from JitPack) that opens the Arduino, handles USB permission and attach/detach, and moves bytes. It replaced the `ArduinoPulser.kt` draft, which is kept beside it for reference only and is not compiled.
+- `src/machines/protocol.ts` and `src/machines/SerialMachineController.ts`: the protocol in TypeScript (waits for `READY`, one command at a time, success only on `OK P<n>`, 1.5 s reply timeout). `UsbSerialMachineController.ts` is the only file allowed to import the native module (enforced by ESLint).
+- The sketch and the protocol can still be changed if the design needs it; if the protocol changes, update the sketch, `protocol.ts`, and this file together.
 
 ### React Native notes
 

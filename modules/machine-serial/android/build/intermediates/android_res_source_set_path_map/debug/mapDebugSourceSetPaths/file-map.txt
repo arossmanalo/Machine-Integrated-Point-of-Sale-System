@@ -1,0 +1,9 @@
+com.laundrypos.machineserial.machine-serial-pngs-0 D:\AI Workspace\Development Projects\Machine Integration POS\modules\machine-serial\android\build\generated\res\pngs\debug
+com.laundrypos.machineserial.machine-serial-updated_navigation_xml-1 D:\AI Workspace\Development Projects\Machine Integration POS\modules\machine-serial\android\build\generated\updated_navigation_xml\debug
+com.laundrypos.machineserial.machine-serial-mergeDebugResources-2 D:\AI Workspace\Development Projects\Machine Integration POS\modules\machine-serial\android\build\intermediates\incremental\debug\mergeDebugResources\merged.dir
+com.laundrypos.machineserial.machine-serial-mergeDebugResources-3 D:\AI Workspace\Development Projects\Machine Integration POS\modules\machine-serial\android\build\intermediates\incremental\debug\mergeDebugResources\stripped.dir
+com.laundrypos.machineserial.machine-serial-debug-4 D:\AI Workspace\Development Projects\Machine Integration POS\modules\machine-serial\android\build\intermediates\merged_res\debug\mergeDebugResources
+com.laundrypos.machineserial.machine-serial-debug-5 D:\AI Workspace\Development Projects\Machine Integration POS\modules\machine-serial\android\build\intermediates\packaged_res\debug\packageDebugResources
+com.laundrypos.machineserial.machine-serial-debug-6 D:\AI Workspace\Development Projects\Machine Integration POS\modules\machine-serial\android\src\debug\res
+com.laundrypos.machineserial.machine-serial-main-7 D:\AI Workspace\Development Projects\Machine Integration POS\modules\machine-serial\android\src\main\res
+gradleHome-0 C:\Users\Aryl Ross A. Manalo\.gradle

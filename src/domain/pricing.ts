@@ -11,6 +11,12 @@ export const SERVICE_LABELS: Record<Service, string> = {
   WASH_DRY_FOLD: 'Wash, dry & fold',
 };
 
+/** Readable name for any stored service code, including ones this app no longer sells. */
+export function serviceLabel(service: string): string {
+  const known = SERVICES.find((s) => s === service);
+  return known ? SERVICE_LABELS[known] : service;
+}
+
 export const DEFAULT_PRICE_PER_LOAD: Centavos = 22000;
 
 export interface LoadRange {

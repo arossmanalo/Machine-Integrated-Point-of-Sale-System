@@ -1,0 +1,20 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.laundrypos'
+version = '1.0.0'
+
+android {
+  namespace "com.laundrypos.machineserial"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
+
+dependencies {
+  // Published on JitPack; app.json adds https://jitpack.io through expo-build-properties.
+  implementation 'com.github.mik3y:usb-serial-for-android:3.9.0'
+}
