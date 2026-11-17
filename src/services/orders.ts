@@ -1,0 +1,417 @@
+import { asc, desc, eq, inArray, sql } from 'drizzle-orm';
+
+import { autoConsumeAmount } from '@/domain/inventory';
+import { isPromoEligible, loyaltyAfterOrder, loyaltyAfterVoid } from '@/domain/loyalty';
+import {
+  amountToApply,
+  balanceDue,
+  fullyPaidAt,
+  sumPaid,
+  type PaymentChannel,
+  type PaymentMethod,
+} from '@/domain/payments';
+import { can } from '@/domain/permissions';
+import { computeOrderTotal, CURRENT_SERVICE, type OrderTotal } from '@/domain/pricing';
+import { INITIAL_STATUS, normalizeStatus, selectableStatuses } from '@/domain/statuses';
+import {
+  customers,
+  inventoryItems,
+  machineUnlocks,
+  orderItems,
+  orders,
+  payments,
+  type CustomerRow,
+  type InventoryItemRow,
+  type MachineUnlockRow,
+  type OrderItemRow,
+  type OrderRow,
+  type PaymentRow,
+} from '@/db/schema';
+import { UserFacingError, type Actor, type Db, type ServiceContext } from '@/db/types';
+
+import { takeNextId } from './sequences';
+import { getSetting } from './settings';
+
+const MAX_LOADS = 50;
+const FUTURE_TOLERANCE_MS = 60 * 1000;
+
+export interface PaymentInput {
+  amount: number;
+  channel: PaymentChannel;
+  gcashReference: string;
+  /** Cash handed over, for working out change. Null when not entered. */
+  cashReceived: number | null;
+}
+
+export interface AddOnSelection {
+  itemId: string;
+  quantity: number;
+}
+
+export interface NewOrderInput {
+  customerId: string;
+  weightKg: number;
+  loads: number;
+  addOns: AddOnSelection[];
+  paymentMethod: PaymentMethod;
+  /** Amount for a down payment; ignored for full payment (always the total) and pay later. */
+  downPayment: number;
+  channel: PaymentChannel;
+  gcashReference: string;
+  cashReceived: number | null;
+  /** Owner only: when the order was really placed. */
+  placedAt: number | null;
+}
+
+export interface OrderQuote extends OrderTotal {
+  promoApplied: boolean;
+  pricePerLoad: number;
+  addOnLines: { item: InventoryItemRow; quantity: number }[];
+}
+
+function requireCustomer(db: Db, id: string): CustomerRow {
+  const customer = db.select().from(customers).where(eq(customers.id, id)).get();
+  if (!customer || customer.archivedAt !== null) {
+    throw new UserFacingError('Pick a customer for this order.');
+  }
+  return customer;
+}
+
+function resolveAddOns(db: Db, selections: AddOnSelection[]): OrderQuote['addOnLines'] {
+  const wanted = selections.filter((s) => s.quantity > 0);
+  if (wanted.some((s) => !Number.isInteger(s.quantity))) {
+    throw new UserFacingError('Add-on quantities must be whole numbers.');
+  }
+  if (wanted.length === 0) return [];
+  const ids = wanted.map((s) => s.itemId);
+  const items = db.select().from(inventoryItems).where(inArray(inventoryItems.id, ids)).all();
+  return wanted.map((selection) => {
+    const item = items.find((i) => i.id === selection.itemId);
+    if (!item || item.archivedAt !== null || item.addOnPrice <= 0) {
+      throw new UserFacingError('One of the add-ons is no longer for sale. Remove it and try again.');
+    }
+    return { item, quantity: selection.quantity };
+  });
+}
+
+/** Works out the price the same way createOrder will, for showing in the form. */
+export function quoteOrder(
+  ctx: ServiceContext,
+  customer: Pick<CustomerRow, 'loyaltyLoads'> | null,
+  loads: number,
+  addOns: AddOnSelection[],
+): OrderQuote {
+  const pricePerLoad = getSetting(ctx.db, 'pricePerLoad');
+  const promoApplied = customer !== null && isPromoEligible(customer.loyaltyLoads);
+  const addOnLines = resolveAddOns(ctx.db, addOns);
+  const total = computeOrderTotal({
+    loads,
+    pricePerLoad,
+    promoApplied,
+    addOns: addOnLines.map((line) => ({ unitPrice: line.item.addOnPrice, quantity: line.quantity })),
+  });
+  return { ...total, promoApplied, pricePerLoad, addOnLines };
+}
+
+function checkPayment(payment: PaymentInput): void {
+  if (payment.channel === 'GCASH' && !payment.gcashReference.trim()) {
+    throw new UserFacingError('Enter the GCash reference number.');
+  }
+  if (payment.cashReceived !== null && payment.cashReceived < payment.amount) {
+    throw new UserFacingError('Cash received is less than the amount being paid.');
+  }
+}
+
+function initialPayment(input: NewOrderInput, total: number): PaymentInput | null {
+  if (total <= 0 || input.paymentMethod === 'PAY_LATER') return null;
+  const amount = input.paymentMethod === 'FULL_PAYMENT' ? total : input.downPayment;
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new UserFacingError('Enter the down payment amount.');
+  }
+  if (amount > total) {
+    throw new UserFacingError('The down payment is more than the total. Use full payment instead.');
+  }
+  const payment: PaymentInput = {
+    amount,
+    channel: input.channel,
+    gcashReference: input.gcashReference.trim(),
+    cashReceived: input.channel === 'CASH' ? input.cashReceived : null,
+  };
+  checkPayment(payment);
+  return payment;
+}
+
+/** Creates the order, its first payment, loyalty and stock changes in one transaction. */
+export function createOrder(ctx: ServiceContext, actor: Actor, input: NewOrderInput): OrderRow {
+  if (!(input.weightKg > 0) || !Number.isFinite(input.weightKg)) {
+    throw new UserFacingError('Enter the weight in kilograms.');
+  }
+  if (!Number.isInteger(input.loads) || input.loads < 1 || input.loads > MAX_LOADS) {
+    throw new UserFacingError(`Loads must be a whole number from 1 to ${MAX_LOADS}.`);
+  }
+  const now = ctx.now();
+  let placedAt = now;
+  if (input.placedAt !== null && input.placedAt !== now) {
+    if (!can.backdateOrder(actor.role)) throw new UserFacingError('Only the owner can change the date.');
+    if (input.placedAt > now + FUTURE_TOLERANCE_MS) {
+      throw new UserFacingError('The order date cannot be in the future.');
+    }
+    placedAt = input.placedAt;
+  }
+
+  return ctx.db.transaction((tx) => {
+    const txCtx = { ...ctx, db: tx };
+    const customer = requireCustomer(tx, input.customerId);
+    const quote = quoteOrder(txCtx, customer, input.loads, input.addOns);
+    const payment = initialPayment(input, quote.total);
+    for (const line of quote.addOnLines) {
+      if (line.item.currentStock < line.quantity) {
+        throw new UserFacingError(
+          `Only ${line.item.currentStock} ${line.item.unit} of ${line.item.name} left. ` +
+            'Restock it in Inventory or lower the quantity.',
+        );
+      }
+    }
+
+    const order: OrderRow = {
+      id: takeNextId(tx, 'order'),
+      customerId: customer.id,
+      service: CURRENT_SERVICE,
+      placedAt,
+      weightKg: input.weightKg,
+      loadCount: input.loads,
+      promoApplied: quote.promoApplied,
+      pricePerLoad: quote.pricePerLoad,
+      total: quote.total,
+      status: INITIAL_STATUS,
+      initialPaymentMethod: input.paymentMethod,
+      createdByUserId: actor.id,
+      createdByName: actor.username,
+      voidedAt: null,
+      voidedByName: null,
+      voidReason: null,
+      legacyNote: null,
+    };
+    tx.insert(orders).values(order).run();
+
+    for (const line of quote.addOnLines) {
+      tx.insert(orderItems)
+        .values({
+          orderId: order.id,
+          inventoryItemId: line.item.id,
+          name: line.item.name,
+          quantity: line.quantity,
+          unitPrice: line.item.addOnPrice,
+        })
+        .run();
+      tx.update(inventoryItems)
+        .set({ currentStock: sql`${inventoryItems.currentStock} - ${line.quantity}` })
+        .where(eq(inventoryItems.id, line.item.id))
+        .run();
+    }
+
+    if (payment) {
+      tx.insert(payments)
+        .values({
+          orderId: order.id,
+          amount: payment.amount,
+          channel: payment.channel,
+          gcashReference: payment.channel === 'GCASH' ? payment.gcashReference : null,
+          cashReceived: payment.cashReceived,
+          receivedAt: placedAt,
+          receivedByName: actor.username,
+        })
+        .run();
+    }
+
+    tx.update(customers)
+      .set({
+        loyaltyLoads: loyaltyAfterOrder(customer.loyaltyLoads, quote.billableLoads, quote.promoApplied),
+      })
+      .where(eq(customers.id, customer.id))
+      .run();
+
+    const autoItems = tx
+      .select()
+      .from(inventoryItems)
+      .where(eq(inventoryItems.autoConsume, true))
+      .all()
+      .filter((item) => item.archivedAt === null);
+    for (const item of autoItems) {
+      const used = autoConsumeAmount(item.currentStock, input.loads);
+      if (used > 0) {
+        tx.update(inventoryItems)
+          .set({ currentStock: item.currentStock - used })
+          .where(eq(inventoryItems.id, item.id))
+          .run();
+      }
+    }
+    return order;
+  });
+}
+
+function requireOpenOrder(db: Db, id: string): OrderRow {
+  const order = db.select().from(orders).where(eq(orders.id, id)).get();
+  if (!order) throw new UserFacingError('That order no longer exists.');
+  if (order.voidedAt !== null) throw new UserFacingError('This order was voided.');
+  return order;
+}
+
+export function paidSoFar(db: Db, orderId: string): number {
+  return sumPaid(db.select().from(payments).where(eq(payments.orderId, orderId)).all());
+}
+
+/** Records a later payment. Never takes more than the balance. Returns the amount applied. */
+export function receivePayment(
+  ctx: ServiceContext,
+  actor: Actor,
+  orderId: string,
+  payment: PaymentInput,
+): number {
+  return ctx.db.transaction((tx) => {
+    const order = requireOpenOrder(tx, orderId);
+    const outstanding = balanceDue(order.total, paidSoFar(tx, orderId));
+    if (outstanding <= 0) throw new UserFacingError('This order is already fully paid.');
+    if (!Number.isInteger(payment.amount) || payment.amount <= 0) {
+      throw new UserFacingError('Enter the amount being paid.');
+    }
+    const amount = amountToApply(payment.amount, outstanding);
+    checkPayment({ ...payment, amount });
+    tx.insert(payments)
+      .values({
+        orderId,
+        amount,
+        channel: payment.channel,
+        gcashReference: payment.channel === 'GCASH' ? payment.gcashReference.trim() : null,
+        cashReceived: payment.channel === 'CASH' ? payment.cashReceived : null,
+        receivedAt: ctx.now(),
+        receivedByName: actor.username,
+      })
+      .run();
+    return amount;
+  });
+}
+
+export function updateOrderStatus(
+  ctx: ServiceContext,
+  actor: Actor,
+  orderId: string,
+  status: string,
+): void {
+  const next = normalizeStatus(status);
+  const allowed = selectableStatuses(
+    getSetting(ctx.db, 'customStatuses'),
+    [],
+    can.setAuditedStatus(actor.role),
+  );
+  if (!allowed.includes(next)) throw new UserFacingError('You cannot set that status.');
+  requireOpenOrder(ctx.db, orderId);
+  ctx.db.update(orders).set({ status: next }).where(eq(orders.id, orderId)).run();
+}
+
+/**
+ * Voids an order instead of deleting it, so its machine unlocks stay on record. Undoes the
+ * loyalty change and returns add-on stock. Payments stay recorded but stop counting as revenue.
+ */
+export function voidOrder(ctx: ServiceContext, actor: Actor, orderId: string, reason: string): void {
+  if (!can.voidOrder(actor.role)) throw new UserFacingError('Only an admin or the owner can void.');
+  const why = reason.trim();
+  if (!why) throw new UserFacingError('Say why the order is being voided.');
+  ctx.db.transaction((tx) => {
+    const order = requireOpenOrder(tx, orderId);
+    tx.update(orders)
+      .set({ voidedAt: ctx.now(), voidedByName: actor.username, voidReason: why })
+      .where(eq(orders.id, orderId))
+      .run();
+    const customer = tx.select().from(customers).where(eq(customers.id, order.customerId)).get();
+    if (customer && order.service === CURRENT_SERVICE) {
+      const billable = order.promoApplied ? order.loadCount - 1 : order.loadCount;
+      tx.update(customers)
+        .set({ loyaltyLoads: loyaltyAfterVoid(customer.loyaltyLoads, billable, order.promoApplied) })
+        .where(eq(customers.id, customer.id))
+        .run();
+    }
+    const items = tx.select().from(orderItems).where(eq(orderItems.orderId, orderId)).all();
+    for (const item of items) {
+      if (item.inventoryItemId === null) continue;
+      tx.update(inventoryItems)
+        .set({ currentStock: sql`${inventoryItems.currentStock} + ${item.quantity}` })
+        .where(eq(inventoryItems.id, item.inventoryItemId))
+        .run();
+    }
+  });
+}
+
+export interface OrderSummary {
+  order: OrderRow;
+  customerName: string;
+  paid: number;
+  balance: number;
+  /** When the balance reached zero; null while money is owed. */
+  paidAt: number | null;
+}
+
+function summarize(order: OrderRow, customerName: string, orderPayments: PaymentRow[]): OrderSummary {
+  const paid = sumPaid(orderPayments);
+  return {
+    order,
+    customerName,
+    paid,
+    balance: balanceDue(order.total, paid),
+    paidAt: fullyPaidAt(order.total, orderPayments),
+  };
+}
+
+/** Every order, newest first, with its customer name and payment totals. */
+export function listOrderSummaries(ctx: ServiceContext): OrderSummary[] {
+  const rows = ctx.db
+    .select({ order: orders, customerName: customers.name })
+    .from(orders)
+    .leftJoin(customers, eq(orders.customerId, customers.id))
+    .orderBy(desc(orders.placedAt), desc(orders.id))
+    .all();
+  const byOrder = new Map<string, PaymentRow[]>();
+  for (const payment of ctx.db.select().from(payments).all()) {
+    const list = byOrder.get(payment.orderId) ?? [];
+    list.push(payment);
+    byOrder.set(payment.orderId, list);
+  }
+  return rows.map((row) =>
+    summarize(row.order, row.customerName ?? 'Unknown customer', byOrder.get(row.order.id) ?? []),
+  );
+}
+
+export function listAllPayments(ctx: ServiceContext): PaymentRow[] {
+  return ctx.db.select().from(payments).orderBy(asc(payments.receivedAt)).all();
+}
+
+export interface OrderDetail extends OrderSummary {
+  customer: CustomerRow | null;
+  items: OrderItemRow[];
+  payments: PaymentRow[];
+  unlocks: MachineUnlockRow[];
+}
+
+export function getOrderDetail(ctx: ServiceContext, orderId: string): OrderDetail | null {
+  const order = ctx.db.select().from(orders).where(eq(orders.id, orderId)).get();
+  if (!order) return null;
+  const customer = ctx.db.select().from(customers).where(eq(customers.id, order.customerId)).get();
+  const orderPayments = ctx.db
+    .select()
+    .from(payments)
+    .where(eq(payments.orderId, orderId))
+    .orderBy(asc(payments.receivedAt))
+    .all();
+  return {
+    ...summarize(order, customer?.name ?? 'Unknown customer', orderPayments),
+    customer: customer ?? null,
+    items: ctx.db.select().from(orderItems).where(eq(orderItems.orderId, orderId)).all(),
+    payments: orderPayments,
+    unlocks: ctx.db
+      .select()
+      .from(machineUnlocks)
+      .where(eq(machineUnlocks.orderId, orderId))
+      .orderBy(desc(machineUnlocks.id))
+      .all(),
+  };
+}
