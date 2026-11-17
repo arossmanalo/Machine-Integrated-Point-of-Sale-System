@@ -8,7 +8,7 @@ import { toShopDate } from '@/domain/dates';
 import { can } from '@/domain/permissions';
 import { logOut } from '@/services/auth';
 import { detectBackupKind, exportBackup, importLegacyExport, restoreBackup } from '@/services/backup';
-import { useApp } from '@/state/AppProvider';
+import { useActor, useApp } from '@/state/AppProvider';
 import { useAction } from '@/state/hooks';
 import { useToast } from '@/state/toast';
 import { Button } from '@/ui/Button';
@@ -26,6 +26,7 @@ function fileStamp(ms: number): string {
 
 export default function Backup() {
   const { ctx, setUser } = useApp();
+  const actor = useActor();
   const action = useAction();
   const toast = useToast();
   const [picked, setPicked] = useState<Picked | null>(null);
@@ -36,7 +37,7 @@ export default function Backup() {
       const file = new File(Paths.cache, `laundry-pos-backup-${fileStamp(c.now())}.json`);
       if (file.exists) file.delete();
       file.create();
-      await file.write(JSON.stringify(exportBackup(c)));
+      await file.write(JSON.stringify(exportBackup(c, actor)));
       await shareAsync(file.uri, { mimeType: 'application/json', dialogTitle: 'Save the backup' });
     });
     if (result.ok) toast('Backup ready. Save it to Drive, email or another phone.');
@@ -65,7 +66,8 @@ export default function Backup() {
   async function apply() {
     if (!picked) return;
     const result = await action.run((c) =>
-      picked.kind === 'backup' ? { restored: restoreBackup(c, picked.data) } : { imported: importLegacyExport(c, picked.data) },
+      picked.kind === 'backup' ? { restored: restoreBackup(c, actor, picked.data) }
+        : { imported: importLegacyExport(c, actor, picked.data) },
     );
     setPicked(null);
     if (!result.ok) return;
@@ -86,7 +88,7 @@ export default function Backup() {
   }
 
   return (
-    <ManageScreen title="Backup and import" allowed={can.changeSettings}>
+    <ManageScreen title="Backup and import" allowed={can.manageBackups}>
       <Screen>
         <Section
           title="Back up"

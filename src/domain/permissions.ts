@@ -25,6 +25,8 @@ export const can = {
   manageMachines: ownerOnly,
   viewUnlockLog: ownerOnly,
   changeOwnerPin: ownerOnly,
+  // Backups hold the owner PIN hash and a restore replaces the unlock log.
+  manageBackups: ownerOnly,
 };
 
 interface Account {

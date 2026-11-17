@@ -21,7 +21,7 @@ const LINKS: Link[] = [
   { href: '/manage/settings', icon: 'tune-variant', title: 'Shop settings', subtitle: 'Price per load, statuses, receipt printer', allowed: can.changeSettings },
   { href: '/manage/machines', icon: 'washing-machine', title: 'Machines and locks', subtitle: 'Machine list, lock channels, owner PIN', allowed: can.manageMachines },
   { href: '/manage/unlock-log', icon: 'history', title: 'Unlock log', subtitle: 'Every door unlock, override and wrong PIN', allowed: can.viewUnlockLog },
-  { href: '/manage/backup', icon: 'database-export-outline', title: 'Backup and import', subtitle: 'Save a copy of the data, restore, or bring in the old app', allowed: can.changeSettings },
+  { href: '/manage/backup', icon: 'database-export-outline', title: 'Backup and import', subtitle: 'Save a copy of the data, restore, or bring in the old app', allowed: can.manageBackups },
 ];
 
 export default function Manage() {

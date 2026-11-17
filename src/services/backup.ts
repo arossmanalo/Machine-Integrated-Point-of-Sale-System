@@ -17,7 +17,8 @@ import {
   settings,
   users,
 } from '@/db/schema';
-import { UserFacingError, type Db, type ServiceContext } from '@/db/types';
+import { can } from '@/domain/permissions';
+import { UserFacingError, type Actor, type Db, type ServiceContext } from '@/db/types';
 
 import { bumpSequence, takeNextId } from './sequences';
 import { DEVICE_ONLY_SETTINGS } from './settings';
@@ -52,7 +53,12 @@ export interface Backup {
   tables: BackupTables;
 }
 
-export function exportBackup(ctx: ServiceContext): Backup {
+function requireOwner(actor: Actor): void {
+  if (!can.manageBackups(actor.role)) throw new UserFacingError('Only the owner can back up or restore data.');
+}
+
+export function exportBackup(ctx: ServiceContext, actor: Actor): Backup {
+  requireOwner(actor);
   return { format: BACKUP_FORMAT, version: BACKUP_VERSION, exportedAt: ctx.now(), tables: readAll(ctx.db) };
 }
 
@@ -181,7 +187,8 @@ export interface RestoreSummary {
  * Replaces all shop data with a backup. Every row is validated first, then everything is written
  * in one transaction: if anything fails, nothing changes.
  */
-export function restoreBackup(ctx: ServiceContext, parsed: unknown): RestoreSummary {
+export function restoreBackup(ctx: ServiceContext, actor: Actor, parsed: unknown): RestoreSummary {
+  requireOwner(actor);
   const result = backupSchema.safeParse(parsed);
   if (!result.success) throw new UserFacingError('This file is not a Laundry POS backup.');
   const { tables } = result.data;
@@ -309,7 +316,12 @@ function legacyChannel(channel: string): 'CASH' | 'GCASH' {
  * they clash with existing rows, in which case they get new numbers. Passwords are not imported:
  * the owner sets new ones in Staff. Runs in one transaction.
  */
-export function importLegacyExport(ctx: ServiceContext, parsed: unknown): LegacyImportSummary {
+export function importLegacyExport(
+  ctx: ServiceContext,
+  actor: Actor,
+  parsed: unknown,
+): LegacyImportSummary {
+  requireOwner(actor);
   const result = legacySchema.safeParse(parsed);
   if (!result.success) throw new UserFacingError('This file is not an export from the old Laundry app.');
   const data = result.data;

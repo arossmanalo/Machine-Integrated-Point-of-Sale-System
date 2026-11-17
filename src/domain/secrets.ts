@@ -8,9 +8,9 @@ import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
  * existing accounts.
  */
 const ALGORITHM = 'pbkdf2-sha256';
-// Pure-JS hashing on the tablet: 20,000 rounds took several seconds per check in testing. A 4-6
-// digit PIN is protected by the 5-try lockout, not by hash cost, and the database never leaves
-// the tablet except in backups, so speed at the counter wins here.
+// Pure-JS hashing on the tablet: 20,000 rounds took several seconds per check in testing. In the
+// app a 4-6 digit PIN is protected by the 5-try lockout; offline it is only as safe as the
+// backup file, which is why backups are owner-only (can.manageBackups).
 export const DEFAULT_ITERATIONS = 5000;
 const KEY_LENGTH = 32;
 

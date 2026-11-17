@@ -77,9 +77,9 @@ async function setup() {
 
 describe('legacy import', () => {
   it('brings in customers, stock, expenses, orders and payments in centavos', async () => {
-    const { ctx } = await setup();
+    const { ctx, owner } = await setup();
     expect(detectBackupKind(legacyExport)).toBe('legacy');
-    const summary = importLegacyExport(ctx, legacyExport);
+    const summary = importLegacyExport(ctx, owner, legacyExport);
     expect(summary).toMatchObject({ customers: 2, orders: 2, payments: 2, inventoryItems: 2, expenses: 1, users: 2 });
 
     expect(listExpenses(ctx)[0].cost).toBe(152050);
@@ -97,8 +97,8 @@ describe('legacy import', () => {
   });
 
   it('never imports passwords and does not create a second owner', async () => {
-    const { ctx } = await setup();
-    importLegacyExport(ctx, legacyExport);
+    const { ctx, owner } = await setup();
+    importLegacyExport(ctx, owner, legacyExport);
     const staff = listStaff(ctx);
     expect(staff.filter((u) => u.role === 'OWNER').map((u) => u.username)).toEqual(['Aryl']);
     expect(staff.find((u) => u.username === 'ARLaundry')).toMatchObject({ role: 'ADMIN', passwordHash: null });
@@ -106,9 +106,9 @@ describe('legacy import', () => {
   });
 
   it('renumbers clashing IDs and keeps new IDs above imported ones', async () => {
-    const { ctx } = await setup();
+    const { ctx, owner } = await setup();
     createCustomer(ctx, { name: 'Already here', phone: '', address: '', notes: '' });
-    const summary = importLegacyExport(ctx, legacyExport);
+    const summary = importLegacyExport(ctx, owner, legacyExport);
     expect(summary.renumbered).toBeGreaterThan(0);
     const maria = listCustomers(ctx).find((c) => c.name === 'Maria Santos');
     expect(maria?.id).not.toBe('C0001');
@@ -117,16 +117,26 @@ describe('legacy import', () => {
   });
 
   it('changes nothing when the file is broken', async () => {
-    const { ctx } = await setup();
-    expect(() => importLegacyExport(ctx, { transactions: [{ transactionId: 5 }] })).toThrow('not an export');
+    const { ctx, owner } = await setup();
+    expect(() => importLegacyExport(ctx, owner, { transactions: [{ transactionId: 5 }] })).toThrow('not an export');
     expect(listOrderSummaries(ctx)).toHaveLength(0);
+  });
+});
+
+describe('who may use backups', () => {
+  it('only the owner can export, restore or import', async () => {
+    const { ctx, owner } = await setup();
+    const admin = { id: 'U0009', username: 'bea', role: 'ADMIN' as const };
+    expect(() => exportBackup(ctx, admin)).toThrow('Only the owner');
+    expect(() => restoreBackup(ctx, admin, exportBackup(ctx, owner))).toThrow('Only the owner');
+    expect(() => importLegacyExport(ctx, testEmployee, legacyExport)).toThrow('Only the owner');
   });
 });
 
 describe('full backup', () => {
   it('round-trips every table, including the unlock log', async () => {
     const { ctx, owner } = await setup();
-    importLegacyExport(ctx, legacyExport);
+    importLegacyExport(ctx, owner, legacyExport);
     setSetting(ctx.db, 'pricePerLoad', 25000);
     const machineId = addMachine(ctx, owner, { name: 'Washer 1', type: 'WASHER', hardwareChannel: 1, enabled: true });
     const order = createOrder(ctx, testEmployee, {
@@ -145,11 +155,11 @@ describe('full backup', () => {
     await controller.connect();
     await unlockForOrder(ctx, controller, testEmployee, order.id, machineId);
 
-    const backup = JSON.parse(JSON.stringify(exportBackup(ctx)));
+    const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
     expect(detectBackupKind(backup)).toBe('backup');
 
     const fresh = createTestContext();
-    const summary = restoreBackup(fresh, backup);
+    const summary = restoreBackup(fresh, owner, backup);
     expect(summary).toEqual({ orders: 3, customers: 3, unlocks: 1 });
     expect(listOrderSummaries(fresh)).toEqual(listOrderSummaries(ctx));
     expect(listUnlocks(fresh, { start: 0, end: Number.MAX_SAFE_INTEGER })).toHaveLength(1);
@@ -158,10 +168,10 @@ describe('full backup', () => {
   });
 
   it('rejects a file with a bad row and leaves data alone', async () => {
-    const { ctx } = await setup();
-    const backup = JSON.parse(JSON.stringify(exportBackup(ctx)));
+    const { ctx, owner } = await setup();
+    const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
     backup.tables.customers.push({ id: 'C0500', name: 42 });
-    expect(() => restoreBackup(ctx, backup)).toThrow('not a Laundry POS backup');
+    expect(() => restoreBackup(ctx, owner, backup)).toThrow('not a Laundry POS backup');
     expect(listStaff(ctx)).toHaveLength(1);
     expect(detectBackupKind({ hello: 'world' })).toBe('unknown');
   });
