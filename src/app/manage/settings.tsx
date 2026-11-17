@@ -1,0 +1,201 @@
+import { useState } from 'react';
+
+import { centavosToInput, formatPeso, parsePesoInput } from '@/domain/money';
+import { can } from '@/domain/permissions';
+import { BUILT_IN_STATUSES, normalizeStatus, statusLabel } from '@/domain/statuses';
+import type { PrinterInfo } from '@/printing/ReceiptPrinter';
+import { getAllSettings, setSetting } from '@/services/settings';
+import { useApp } from '@/state/AppProvider';
+import { useAction, useData } from '@/state/hooks';
+import { useToast } from '@/state/toast';
+import { Button } from '@/ui/Button';
+import { Toggle } from '@/ui/controls';
+import { Divider, ListRow, Notice, Panel, Row, Screen, Section } from '@/ui/layout';
+import { ManageScreen } from '@/ui/ManagerGate';
+import { Text } from '@/ui/Text';
+import { TextField } from '@/ui/TextField';
+import { space } from '@/ui/theme';
+
+export default function Settings() {
+  const settings = useData((c) => getAllSettings(c.db));
+  return (
+    <ManageScreen title="Shop settings" allowed={can.changeSettings}>
+      <Screen>
+        <PriceSection current={settings.pricePerLoad} />
+        <StatusSection custom={settings.customStatuses} hidden={settings.hiddenStatuses} />
+        <PrinterSection
+          enabled={settings.printingEnabled}
+          printerName={settings.printerName}
+          printerAddress={settings.printerAddress}
+          header={settings.receiptHeader}
+          footer={settings.receiptFooter}
+        />
+      </Screen>
+    </ManageScreen>
+  );
+}
+
+function PriceSection({ current }: { current: number }) {
+  const action = useAction();
+  const toast = useToast();
+  const [text, setText] = useState(centavosToInput(current));
+  const price = parsePesoInput(text);
+  return (
+    <Section title="Price per load" description="Wash, dry & fold. Existing orders keep the price they were sold at.">
+      <Row wrap style={{ alignItems: 'flex-end' }}>
+        <TextField
+          label="Price"
+          value={text}
+          onChangeText={setText}
+          keyboardType="decimal-pad"
+          prefix="₱"
+          error={price === null ? 'Enter an amount like 220.' : null}
+          style={{ width: 200 }}
+        />
+        <Button
+          label="Save price"
+          disabled={price === null || price === current}
+          busy={action.busy}
+          onPress={async () => {
+            if (price === null) return;
+            const result = await action.run((c) => setSetting(c.db, 'pricePerLoad', price));
+            if (result.ok) toast(`Price per load is now ${formatPeso(price)}`);
+          }}
+        />
+      </Row>
+      {action.error && <Notice tone="danger">{action.error}</Notice>}
+    </Section>
+  );
+}
+
+function StatusSection({ custom, hidden }: { custom: string[]; hidden: string[] }) {
+  const action = useAction();
+  const [newStatus, setNewStatus] = useState('');
+  const all = [...BUILT_IN_STATUSES, ...custom.filter((s) => !(BUILT_IN_STATUSES as readonly string[]).includes(s))];
+  const required = ['PENDING', 'COMPLETED'];
+  return (
+    <Section title="Order statuses" description="Hidden statuses stay on old orders but are not offered for new changes.">
+      <Panel style={{ paddingHorizontal: space.lg }}>
+        {all.map((status, index) => (
+          <Row key={status} style={{ paddingVertical: space.xs }}>
+            <Toggle
+              label={statusLabel(status)}
+              description={required.includes(status) ? 'Always shown' : undefined}
+              value={!hidden.includes(status)}
+              disabled={required.includes(status)}
+              onChange={(show) =>
+                void action.run((c) =>
+                  setSetting(c.db, 'hiddenStatuses', show ? hidden.filter((s) => s !== status) : [...hidden, status]),
+                )
+              }
+            />
+            {index < all.length - 1 && <Divider />}
+          </Row>
+        ))}
+      </Panel>
+      <Row wrap style={{ alignItems: 'flex-end' }}>
+        <TextField
+          label="Add a status"
+          value={newStatus}
+          onChangeText={setNewStatus}
+          placeholder="For example: For delivery"
+          style={{ flex: 1, minWidth: 220 }}
+        />
+        <Button
+          label="Add status"
+          kind="secondary"
+          disabled={!newStatus.trim() || all.includes(normalizeStatus(newStatus))}
+          onPress={async () => {
+            const status = normalizeStatus(newStatus);
+            const result = await action.run((c) => setSetting(c.db, 'customStatuses', [...custom, status]));
+            if (result.ok) setNewStatus('');
+          }}
+        />
+      </Row>
+      {action.error && <Notice tone="danger">{action.error}</Notice>}
+    </Section>
+  );
+}
+
+function PrinterSection({
+  enabled,
+  printerName,
+  printerAddress,
+  header,
+  footer,
+}: {
+  enabled: boolean;
+  printerName: string | null;
+  printerAddress: string | null;
+  header: string;
+  footer: string;
+}) {
+  const { printer } = useApp();
+  const action = useAction();
+  const toast = useToast();
+  const [printers, setPrinters] = useState<PrinterInfo[] | null>(null);
+  const [headerText, setHeaderText] = useState(header);
+  const [footerText, setFooterText] = useState(footer);
+
+  async function findPrinters() {
+    const result = await action.run(async () => {
+      if (!(await printer.ensurePermission())) throw new Error('Bluetooth permission was not allowed.');
+      return printer.listPrinters();
+    });
+    if (result.ok) setPrinters(result.value);
+  }
+
+  return (
+    <Section title="Receipts" description="Prints on a Bluetooth thermal printer paired in Android settings.">
+      <Toggle
+        label="Print a receipt for every new order"
+        value={enabled}
+        onChange={(value) => void action.run((c) => setSetting(c.db, 'printingEnabled', value))}
+      />
+      <Row wrap>
+        <Text style={{ flex: 1 }}>{printerName ? `Printer: ${printerName}` : 'No printer chosen yet.'}</Text>
+        <Button label="Find paired printers" kind="secondary" icon="printer-search" onPress={findPrinters} busy={action.busy} />
+      </Row>
+      {printers && (
+        <Panel>
+          {printers.length === 0 ? (
+            <Text tone="muted" style={{ padding: space.lg }}>
+              No paired printers. Pair the printer in Android Bluetooth settings first.
+            </Text>
+          ) : (
+            printers.map((p, index) => (
+              <ListRow
+                key={p.address}
+                title={p.name}
+                subtitle={p.address === printerAddress ? 'Selected' : p.address}
+                onPress={async () => {
+                  const result = await action.run((c) => {
+                    setSetting(c.db, 'printerAddress', p.address);
+                    setSetting(c.db, 'printerName', p.name);
+                  });
+                  if (result.ok) toast(`${p.name} will print receipts`);
+                }}
+                last={index === printers.length - 1}
+              />
+            ))
+          )}
+        </Panel>
+      )}
+      <TextField label="Receipt heading" value={headerText} onChangeText={setHeaderText} />
+      <TextField label="Receipt footer" value={footerText} onChangeText={setFooterText} multiline />
+      <Button
+        label="Save receipt text"
+        kind="secondary"
+        disabled={headerText === header && footerText === footer}
+        onPress={async () => {
+          const result = await action.run((c) => {
+            setSetting(c.db, 'receiptHeader', headerText.trim());
+            setSetting(c.db, 'receiptFooter', footerText.trim());
+          });
+          if (result.ok) toast('Receipt text saved');
+        }}
+      />
+      {action.error && <Notice tone="danger">{action.error}</Notice>}
+    </Section>
+  );
+}
