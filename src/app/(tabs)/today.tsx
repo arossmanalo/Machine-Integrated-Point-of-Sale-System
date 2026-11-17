@@ -58,7 +58,7 @@ export default function Today() {
         </Notice>
       )}
 
-      <Row wrap>
+      <Row wrap style={{ alignItems: 'flex-start' }}>
         <Stat label="Orders today" value={String(todays.length)} />
         <Stat label="Loads today" value={String(figures.loads)} />
         <Stat label="Open jobs" value={String(open.length)} note="All days, not yet completed" />

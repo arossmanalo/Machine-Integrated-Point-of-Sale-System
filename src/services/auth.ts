@@ -81,6 +81,7 @@ export async function completeFirstRunSetup(ctx: ServiceContext, input: FirstRun
     }
     setSetting(tx, 'ownerPinHash', pinHash);
     setSetting(tx, 'pinLock', PIN_UNLOCKED);
+    setSetting(tx, 'sessionUserId', id);
     return { id, username, role: 'OWNER' as const };
   });
 }

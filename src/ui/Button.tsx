@@ -60,7 +60,7 @@ export function Button({
         styles.base,
         { backgroundColor: pressed ? look.pressed : look.bg },
         look.border !== undefined && { borderWidth: 1, borderColor: look.border },
-        block && styles.block,
+        block ? styles.block : styles.fit,
         inactive && styles.inactive,
         style,
       ]}
@@ -71,7 +71,7 @@ export function Button({
         ) : (
           icon !== undefined && <MaterialCommunityIcons name={icon} size={20} color={iconColors[look.text]} />
         )}
-        <Text variant="label" tone={look.text === 'default' ? 'default' : look.text}>
+        <Text variant="label" tone={look.text === 'default' ? 'default' : look.text} numberOfLines={1}>
           {label}
         </Text>
       </View>
@@ -87,6 +87,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   block: { alignSelf: 'stretch' },
+  fit: { alignSelf: 'flex-start' },
   content: {
     flexDirection: 'row',
     alignItems: 'center',

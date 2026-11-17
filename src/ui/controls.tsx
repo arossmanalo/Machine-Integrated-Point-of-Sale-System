@@ -1,6 +1,6 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type { ReactNode } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Text } from './Text';
@@ -171,7 +171,10 @@ export function Dialog({
   const insets = useSafeAreaInsets();
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <View style={[styles.scrim, { paddingTop: insets.top + space.lg, paddingBottom: insets.bottom + space.lg }]}>
+      <KeyboardAvoidingView
+        behavior="padding"
+        style={[styles.scrim, { paddingTop: insets.top + space.lg, paddingBottom: insets.bottom + space.lg }]}
+      >
         <View style={styles.dialog} accessibilityViewIsModal>
           <View style={styles.dialogHeader}>
             <Text variant="heading" style={styles.flex}>
@@ -186,7 +189,7 @@ export function Dialog({
           </ScrollView>
           <View style={styles.dialogActions}>{actions}</View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

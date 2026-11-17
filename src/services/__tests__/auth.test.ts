@@ -34,6 +34,7 @@ describe('first run and login', () => {
     ).rejects.toThrow('6 characters');
     await completeFirstRunSetup(ctx, { username: 'Aryl', password: 'secret123', pin: '2468' });
     expect(needsFirstRunSetup(ctx)).toBe(false);
+    expect(restoreSession(ctx)?.role).toBe('OWNER');
 
     await expect(logIn(ctx, 'aryl', 'wrong-pass')).rejects.toThrow('Incorrect');
     const actor = await logIn(ctx, ' ARYL ', 'secret123');
