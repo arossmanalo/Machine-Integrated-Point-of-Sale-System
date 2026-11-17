@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
 
-import { formatShopDate, inRange } from '@/domain/dates';
+import { formatShopDate, formatShopDayShort, inRange, isSameShopDay } from '@/domain/dates';
 import { formatPeso } from '@/domain/money';
 import { can } from '@/domain/permissions';
 import { periodRange, type ReportPeriod } from '@/domain/reports';
@@ -129,7 +129,11 @@ export default function Orders() {
               <ListRow
                 key={s.order.id}
                 title={s.customerName}
-                subtitle={`${s.order.id} · ${formatShopDate(s.order.placedAt)} · ${s.order.loadCount} load${s.order.loadCount === 1 ? '' : 's'}`}
+                subtitle={`${s.order.id} · placed ${formatShopDate(s.order.placedAt)}${
+                  s.paidAt !== null && !isSameShopDay(s.paidAt, s.order.placedAt)
+                    ? ` · paid ${formatShopDayShort(s.paidAt)}`
+                    : ''
+                } · ${s.order.loadCount} load${s.order.loadCount === 1 ? '' : 's'}`}
                 meta={
                   s.balance > 0 && s.order.voidedAt === null ? (
                     <Text variant="caption" tone="danger" numeric>
