@@ -34,7 +34,8 @@
           }
         }
       ],
-      "./plugins/withUsbDeviceFilter"
+      "./plugins/withUsbDeviceFilter",
+      "./plugins/withReleaseSigning"
     ],
     "scheme": "laundrypos",
     "experiments": {
