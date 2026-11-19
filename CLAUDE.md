@@ -57,7 +57,7 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 
 ### Existing code
 
-- `lock_controller/lock_controller.ino`: the ESP32 sketch (Arduino core for ESP32 3.x). Non-blocking, so several machines can pulse at once. Wi-Fi name, password and lock key go in `lock_controller/config.h`, copied from `config.example.h`; `config.h` is git-ignored.
+- `lock_controller/lock_controller.ino`: the ESP32 sketch (Arduino core for ESP32 4.0 or newer, board "ESP32 Dev Module"; it uses the core's `HMACBuilder`). It compiles: 76% of flash, 15% of RAM. The board package lives in `D:\Arduino15` (set in `%USERPROFILE%\.arduinoIDErduino-cli.yaml`) because C: is nearly full. Non-blocking, so several machines can pulse at once. Wi-Fi name, password and lock key go in `lock_controller/config.h`, copied from `config.example.h`; `config.h` is git-ignored.
 - `src/machines/protocol.ts`: the contract in TypeScript (signing, address parsing, reply schemas). `src/machines/WifiMachineController.ts`: one command at a time, success only on `{"ok":true}` for the same channel. Only `src/state/AppProvider.tsx` may import it (enforced by ESLint).
 - The lock address and key are settings (`lockControllerAddress`, `lockControllerKey`), saved through `saveLockController` (owner only). They are included in backups, which are owner-only.
 - `machine_pulser/machine_pulser.ino` and `modules/machine-serial/ArduinoPulser.kt` are the old USB drafts, kept for reference only.

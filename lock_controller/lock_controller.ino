@@ -4,7 +4,8 @@
 // Wi-Fi cannot open a door without the key, and a recorded request cannot be replayed.
 // The contract is in src/machines/protocol.ts; keep the two in step.
 //
-// Board: ESP32 DevKit (ESP32-WROOM-32 or -WROVER), Arduino core for ESP32 3.x.
+// Board: ESP32 DevKit (ESP32-WROOM-32 or -WROVER), Arduino core for ESP32 4.0 or newer
+// (Tools > Board > esp32 > ESP32 Dev Module).
 // Outputs avoid the boot-strapping pins (0, 2, 5, 12, 15), the flash pins (6-11),
 // the input-only pins (34-39) and the WROVER PSRAM pins (16, 17).
 //
@@ -17,7 +18,8 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <esp_random.h>
-#include "mbedtls/md.h"
+#include <HMACBuilder.h>
+#include <SHA2Builder.h>
 
 #include "config.h"
 
@@ -113,12 +115,15 @@ void fail(int status, const char* error) {
   Serial.println(error);
 }
 
+// HMAC-SHA256, lowercase hex. Must match signPulse in src/machines/protocol.ts.
 void sign(const String& message, char* hexOut) {
-  uint8_t mac[32];
-  const mbedtls_md_info_t* sha256 = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-  mbedtls_md_hmac(sha256, (const uint8_t*)LOCK_KEY, strlen(LOCK_KEY),
-                  (const uint8_t*)message.c_str(), message.length(), mac);
-  toHex(mac, sizeof(mac), hexOut);
+  SHA256Builder sha256;
+  HMACBuilder hmac(&sha256);
+  hmac.setKey(LOCK_KEY);
+  hmac.begin();
+  hmac.add(message);
+  hmac.calculate();
+  hmac.getChars(hexOut);
 }
 
 void toHex(const uint8_t* bytes, size_t length, char* out) {
