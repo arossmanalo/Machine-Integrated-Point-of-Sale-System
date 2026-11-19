@@ -55,7 +55,8 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 - `POST /pulse`, form body `channel=<n>&challenge=<hex>&signature=<hex>`, where signature = hex HMAC-SHA256(lock key, `P<n>:<challenge>`). Replies `200 {"ok":true,"channel":n}` or `4xx {"ok":false,"error":"bad-channel"|"bad-signature"|"stale-challenge"}`. Every attempt uses up the challenge.
 - The signature is why a phone on the same Wi-Fi cannot open doors and a captured request cannot be replayed. The ESP32 has no clock, so there are no timestamps.
 - Requests time out after 3 s. A pulse is never retried: a lost reply may mean the door already opened, so the app reports "timeout" and logs it.
-- Pulse length is 500 ms for LEDs. For real locks it will become about 3–5 s, which is an ESP32-side change only (`PULSE_MS`).
+- An unlock flips the output from `LOCKED_LEVEL` for `PULSE_MS` (2 s for the LED test, about 3–5 s for real locks). Both are ESP32-side settings only.
+- `LOCKED_LEVEL` is HIGH for the LED prototype: the LED is lit while locked and dark while unlocked. Before wiring relays, check the relay module: an active-LOW module keeps HIGH; one that switches on with HIGH needs LOW, or every door stays unlocked. The pin is set to the locked level before it becomes an output, so it never shows "unlocked" at boot.
 
 ### Existing code
 

@@ -12,7 +12,9 @@
 // and the input-only pins (34-39). That leaves exactly these 14.
 //
 // Wiring per LED (prototype): GPIO -> 220 ohm resistor -> LED long leg (+), short leg (-) -> GND.
-// Real locks: GPIO drives a relay or MOSFET module, never the 12 V solenoid directly.
+// With LOCKED_LEVEL = HIGH the LED is lit while the door is locked and goes dark while unlocked.
+// Real locks: GPIO drives a relay or MOSFET module, never the 12 V solenoid directly. Set
+// LOCKED_LEVEL so the relay is OFF when locked; check the relay module before connecting it.
 //
 // Setup: copy config.example.h to config.h, fill it in, then upload.
 // The address to enter in the app is printed on the serial monitor (115200 baud) at start.
@@ -29,20 +31,26 @@
 // RX2 TX2. Keep in step with LOCK_CHANNEL_TERMINALS in src/machines/protocol.ts.
 const int LOCK_PINS[] = {25, 26, 27, 32, 33, 13, 18, 19, 21, 22, 23, 4, 16, 17};
 const int NUM_CHANNELS = sizeof(LOCK_PINS) / sizeof(LOCK_PINS[0]);
-const unsigned long PULSE_MS = 500;                // LEDs; about 3000-5000 for real locks
+// The level an output sits at while its door is locked; an unlock flips it for PULSE_MS.
+// HIGH suits the LED prototype (lit = locked) and active-LOW relay modules. A relay module that
+// switches on with HIGH needs LOW here, or every door would stay unlocked.
+const int LOCKED_LEVEL = HIGH;
+const int UNLOCKED_LEVEL = LOCKED_LEVEL == HIGH ? LOW : HIGH;
+const unsigned long PULSE_MS = 2000;               // long enough to see on an LED; 3000-5000 for locks
 const unsigned long CHALLENGE_TTL_MS = 10000;
 
 WebServer server(80);
-unsigned long offAt[NUM_CHANNELS];                  // 0 = output idle
+unsigned long relockAt[NUM_CHANNELS];               // 0 = locked
 char challenge[33] = "";                            // empty = no challenge outstanding
 unsigned long challengeIssuedAt = 0;
 
 void setup() {
   Serial.begin(115200);
   for (int i = 0; i < NUM_CHANNELS; i++) {
+    // Set the level before switching to output, so the pin never shows "unlocked" at boot.
+    digitalWrite(LOCK_PINS[i], LOCKED_LEVEL);
     pinMode(LOCK_PINS[i], OUTPUT);
-    digitalWrite(LOCK_PINS[i], LOW);
-    offAt[i] = 0;
+    relockAt[i] = 0;
   }
 
   WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t) {
@@ -70,9 +78,9 @@ void loop() {
   // Non-blocking, so several doors can be open at the same time.
   unsigned long now = millis();
   for (int i = 0; i < NUM_CHANNELS; i++) {
-    if (offAt[i] != 0 && (long)(now - offAt[i]) >= 0) {
-      digitalWrite(LOCK_PINS[i], LOW);
-      offAt[i] = 0;
+    if (relockAt[i] != 0 && (long)(now - relockAt[i]) >= 0) {
+      digitalWrite(LOCK_PINS[i], LOCKED_LEVEL);
+      relockAt[i] = 0;
     }
   }
 }
@@ -108,9 +116,9 @@ void handlePulse() {
   if (channel < 1 || channel > NUM_CHANNELS) return fail(400, "bad-channel");
 
   int i = channel - 1;
-  digitalWrite(LOCK_PINS[i], HIGH);
-  offAt[i] = millis() + PULSE_MS;
-  if (offAt[i] == 0) offAt[i] = 1;  // 0 means idle
+  digitalWrite(LOCK_PINS[i], UNLOCKED_LEVEL);
+  relockAt[i] = millis() + PULSE_MS;
+  if (relockAt[i] == 0) relockAt[i] = 1;  // 0 means locked
   server.send(200, "application/json", String("{\"ok\":true,\"channel\":") + channel + "}");
   Serial.print("OK P");
   Serial.println(channel);
