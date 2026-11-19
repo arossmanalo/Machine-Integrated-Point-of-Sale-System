@@ -29,7 +29,7 @@ export default function Staff() {
       <Screen>
         <Section
           title="Staff accounts"
-          description="Everyone signs in with their own account, so orders and unlocks show who did them."
+          description="Everyone signs in with their own account, so orders and machine starts show who did them."
           action={<Button label="Add staff" icon="account-plus-outline" onPress={() => setEditing('new')} />}
         >
           <Panel>

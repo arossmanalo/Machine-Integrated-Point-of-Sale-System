@@ -125,7 +125,7 @@ export default function Backup() {
           <Text>{picked.name}</Text>
           {picked.kind === 'backup' ? (
             <Notice tone="warning">
-              Every order, customer, staff account, setting and unlock record on this tablet is replaced by the backup.
+              Every order, customer, staff account, setting and machine log entry on this tablet is replaced by the backup.
               This cannot be undone, so save a backup of the current data first. You will be signed out.
             </Notice>
           ) : (

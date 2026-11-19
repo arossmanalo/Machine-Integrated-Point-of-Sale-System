@@ -2,29 +2,30 @@ import type {
   ConnectResult,
   ControllerState,
   MachineController,
-  UnlockResult,
+  PulseSettings,
+  StartResult,
   Unsubscribe,
 } from './MachineController';
-import { isValidChannel } from './protocol';
+import { isValidChannel, pulsesProblem } from './protocol';
 
-/** Stands in for the ESP32 lock controller during development, tests and demos. */
+/** Stands in for the ESP32 machine controller during development, tests and demos. */
 export class MockMachineController implements MachineController {
   readonly kind = 'mock' as const;
-  /** Every channel unlocked, in order. */
-  readonly pulses: number[] = [];
-  private current: ControllerState = { status: 'disconnected', detail: null, unlockedChannels: [] };
+  /** Every accepted start, in order. */
+  readonly starts: { channel: number; pulses: PulseSettings }[] = [];
+  private current: ControllerState = { status: 'disconnected', detail: null };
   private listeners = new Set<(state: ControllerState) => void>();
-  private nextResult: UnlockResult | null = null;
+  private nextResult: StartResult | null = null;
 
   constructor(private readonly latencyMs = 150) {}
 
-  /** Make the next unlock or lock return this result instead of 'acked'. */
-  failNextUnlock(result: Exclude<UnlockResult, 'acked'>): void {
+  /** Make the next start return this result instead of 'acked'. */
+  failNextStart(result: Exclude<StartResult, 'acked'>): void {
     this.nextResult = result;
   }
 
   async connect(): Promise<ConnectResult> {
-    this.setState({ status: 'ready', detail: 'Simulated locks (no hardware)' });
+    this.setState({ status: 'ready', detail: 'Simulated machines (no hardware)' });
     return 'connected';
   }
 
@@ -43,41 +44,18 @@ export class MockMachineController implements MachineController {
     };
   }
 
-  async unlock(hardwareChannel: number): Promise<UnlockResult> {
-    const result = await this.command(hardwareChannel);
-    if (result === 'acked') {
-      this.pulses.push(hardwareChannel);
-      this.setUnlocked(hardwareChannel, true);
-    }
-    return result;
-  }
-
-  async lock(hardwareChannel: number): Promise<UnlockResult> {
-    const result = await this.command(hardwareChannel);
-    if (result === 'acked') this.setUnlocked(hardwareChannel, false);
-    return result;
-  }
-
-  private async command(hardwareChannel: number): Promise<UnlockResult> {
+  async start(hardwareChannel: number, pulses: PulseSettings): Promise<StartResult> {
     if (this.current.status !== 'ready') return 'not-connected';
-    if (!isValidChannel(hardwareChannel)) return 'rejected';
+    if (!isValidChannel(hardwareChannel) || pulsesProblem(pulses) !== null) return 'rejected';
     if (this.latencyMs > 0) await new Promise((resolve) => setTimeout(resolve, this.latencyMs));
     const result = this.nextResult ?? 'acked';
     this.nextResult = null;
+    if (result === 'acked') this.starts.push({ channel: hardwareChannel, pulses });
     return result;
   }
 
-  private setUnlocked(channel: number, unlocked: boolean): void {
-    const others = this.current.unlockedChannels.filter((c) => c !== channel);
-    const next = unlocked ? [...others, channel].sort((a, b) => a - b) : others;
-    this.setState(this.current, next);
-  }
-
-  private setState(
-    next: Pick<ControllerState, 'status' | 'detail'>,
-    unlockedChannels: readonly number[] = this.current.unlockedChannels,
-  ): void {
-    this.current = { status: next.status, detail: next.detail, unlockedChannels };
-    this.listeners.forEach((listener) => listener(this.current));
+  private setState(next: ControllerState): void {
+    this.current = next;
+    this.listeners.forEach((listener) => listener(next));
   }
 }

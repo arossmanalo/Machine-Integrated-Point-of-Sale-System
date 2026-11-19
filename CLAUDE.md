@@ -16,7 +16,7 @@ POS app for our family laundry shop. It currently runs as a Kotlin Android app o
 - `src/services/`: the only code that reads or writes the database. Tests run them against in-memory SQLite (better-sqlite3).
 - `src/ui/theme.ts` holds every colour, size and gap. The look is calm slate with one blue accent; IBM Plex Sans.
 - Checks: `npm run typecheck`, `npm run lint`, `npm test` (or `npm run check` for all three).
-- Shop decisions (2026-11-12): only Wash-Dry-Fold is sold; each load allows one washer and one dryer unlock; payment is not needed to unlock; revenue counts on the day paid; admin or owner can void; only the owner PIN can override. The machine list (count and channels) is still to be decided with the hardware.
+- Shop decisions (2026-11-12): only Wash-Dry-Fold is sold; each load allows one washer and one dryer start; payment is not needed to start a machine; revenue counts on the day paid; admin or owner can void; only the owner PIN can override. Machines are started by assigned order (2026-11-19), not unlocked. The machine list (count and channels) is still to be decided with the hardware.
 - `docs/shop-guide.md` is the guide for staff and the owner.
 
 ### Building the Android app on this PC
@@ -35,22 +35,24 @@ POS app for our family laundry shop. It currently runs as a Kotlin Android app o
 - Native changes need a new APK: a new native package, `app.json` plugins or permissions, `modules/`, or an Expo SDK upgrade. Bump `version` in `app.json` first: `runtimeVersion` follows it (`appVersion` policy), so old APKs never get JavaScript they cannot run. Then build and install as above.
 - The ESP32 sketch is separate and still goes over USB.
 
-## Machine integration (built; LED prototype not yet tested on hardware)
+## Machine integration (built; LED prototype tested on the real ESP32)
 
 ### Goal
 
 Stop employees from using the washers and dryers for personal laundry. Machines may only be used for paid customer orders.
 
-### How it will work
+### How it works
 
-- Machines keep running normally. The POS does not control power.
-- Each machine door gets an electronic lock. The POS unlocks a machine's door only for an order that exists in the POS.
-- Flow: employee creates the order and payment → assigns a machine → taps Unlock → the POS sends a signed command over Wi-Fi → the ESP32 unlocks that machine's door → it stays unlocked until someone taps Lock on the Machines tab (changed from a timed pulse on 2026-11-19 at the user's request).
+- The machines take a coin-style start signal: a number of pulses on their coin input. The ESP32 sends those pulses only when the POS asks for a start for an order. There are no door locks (lock/unlock was dropped on 2026-11-19 at the user's request).
+- Flow: employee creates the order → on the order page, **Assign to machine** opens a window with the registered dryers on top and washers below (as stacked in the shop) → tapping a free machine assigns the order → on the **Machines** tab that machine shows **Start machine** → Start sends the signed start over Wi-Fi → the ESP32 sends the machine's pulses.
+- One assignment = one start. Starting uses the assignment up; the machine is then free for the next order. Each load allows one washer and one dryer (assigned plus started together). A machine holds one order at a time; **Remove** takes it off before it starts.
+- Assignments are released when the order is voided or completed, or the machine is switched off.
+- The owner keeps **Test start** (no order, logged as TEST) and the owner-PIN **override** (rewash, machine did not start; logged).
 
 ### Current phase: LED prototype
 
-- One LED per machine stands in for the door lock. The hardware side (relays, 12V solenoid locks, mounting) will be done by my dad later.
-- Hardware: ESP32 DevKit (ESP-32D / WROOM-32 module, type HW-394, on a screw-terminal board with USB-C and a CH340 USB chip), LEDs each through a 220Ω resistor, with a shared GND rail.
+- One LED per machine stands in for the machine's coin input. The hardware side (relays or optocouplers on each machine's coin input, mounting) will be done by my dad later.
+- Hardware: ESP32 DevKit (ESP-32D / WROOM-32 module, type HW-394, on a screw-terminal board with USB-C and a CH340 USB chip), LEDs each through a 220Ω resistor, with a shared GND rail. The LED is off when idle and lights only during each pulse (`ACTIVE_LEVEL = HIGH` in the sketch).
 - 14 channels. Each channel is one screw terminal on the board:
 
   | Channel | Terminal | Green strip (USB port at the top) | ESP32 pin |
@@ -70,46 +72,45 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
   | 13 | RX2 | left strip | GPIO 16 |
   | 14 | TX2 | left strip | GPIO 17 |
 
-- Those are all the pins that are safe for a lock: they avoid the boot-strapping pins (0, 2, 5, 12, 15), GPIO 14 (pulses at boot), flash (6–11), USB serial (1, 3) and input-only pins (34–39). The list lives in `LOCK_PINS` in the sketch and `LOCK_CHANNEL_TERMINALS` in `protocol.ts`; change both together. A WROVER board cannot use channels 13–14 (PSRAM). More than 14 machines needs an I/O expander (MCP23017 or PCF8575) or a second ESP32.
+- Those are all the pins that stay quiet at boot: they avoid the boot-strapping pins (0, 2, 5, 12, 15), GPIO 14 (pulses at boot, which could start a machine), flash (6–11), USB serial (1, 3) and input-only pins (34–39). The list lives in `LOCK_PINS` in the sketch and `LOCK_CHANNEL_TERMINALS` in `protocol.ts`; change both together. A WROVER board cannot use channels 13–14 (PSRAM). More than 14 machines needs an I/O expander (MCP23017 or PCF8575) or a second ESP32.
 - `WiFi.setSleep(false)` is required: with modem sleep on, the tablet intermittently could not reach the ESP32.
-- Connection: the ESP32 and the tablet are both on the shop Wi-Fi (2.4 GHz). The owner enters the ESP32's address (reserve it in the router) and the lock key in Manage › Machines and locks. The ESP32 is powered separately (USB charger).
+- Connection: the ESP32 and the tablet are both on the shop Wi-Fi (2.4 GHz). The owner enters the ESP32's address (reserve it in the router) and the key in Manage › Machines. The ESP32 is powered separately (USB charger).
 - Moved from a USB-wired Arduino Uno to the ESP32 on 2026-11-19.
 
 ### HTTP protocol (the contract between app and ESP32)
 
-- `GET /status` → `{"device":"laundry-locks","channels":14,"unlocked":[2,5]}`. The app checks it on connect and every 20 s, since Wi-Fi gives no unplug event. `unlocked` is the source of truth for which doors are open; after a restart the ESP32 locks every door.
+- `GET /status` → `{"device":"laundry-locks","channels":14,"busy":[3],"lastAccepted":"<hex>"}`. The app checks it on connect and every 20 s, since Wi-Fi gives no unplug event. `busy` lists channels still sending pulses; `lastAccepted` is the challenge of the last start carried out.
 - `GET /challenge` → `{"challenge":"<32 hex>"}`, single use, expires after 10 s.
-- `POST /unlock` and `POST /lock`, form body `channel=<n>&challenge=<hex>&signature=<hex>`, where signature = hex HMAC-SHA256(lock key, `U<n>:<challenge>`) to unlock or `L<n>:<challenge>` to lock. Replies `200 {"ok":true,"channel":n}` or `4xx {"ok":false,"error":"bad-channel"|"bad-signature"|"stale-challenge"}`. Every attempt uses up the challenge.
-- The signature is why a phone on the same Wi-Fi cannot open doors and a captured request cannot be replayed. The ESP32 has no clock, so there are no timestamps.
-- Requests time out after 3 s. A command is never retried: a lost reply may mean the door already changed, so the app reports "timeout", logs it, and re-reads `/status` to show the real state.
-- An unlock sets the output to the unlocked level and leaves it there; a lock sets it back. Unlocks are logged; locks are not (anyone signed in may lock, through `lockMachine`).
-- Real locks must be rated for staying unlocked a long time (continuous duty). A cheap 12 V solenoid held open for long overheats; pick the lock with that in mind.
-- `LOCKED_LEVEL` is HIGH for the LED prototype: the LED is lit while locked and dark while unlocked. Before wiring relays, check the relay module: an active-LOW module keeps HIGH; one that switches on with HIGH needs LOW, or every door stays unlocked. The pin is set to the locked level before it becomes an output, so it never shows "unlocked" at boot.
+- `POST /start`, form body `channel=<n>&pulses=<count>&onMs=<ms>&offMs=<ms>&challenge=<hex>&signature=<hex>`, where signature = hex HMAC-SHA256(key, `S<n>:<count>:<onMs>:<offMs>:<challenge>`). Replies `200 {"ok":true,"channel":n}` as soon as the start is accepted (the pulses follow), or `4xx {"ok":false,"error":"bad-channel"|"bad-pulses"|"busy"|"bad-signature"|"stale-challenge"}`. Every attempt uses up the challenge.
+- Pulse limits (`PULSE_LIMITS` in `protocol.ts`, `MAX_PULSES`/`MIN_PULSE_MS`/`MAX_PULSE_MS` in the sketch): 1–50 pulses, 20–5000 ms on and off. Each machine stores its own count, on-time and off-time (Manage › Machines, defaults 1 × 500 ms / 500 ms).
+- The signature is why a phone on the same Wi-Fi cannot start a machine and a captured request cannot be replayed. The ESP32 has no clock, so there are no timestamps.
+- Requests time out after 3 s. A start is never sent twice. If its reply is lost, the app reads `/status`: `lastAccepted` equal to its challenge means it ran (`acked`), anything else means it did not (`failed`, nothing happened). Only when `/status` is unreachable too is the result `timeout`, which counts against the order's allowance (fail closed: no free second cycle; the owner override covers a machine that really did not start).
+- `startMachine` takes the assignment off the machine in the same transaction that logs the start, so two taps send one start; it puts the assignment back only for results where nothing was sent (`rejected`, `busy`, `failed`, `not-connected`).
 
 ### Existing code
 
-- `lock_controller/lock_controller.ino`: the ESP32 sketch (Arduino core for ESP32 4.0 or newer, board "ESP32 Dev Module"; it uses the core's `HMACBuilder`). It compiles: 76% of flash, 15% of RAM. The board package lives in `D:\Arduino15` (set in `%USERPROFILE%\.arduinoIDE\arduino-cli.yaml`) because C: is nearly full. Each channel keeps its own locked or unlocked state, so several doors can be unlocked at once. Wi-Fi name, password and lock key go in `lock_controller/config.h`, copied from `config.example.h`; `config.h` is git-ignored.
-- `src/machines/protocol.ts`: the contract in TypeScript (signing, address parsing, reply schemas). `src/machines/WifiMachineController.ts`: one command at a time, success only on `{"ok":true}` for the same channel. Only `src/state/AppProvider.tsx` may import it (enforced by ESLint).
-- The lock address and key are settings (`lockControllerAddress`, `lockControllerKey`), saved through `saveLockController` (owner only). They are included in backups, which are owner-only.
+- `lock_controller/lock_controller.ino`: the ESP32 sketch (Arduino core for ESP32 4.0 or newer, board "ESP32 Dev Module"; it uses the core's `HMACBuilder`). The board package lives in `D:\Arduino15` (set in `%USERPROFILE%\.arduinoIDE\arduino-cli.yaml`) because C: is nearly full. Pulse trains run non-blocking in `loop()`, so several machines can start at once. Serial prints `START <n> <count>x <on>/<off>` and `DONE <n>`. Wi-Fi name, password and key go in `lock_controller/config.h`, copied from `config.example.h`; `config.h` is git-ignored.
+- `src/machines/protocol.ts`: the contract in TypeScript (signing, pulse limits, address parsing, reply schemas). `src/machines/WifiMachineController.ts`: one start at a time. Only `src/state/AppProvider.tsx` may import it (enforced by ESLint).
+- `src/domain/machinePolicy.ts`: allowance, `decideAssignment`, `decideStart`. `src/services/machines.ts`: assign, unassign, start, override, test, machine log. The log table is still called `machine_unlocks` (kept to avoid a destructive migration); it now records starts.
+- The controller address and key are settings (`lockControllerAddress`, `lockControllerKey`), saved through `saveLockController` (owner only). They are included in backups, which are owner-only.
 - `machine_pulser/machine_pulser.ino` and `modules/machine-serial/ArduinoPulser.kt` are the old USB drafts, kept for reference only.
 - The sketch and the protocol can still be changed if the design needs it; if the protocol changes, update the sketch, `protocol.ts`, and this file together.
 
 ### React Native notes
 
-- The lock controller is plain HTTP from JS (`fetch`), so it needs no native module. Android blocks plain HTTP in release builds unless `usesCleartextTraffic` is on (set in `app.json`).
+- The machine controller is plain HTTP from JS (`fetch`), so it needs no native module. Android blocks plain HTTP in release builds unless `usesCleartextTraffic` is on (set in `app.json`).
 - The receipt printer still needs a development build; Expo Go cannot load the app's own native modules.
 
 ### Architecture requirements for the integration
 
-- Hide machine control behind an interface (for example `MachineController` with `connect()`, `unlock(machineId)`, `status()`), with interchangeable implementations: `MockMachineController` for development without hardware and `WifiMachineController` for the ESP32.
-- The UI and business logic must never talk to the lock controller directly.
-- Unlocks must be tied to an order: no order, no unlock.
-- Log every unlock with the timestamp, machine, order, and employee.
-- Owner-PIN override for legitimate non-order unlocks, such as rewashes or a stuck door. Overrides get logged too.
-- Machines should be configurable data (ID, name, type washer/dryer, hardware channel), not hard-coded.
+- Hide machine control behind an interface (`MachineController` with `connect()`, `start(channel, pulses)`, `state()`), with interchangeable implementations: `MockMachineController` for development without hardware and `WifiMachineController` for the ESP32.
+- The UI and business logic must never talk to the machine controller directly.
+- Starts must be tied to an order: no assigned order, no start.
+- Log every start with the timestamp, machine, order, and employee.
+- Owner-PIN override for legitimate non-order starts, such as rewashes or a machine that did not start. Overrides get logged too.
+- Machines are configurable data (name, type washer/dryer, channel, pulses), not hard-coded.
 
 ### Possible later upgrades (not in scope yet)
 
-- Door sensors (reed switches) to detect a door opened without an unlock
-- Auto-unlock when a cycle finishes, using current sensing
+- Sensing whether a machine is actually running (current sensing), to confirm a start
 - Sending logs off-device so the owner can review them remotely

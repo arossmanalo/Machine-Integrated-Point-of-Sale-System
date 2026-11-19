@@ -6,7 +6,7 @@ import { createCustomer, listCustomers } from '../customers';
 import { detectBackupKind, exportBackup, importLegacyExport, restoreBackup } from '../backup';
 import { listExpenses } from '../expenses';
 import { listInventory } from '../inventory';
-import { addMachine, listUnlocks, unlockForOrder } from '../machines';
+import { addMachine, assignOrder, listMachineLog, listMachines, startMachine } from '../machines';
 import { createOrder, getOrderDetail, listOrderSummaries } from '../orders';
 import { getSetting, setSetting } from '../settings';
 
@@ -135,11 +135,13 @@ describe('who may use backups', () => {
 });
 
 describe('full backup', () => {
-  it('round-trips every table, including the unlock log', async () => {
+  it('round-trips every table, including the machine log and a machine waiting on an order', async () => {
     const { ctx, owner } = await setup();
     importLegacyExport(ctx, owner, legacyExport);
     setSetting(ctx.db, 'pricePerLoad', 25000);
-    const machineId = addMachine(ctx, owner, { name: 'Washer 1', type: 'WASHER', hardwareChannel: 1, enabled: true });
+    const pulses = { pulseCount: 2, pulseOnMs: 300, pulseOffMs: 400 };
+    const machineId = addMachine(ctx, owner, { name: 'Washer 1', type: 'WASHER', hardwareChannel: 1, enabled: true, ...pulses });
+    const dryerId = addMachine(ctx, owner, { name: 'Dryer 1', type: 'DRYER', hardwareChannel: 2, enabled: true, ...pulses });
     const order = createOrder(ctx, testEmployee, {
       customerId: 'C0002',
       weightKg: 8,
@@ -154,7 +156,9 @@ describe('full backup', () => {
     });
     const controller = new MockMachineController(0);
     await controller.connect();
-    await unlockForOrder(ctx, controller, testEmployee, order.id, machineId);
+    assignOrder(ctx, testEmployee, order.id, machineId);
+    await startMachine(ctx, controller, testEmployee, machineId);
+    assignOrder(ctx, testEmployee, order.id, dryerId);
 
     const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
     expect(detectBackupKind(backup)).toBe('backup');
@@ -163,9 +167,28 @@ describe('full backup', () => {
     const summary = restoreBackup(fresh, owner, backup);
     expect(summary).toEqual({ orders: 3, customers: 3, unlocks: 1 });
     expect(listOrderSummaries(fresh)).toEqual(listOrderSummaries(ctx));
-    expect(listUnlocks(fresh, { start: 0, end: Number.MAX_SAFE_INTEGER })).toHaveLength(1);
+    expect(listMachineLog(fresh, { start: 0, end: Number.MAX_SAFE_INTEGER })).toHaveLength(1);
+    expect(listMachines(fresh)).toEqual(listMachines(ctx));
+    expect(listMachines(fresh).find((m) => m.id === dryerId)).toMatchObject({ assignedOrderId: order.id, pulseCount: 2 });
+
+    // Restoring over data that has a machine waiting on an order must also work.
+    expect(() => restoreBackup(fresh, owner, backup)).not.toThrow();
     expect(getSetting(fresh.db, 'pricePerLoad')).toBe(25000);
     await expect(logIn(fresh, 'Aryl', 'secret123')).resolves.toMatchObject({ role: 'OWNER' });
+  });
+
+  it('gives machines from a backup made before pulse starts the default pulses', async () => {
+    const { ctx, owner } = await setup();
+    addMachine(ctx, owner, { name: 'Washer 1', type: 'WASHER', hardwareChannel: 1, enabled: true, pulseCount: 4, pulseOnMs: 100, pulseOffMs: 100 });
+    const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
+    for (const row of backup.tables.machines) {
+      for (const key of ['pulseCount', 'pulseOnMs', 'pulseOffMs', 'assignedOrderId', 'assignedAt', 'assignedByName']) {
+        delete row[key];
+      }
+    }
+    const fresh = createTestContext();
+    restoreBackup(fresh, owner, backup);
+    expect(listMachines(fresh)[0]).toMatchObject({ pulseCount: 1, pulseOnMs: 500, pulseOffMs: 500, assignedOrderId: null });
   });
 
   it('treats priced items in a backup from before the add-on switch as add-ons', async () => {

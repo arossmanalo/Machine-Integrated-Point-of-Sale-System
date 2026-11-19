@@ -127,10 +127,18 @@ export const machines = sqliteTable('machines', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
   type: text('type', { enum: ['WASHER', 'DRYER'] }).notNull(),
-  /** Which lock controller channel (1 to 14, see LOCK_CHANNEL_TERMINALS) drives this machine's lock. */
+  /** Which machine controller channel (1 to 14, see LOCK_CHANNEL_TERMINALS) starts this machine. */
   hardwareChannel: integer('hardware_channel').notNull(),
   enabled: bool('enabled').notNull().default(true),
   sortOrder: integer('sort_order').notNull().default(0),
+  /** One start sends pulseCount pulses of pulseOnMs, each followed by pulseOffMs. */
+  pulseCount: integer('pulse_count').notNull().default(1),
+  pulseOnMs: integer('pulse_on_ms').notNull().default(500),
+  pulseOffMs: integer('pulse_off_ms').notNull().default(500),
+  /** The order this machine will run next; a start uses it up. Null when the machine is free. */
+  assignedOrderId: text('assigned_order_id').references(() => orders.id),
+  assignedAt: integer('assigned_at'),
+  assignedByName: text('assigned_by_name'),
 });
 
 /** Append-only. Nothing in the app edits or deletes these rows except the result update. */
@@ -150,7 +158,7 @@ export const machineUnlocks = sqliteTable(
     overrideReason: text('override_reason'),
     overrideNote: text('override_note'),
     result: text('result', {
-      enum: ['PENDING', 'ACKED', 'REJECTED', 'TIMEOUT', 'NOT_CONNECTED', 'DENIED'],
+      enum: ['PENDING', 'ACKED', 'REJECTED', 'BUSY', 'FAILED', 'TIMEOUT', 'NOT_CONNECTED', 'DENIED'],
     }).notNull(),
     resolvedAt: integer('resolved_at'),
   },

@@ -28,7 +28,7 @@ export default function Login() {
   }
 
   return (
-    <AuthFrame title="Sign in" intro="Use your own account so orders and unlocks are recorded under your name.">
+    <AuthFrame title="Sign in" intro="Use your own account so orders and machine starts are recorded under your name.">
       <TextField
         label="Username"
         value={username}

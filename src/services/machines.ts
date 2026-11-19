@@ -1,15 +1,22 @@
 import { and, asc, desc, eq, gte, inArray, lt, ne, or } from 'drizzle-orm';
 
 import { can } from '@/domain/permissions';
-import { decideOrderUnlock, MACHINE_TYPES, type MachineType } from '@/domain/unlockPolicy';
-import { isValidChannel, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress } from '@/machines/protocol';
-import type { MachineController, UnlockResult } from '@/machines/MachineController';
+import {
+  decideAssignment,
+  decideStart,
+  MACHINE_TYPES,
+  type MachineType,
+  type PolicyOrder,
+} from '@/domain/machinePolicy';
+import { isValidChannel, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress, pulsesProblem } from '@/machines/protocol';
+import type { MachineController, PulseSettings, StartResult } from '@/machines/MachineController';
 import {
   machines,
   machineUnlocks,
   orders,
   type MachineRow,
   type MachineUnlockRow,
+  type OrderRow,
   type UnlockKind,
   type UnlockResultCode,
 } from '@/db/schema';
@@ -21,22 +28,35 @@ import { setSetting } from './settings';
 /** A pending row younger than this still holds its allowance (the reply may be on its way). */
 const PENDING_HOLD_MS = 30 * 1000;
 
-export const OVERRIDE_REASONS = ['Rewash', 'Stuck door', 'Maintenance', 'Other'] as const;
+export const OVERRIDE_REASONS = ['Rewash', 'Machine did not start', 'Maintenance', 'Other'] as const;
 export type OverrideReason = (typeof OVERRIDE_REASONS)[number];
 
-const RESULT_CODES: Record<UnlockResult, UnlockResultCode> = {
+const RESULT_CODES: Record<StartResult, UnlockResultCode> = {
   acked: 'ACKED',
   rejected: 'REJECTED',
+  busy: 'BUSY',
+  failed: 'FAILED',
   timeout: 'TIMEOUT',
   'not-connected': 'NOT_CONNECTED',
 };
 
-export const RESULT_MESSAGES: Record<UnlockResult, string> = {
-  acked: 'Done.',
-  rejected: 'The lock controller refused the command. Check the machine channel and lock key in Manage.',
-  timeout: 'The lock controller did not answer, so the door may or may not have opened. Check it before trying again.',
-  'not-connected': 'Cannot reach the lock controller. Check that it has power and is on the shop Wi-Fi.',
+/** Results that mean no pulse went out, so the order's assignment can be given back. */
+const NOTHING_SENT: readonly StartResult[] = ['rejected', 'busy', 'failed', 'not-connected'];
+
+export const RESULT_MESSAGES: Record<StartResult, string> = {
+  acked: 'Started.',
+  rejected: 'The machine controller refused the start. Check the channel, pulse settings and key in Manage.',
+  busy: 'This machine is still receiving the pulses of the last start. Wait a moment and try again.',
+  failed: 'The machine controller did not get the start, so nothing happened. Try again.',
+  timeout:
+    'The machine controller did not answer, so the machine may or may not have started. Check the machine; ' +
+    'if it did not start, ask the owner for an override.',
+  'not-connected': 'Cannot reach the machine controller. Check that it has power and is on the shop Wi-Fi.',
 };
+
+export function pulsesOf(machine: MachineRow): PulseSettings {
+  return { count: machine.pulseCount, onMs: machine.pulseOnMs, offMs: machine.pulseOffMs };
+}
 
 // ---------- Machine list ----------
 
@@ -45,6 +65,9 @@ export interface MachineInput {
   type: MachineType;
   hardwareChannel: number;
   enabled: boolean;
+  pulseCount: number;
+  pulseOnMs: number;
+  pulseOffMs: number;
 }
 
 export function listMachines(ctx: ServiceContext): MachineRow[] {
@@ -60,8 +83,10 @@ function checkMachine(db: Db, input: MachineInput, editingId: number | null): Ma
   if (!name) throw new UserFacingError('Give the machine a name, such as "Washer 1".');
   if (!MACHINE_TYPES.includes(input.type)) throw new UserFacingError('Pick washer or dryer.');
   if (!isValidChannel(input.hardwareChannel)) {
-    throw new UserFacingError(`The lock channel must be a whole number from 1 to ${MAX_CHANNEL}.`);
+    throw new UserFacingError(`The channel must be a whole number from 1 to ${MAX_CHANNEL}.`);
   }
+  const problem = pulsesProblem({ count: input.pulseCount, onMs: input.pulseOnMs, offMs: input.pulseOffMs });
+  if (problem) throw new UserFacingError(problem);
   const clash = db
     .select()
     .from(machines)
@@ -86,7 +111,9 @@ export function addMachine(ctx: ServiceContext, actor: Actor, input: MachineInpu
 export function updateMachine(ctx: ServiceContext, actor: Actor, id: number, input: MachineInput): void {
   requireOwner(actor);
   const values = checkMachine(ctx.db, input, id);
-  ctx.db.update(machines).set(values).where(eq(machines.id, id)).run();
+  // A machine switched off cannot run the order waiting on it.
+  const release = values.enabled ? {} : { assignedOrderId: null, assignedAt: null, assignedByName: null };
+  ctx.db.update(machines).set({ ...values, ...release }).where(eq(machines.id, id)).run();
 }
 
 export interface LockControllerInput {
@@ -94,14 +121,14 @@ export interface LockControllerInput {
   key: string;
 }
 
-/** Where the ESP32 is on the shop Wi-Fi and the passphrase that signs every pulse. */
+/** Where the ESP32 is on the shop Wi-Fi and the passphrase that signs every start. */
 export function saveLockController(ctx: ServiceContext, actor: Actor, input: LockControllerInput): void {
   requireOwner(actor);
   if (normalizeAddress(input.address) === null) {
-    throw new UserFacingError('Enter the address shown by the lock controller, such as 192.168.1.50.');
+    throw new UserFacingError('Enter the address shown by the machine controller, such as 192.168.1.50.');
   }
   if (input.key.length < MIN_KEY_LENGTH) {
-    throw new UserFacingError(`The lock key needs at least ${MIN_KEY_LENGTH} characters.`);
+    throw new UserFacingError(`The key needs at least ${MIN_KEY_LENGTH} characters.`);
   }
   ctx.db.transaction((tx) => {
     setSetting(tx, 'lockControllerAddress', input.address.trim());
@@ -115,17 +142,32 @@ function requireMachine(db: Db, id: number): MachineRow {
   return machine;
 }
 
+function policyOrder(order: OrderRow | undefined): PolicyOrder | null {
+  if (!order) return null;
+  return {
+    id: order.id,
+    service: order.service,
+    loadCount: order.loadCount,
+    status: order.status,
+    voided: order.voidedAt !== null,
+  };
+}
+
 // ---------- Allowance ----------
 
-export interface UnlockUsage {
+export interface MachineUsage {
   WASHER: number;
   DRYER: number;
 }
 
-/** Unlocks counted against an order: confirmed ones, plus very recent ones still waiting. */
-export function unlockUsage(ctx: ServiceContext, orderId: string): UnlockUsage {
-  const rows = ctx.db
-    .select()
+/**
+ * Machines counted against an order: starts that went through, starts still waiting for an
+ * answer, starts never answered (fail closed: the machine may have run), and machines the order
+ * is assigned to right now.
+ */
+export function machineUsage(ctx: ServiceContext, orderId: string): MachineUsage {
+  const starts = ctx.db
+    .select({ type: machineUnlocks.machineType })
     .from(machineUnlocks)
     .where(
       and(
@@ -133,18 +175,66 @@ export function unlockUsage(ctx: ServiceContext, orderId: string): UnlockUsage {
         eq(machineUnlocks.kind, 'ORDER'),
         or(
           eq(machineUnlocks.result, 'ACKED'),
+          eq(machineUnlocks.result, 'TIMEOUT'),
           and(eq(machineUnlocks.result, 'PENDING'), gte(machineUnlocks.at, ctx.now() - PENDING_HOLD_MS)),
         ),
       ),
     )
     .all();
+  const assigned = ctx.db
+    .select({ type: machines.type })
+    .from(machines)
+    .where(eq(machines.assignedOrderId, orderId))
+    .all();
+  const all = [...starts, ...assigned];
   return {
-    WASHER: rows.filter((r) => r.machineType === 'WASHER').length,
-    DRYER: rows.filter((r) => r.machineType === 'DRYER').length,
+    WASHER: all.filter((r) => r.type === 'WASHER').length,
+    DRYER: all.filter((r) => r.type === 'DRYER').length,
   };
 }
 
-// ---------- Unlocking ----------
+/** Machines waiting to run this order. */
+export function machinesAssignedTo(ctx: ServiceContext, orderId: string): MachineRow[] {
+  return ctx.db
+    .select()
+    .from(machines)
+    .where(eq(machines.assignedOrderId, orderId))
+    .orderBy(asc(machines.sortOrder), asc(machines.id))
+    .all();
+}
+
+// ---------- Assigning ----------
+
+/** Puts an order on a machine, if the order still has that machine type left. */
+export function assignOrder(ctx: ServiceContext, actor: Actor, orderId: string, machineId: number): void {
+  ctx.db.transaction((tx) => {
+    const txCtx = { ...ctx, db: tx };
+    const machine = requireMachine(tx, machineId);
+    const order = tx.select().from(orders).where(eq(orders.id, orderId)).get();
+    const decision = decideAssignment({
+      order: policyOrder(order),
+      machine,
+      usedOfType: machineUsage(txCtx, orderId)[machine.type],
+    });
+    if (!decision.allowed) throw new UserFacingError(decision.message);
+    tx.update(machines)
+      .set({ assignedOrderId: orderId, assignedAt: ctx.now(), assignedByName: actor.username })
+      .where(eq(machines.id, machineId))
+      .run();
+  });
+}
+
+/** Takes the order off a machine before it starts, for example when it went to the wrong one. */
+export function unassignMachine(ctx: ServiceContext, machineId: number): void {
+  requireMachine(ctx.db, machineId);
+  ctx.db
+    .update(machines)
+    .set({ assignedOrderId: null, assignedAt: null, assignedByName: null })
+    .where(eq(machines.id, machineId))
+    .run();
+}
+
+// ---------- Starting ----------
 
 interface LogEntry {
   machine: MachineRow;
@@ -179,19 +269,19 @@ function writeLog(ctx: ServiceContext, entry: LogEntry): number {
   return row.id;
 }
 
-/** Logs first, then sends, then records what the lock controller said. */
+/** Sends the start that was logged as PENDING, then records what the controller said. */
 async function sendAndRecord(
   ctx: ServiceContext,
   controller: MachineController,
   logId: number,
-  channel: number,
-): Promise<UnlockResult> {
-  let result: UnlockResult;
+  machine: MachineRow,
+): Promise<StartResult> {
+  let result: StartResult;
   try {
-    result = await controller.unlock(channel);
+    result = await controller.start(machine.hardwareChannel, pulsesOf(machine));
   } catch {
     // Controllers report failures as results; an exception here means the link broke mid-send.
-    result = 'not-connected';
+    result = 'timeout';
   }
   ctx.db
     .update(machineUnlocks)
@@ -205,45 +295,52 @@ function isReady(controller: MachineController): boolean {
   return controller.state().status === 'ready';
 }
 
-/** Unlocks a machine for an order, if the order still has allowance for that machine type. */
-export async function unlockForOrder(
+/**
+ * Starts a machine for the order assigned to it. The assignment is taken off the machine in the
+ * same step that logs the start, so tapping Start twice cannot send two starts. It goes back
+ * on the machine only when nothing was sent.
+ */
+export async function startMachine(
   ctx: ServiceContext,
   controller: MachineController,
   actor: Actor,
-  orderId: string,
   machineId: number,
-): Promise<UnlockResult> {
-  const ready = isReady(controller);
-  const prepared = ctx.db.transaction((tx) => {
-    const txCtx = { ...ctx, db: tx };
+): Promise<StartResult> {
+  if (!isReady(controller)) return 'not-connected';
+  const claimed = ctx.db.transaction((tx) => {
     const machine = requireMachine(tx, machineId);
-    const order = tx.select().from(orders).where(eq(orders.id, orderId)).get();
-    const usage = unlockUsage(txCtx, orderId);
-    const decision = decideOrderUnlock({
-      order: order
-        ? {
-            service: order.service,
-            loadCount: order.loadCount,
-            status: order.status,
-            voided: order.voidedAt !== null,
-          }
-        : null,
-      machine,
-      usedOfType: usage[machine.type],
-      controllerReady: true,
-    });
-    if (!decision.allowed) throw new UserFacingError(decision.message);
-    const logId = writeLog(txCtx, {
-      machine,
-      actor,
-      kind: 'ORDER',
-      orderId,
-      result: ready ? 'PENDING' : 'NOT_CONNECTED',
-    });
-    return { logId, channel: machine.hardwareChannel };
+    const order =
+      machine.assignedOrderId === null
+        ? undefined
+        : tx.select().from(orders).where(eq(orders.id, machine.assignedOrderId)).get();
+    const decision = decideStart(machine, policyOrder(order));
+    if (!decision.allowed || machine.assignedOrderId === null) {
+      throw new UserFacingError(decision.allowed ? 'Assign an order first.' : decision.message);
+    }
+    tx.update(machines)
+      .set({ assignedOrderId: null, assignedAt: null, assignedByName: null })
+      .where(eq(machines.id, machineId))
+      .run();
+    const logId = writeLog(
+      { ...ctx, db: tx },
+      { machine, actor, kind: 'ORDER', orderId: machine.assignedOrderId, result: 'PENDING' },
+    );
+    return { machine, logId };
   });
-  if (!ready) return 'not-connected';
-  return sendAndRecord(ctx, controller, prepared.logId, prepared.channel);
+  const result = await sendAndRecord(ctx, controller, claimed.logId, claimed.machine);
+  if (NOTHING_SENT.includes(result)) {
+    // Nothing started, so the order goes back on the machine, unless someone reassigned it since.
+    ctx.db
+      .update(machines)
+      .set({
+        assignedOrderId: claimed.machine.assignedOrderId,
+        assignedAt: claimed.machine.assignedAt,
+        assignedByName: claimed.machine.assignedByName,
+      })
+      .where(and(eq(machines.id, machineId), eq(machines.enabled, true)))
+      .run();
+  }
+  return result;
 }
 
 export interface OverrideInput {
@@ -254,13 +351,13 @@ export interface OverrideInput {
   orderId: string | null;
 }
 
-/** Owner-PIN unlock outside an order's allowance. Wrong PINs are logged too. */
-export async function overrideUnlock(
+/** Owner-PIN start outside an order's allowance. Wrong PINs are logged too. */
+export async function overrideStart(
   ctx: ServiceContext,
   controller: MachineController,
   actor: Actor,
   input: OverrideInput,
-): Promise<UnlockResult> {
+): Promise<StartResult> {
   const machine = requireMachine(ctx.db, input.machineId);
   const note = input.note.trim();
   if (input.reason === 'Other' && !note) throw new UserFacingError('Describe the reason for the override.');
@@ -281,30 +378,16 @@ export async function overrideUnlock(
   const ready = isReady(controller);
   const logId = writeLog(ctx, { ...base, kind: 'OVERRIDE', result: ready ? 'PENDING' : 'NOT_CONNECTED' });
   if (!ready) return 'not-connected';
-  return sendAndRecord(ctx, controller, logId, machine.hardwareChannel);
+  return sendAndRecord(ctx, controller, logId, machine);
 }
 
-/** Owner test pulse from Settings, logged as TEST. */
-/**
- * Locks a door again. Anyone signed in may lock: it can only make the shop safer. Not logged,
- * since the unlock log is about who opened which door.
- */
-export async function lockMachine(
-  ctx: ServiceContext,
-  controller: MachineController,
-  machineId: number,
-): Promise<UnlockResult> {
-  const machine = requireMachine(ctx.db, machineId);
-  if (!isReady(controller)) return 'not-connected';
-  return controller.lock(machine.hardwareChannel);
-}
-
-export async function testPulse(
+/** Owner test start from the machine settings or the Machines tab, logged as TEST. */
+export async function testStart(
   ctx: ServiceContext,
   controller: MachineController,
   actor: Actor,
   machineId: number,
-): Promise<UnlockResult> {
+): Promise<StartResult> {
   requireOwner(actor);
   const machine = requireMachine(ctx.db, machineId);
   const ready = isReady(controller);
@@ -316,12 +399,12 @@ export async function testPulse(
     result: ready ? 'PENDING' : 'NOT_CONNECTED',
   });
   if (!ready) return 'not-connected';
-  return sendAndRecord(ctx, controller, logId, machine.hardwareChannel);
+  return sendAndRecord(ctx, controller, logId, machine);
 }
 
 // ---------- Log ----------
 
-export function listUnlocks(ctx: ServiceContext, range: { start: number; end: number }): MachineUnlockRow[] {
+export function listMachineLog(ctx: ServiceContext, range: { start: number; end: number }): MachineUnlockRow[] {
   return ctx.db
     .select()
     .from(machineUnlocks)
@@ -330,8 +413,8 @@ export function listUnlocks(ctx: ServiceContext, range: { start: number; end: nu
     .all();
 }
 
-/** Last confirmed unlock per machine, for the machine grid. */
-export function lastUnlocks(ctx: ServiceContext, machineIds: number[]): Map<number, MachineUnlockRow> {
+/** Last start that went through, per machine, for the machine grid. */
+export function lastStarts(ctx: ServiceContext, machineIds: number[]): Map<number, MachineUnlockRow> {
   const result = new Map<number, MachineUnlockRow>();
   if (machineIds.length === 0) return result;
   const rows = ctx.db

@@ -1,6 +1,6 @@
 export const BUILT_IN_STATUSES = ['PENDING', 'WASHING', 'READY', 'COMPLETED', 'AUDITED'] as const;
 
-/** Orders in these statuses are finished: no more machine unlocks, not counted as open work. */
+/** Orders in these statuses are finished: no more machine starts, not counted as open work. */
 export const CLOSED_STATUSES: readonly string[] = ['COMPLETED', 'AUDITED'];
 
 export const INITIAL_STATUS = 'PENDING';

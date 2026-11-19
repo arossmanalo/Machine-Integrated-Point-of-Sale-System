@@ -7,14 +7,14 @@ import { useApp } from '@/state/AppProvider';
 import { Text } from './Text';
 import { colors, MIN_TOUCH, radius, space } from './theme';
 
-/** Header chip showing whether the door-lock controller is connected. Tap to reconnect. */
+/** Header chip showing whether the machine controller is connected. Tap to reconnect. */
 export function LockStatusChip() {
   const { controller, controllerState } = useApp();
   const { status } = controllerState;
   const simulated = controller.kind === 'mock';
   const ok = status === 'ready';
   const color = ok ? colors.success : status === 'connecting' ? colors.warning : colors.danger;
-  const label = simulated && ok ? 'Locks simulated' : STATUS_LABELS[status];
+  const label = simulated && ok ? 'Machines simulated' : STATUS_LABELS[status];
   return (
     <Pressable
       accessibilityRole="button"
@@ -25,7 +25,7 @@ export function LockStatusChip() {
       style={({ pressed }) => [styles.chip, pressed && { backgroundColor: colors.surfaceSunken }]}
     >
       <MaterialCommunityIcons
-        name={ok ? 'lock-check-outline' : status === 'connecting' ? 'lock-clock' : 'lock-alert-outline'}
+        name={ok ? 'wifi-check' : status === 'connecting' ? 'wifi-sync' : 'wifi-alert'}
         size={18}
         color={color}
       />

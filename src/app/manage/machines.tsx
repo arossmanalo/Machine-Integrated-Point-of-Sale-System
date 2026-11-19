@@ -2,16 +2,16 @@ import { useState } from 'react';
 
 import type { MachineRow } from '@/db/schema';
 import { can } from '@/domain/permissions';
-import { MACHINE_TYPE_LABELS, MACHINE_TYPES, type MachineType } from '@/domain/unlockPolicy';
+import { MACHINE_TYPE_LABELS, MACHINE_TYPES, type MachineType } from '@/domain/machinePolicy';
 import { STATUS_LABELS } from '@/machines/MachineController';
-import { channelTerminal, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress } from '@/machines/protocol';
+import { channelTerminal, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress, pulsesProblem } from '@/machines/protocol';
 import { changeOwnerPin } from '@/services/auth';
 import {
   addMachine,
   listMachines,
   RESULT_MESSAGES,
   saveLockController,
-  testPulse,
+  testStart,
   updateMachine,
 } from '@/services/machines';
 import { getSetting, setSetting } from '@/services/settings';
@@ -24,6 +24,10 @@ import { EmptyState, ListRow, Notice, Panel, Row, Screen, Section } from '@/ui/l
 import { ManageScreen } from '@/ui/ManagerGate';
 import { Text } from '@/ui/Text';
 import { TextField } from '@/ui/TextField';
+
+function pulseSummary(machine: MachineRow): string {
+  return `${machine.pulseCount} × ${machine.pulseOnMs} ms on, ${machine.pulseOffMs} ms off`;
+}
 
 export default function MachineSettings() {
   const actor = useActor();
@@ -47,24 +51,26 @@ export default function MachineSettings() {
     const result = await action.run((c) => saveLockController(c, actor, { address, key }));
     if (result.ok) {
       reloadLockController();
-      toast('Lock controller settings saved');
+      toast('Machine controller settings saved');
     }
   }
 
   async function test(machine: MachineRow) {
-    const result = await action.run((c) => testPulse(c, controller, actor, machine.id));
+    const result = await action.run((c) => testStart(c, controller, actor, machine.id));
     if (result.ok) {
       toast(
-        result.value === 'acked' ? `${machine.name} unlocked (test). Lock it on the Machines tab.` : `${machine.name}: ${RESULT_MESSAGES[result.value]}`,
+        result.value === 'acked'
+          ? `${machine.name}: test pulses sent (${pulseSummary(machine)})`
+          : `${machine.name}: ${RESULT_MESSAGES[result.value]}`,
         result.value === 'acked' ? 'success' : 'danger',
       );
     }
   }
 
   return (
-    <ManageScreen title="Machines and locks" allowed={can.manageMachines}>
+    <ManageScreen title="Machines" allowed={can.manageMachines}>
       <Screen>
-        <Section title="Lock controller">
+        <Section title="Machine controller">
           <Row wrap>
             <Text style={{ flex: 1 }}>
               {`${STATUS_LABELS[controllerState.status]}${controllerState.detail ? `. ${controllerState.detail}` : ''}`}
@@ -78,26 +84,26 @@ export default function MachineSettings() {
             placeholder="192.168.1.50"
             autoCapitalize="none"
             keyboardType="url"
-            hint="The lock controller shows it on the serial monitor when it starts. Reserve it in the router so it stays the same."
+            hint="The machine controller shows it on the serial monitor when it starts. Reserve it in the router so it stays the same."
             error={addressError ? 'Enter an address like 192.168.1.50.' : null}
           />
           <TextField
-            label="Lock key"
+            label="Key"
             value={key}
             onChangeText={setKey}
             autoCapitalize="none"
             secureTextEntry
-            hint={`The same passphrase as LOCK_KEY on the lock controller, at least ${MIN_KEY_LENGTH} characters. Anyone who knows it can open doors.`}
+            hint={`The same passphrase as LOCK_KEY on the machine controller, at least ${MIN_KEY_LENGTH} characters. Anyone who knows it can start machines.`}
           />
           <Button
-            label="Save lock settings"
+            label="Save controller settings"
             onPress={saveConnection}
             busy={action.busy}
             disabled={!changed || addressError}
           />
           <Toggle
-            label="Simulate locks"
-            description="For demos and training: unlocks are recorded but nothing is sent to the lock controller."
+            label="Simulate machines"
+            description="For demos and training: starts are recorded but nothing is sent to the machine controller."
             value={simulate}
             onChange={async (value) => {
               const result = await action.run((c) => setSetting(c.db, 'simulateMachines', value));
@@ -108,20 +114,20 @@ export default function MachineSettings() {
 
         <Section
           title="Machines"
-          description={`Each machine's lock channel (1 to ${MAX_CHANNEL}) is the lock controller terminal its door lock is wired to.`}
+          description={`Each machine's channel (1 to ${MAX_CHANNEL}) is the machine controller terminal it is wired to. A start sends that machine's pulses.`}
           action={<Button label="Add machine" icon="plus" onPress={() => setEditing('new')} />}
         >
           <Panel>
             {machines.length === 0 ? (
-              <EmptyState icon="washing-machine" title="No machines yet" body="Add each washer and dryer once its lock is wired." />
+              <EmptyState icon="washing-machine" title="No machines yet" body="Add each washer and dryer once it is wired to the controller." />
             ) : (
               machines.map((machine, index) => (
                 <ListRow
                   key={machine.id}
                   title={machine.name}
-                  subtitle={`${MACHINE_TYPE_LABELS[machine.type]} · lock channel ${machine.hardwareChannel} (${
+                  subtitle={`${MACHINE_TYPE_LABELS[machine.type]} · channel ${machine.hardwareChannel} (${
                     channelTerminal(machine.hardwareChannel) ?? 'not on the board'
-                  })`}
+                  }) · ${pulseSummary(machine)}`}
                   right={
                     <Row>
                       {!machine.enabled && <Badge label="Off" tone="warning" />}
@@ -160,9 +166,23 @@ function MachineDialog({ machine, nextChannel, onClose }: { machine: MachineRow 
   const [type, setType] = useState<MachineType>(machine?.type ?? 'WASHER');
   const [channelText, setChannelText] = useState(String(machine?.hardwareChannel ?? nextChannel));
   const [enabled, setEnabled] = useState(machine?.enabled ?? true);
+  const [countText, setCountText] = useState(String(machine?.pulseCount ?? 1));
+  const [onText, setOnText] = useState(String(machine?.pulseOnMs ?? 500));
+  const [offText, setOffText] = useState(String(machine?.pulseOffMs ?? 500));
+  const pulses = { count: Number(countText), onMs: Number(onText), offMs: Number(offText) };
+  const pulseError = pulsesProblem(pulses);
+  const digits = (set: (value: string) => void) => (text: string) => set(text.replace(/\D/g, ''));
 
   async function save() {
-    const input = { name, type, hardwareChannel: Number(channelText), enabled };
+    const input = {
+      name,
+      type,
+      hardwareChannel: Number(channelText),
+      enabled,
+      pulseCount: pulses.count,
+      pulseOnMs: pulses.onMs,
+      pulseOffMs: pulses.offMs,
+    };
     const result = await action.run((c) => {
       if (machine) updateMachine(c, actor, machine.id, input);
       else addMachine(c, actor, input);
@@ -178,26 +198,36 @@ function MachineDialog({ machine, nextChannel, onClose }: { machine: MachineRow 
       actions={
         <>
           <Button label="Cancel" kind="secondary" onPress={onClose} />
-          <Button label={machine ? 'Save changes' : 'Add machine'} onPress={save} busy={action.busy} />
+          <Button label={machine ? 'Save changes' : 'Add machine'} onPress={save} busy={action.busy} disabled={pulseError !== null} />
         </>
       }
     >
       <TextField label="Name" value={name} onChangeText={setName} placeholder="Washer 1" autoCapitalize="words" />
       <Choice label="Type" value={type} onChange={setType} options={MACHINE_TYPES.map((t) => ({ value: t, label: MACHINE_TYPE_LABELS[t] }))} />
       <TextField
-        label="Lock channel"
+        label="Channel"
         value={channelText}
         onChangeText={(text) => setChannelText(text.replace(/\D/g, ''))}
         keyboardType="number-pad"
         hint={
           channelTerminal(Number(channelText)) === null
             ? `A number from 1 to ${MAX_CHANNEL}.`
-            : `Wire this door's lock to terminal ${channelTerminal(Number(channelText))} on the lock controller.`
+            : `Wire this machine to terminal ${channelTerminal(Number(channelText))} on the machine controller.`
         }
       />
+      <Text variant="label">Start pulses</Text>
+      <Text tone="muted">
+        {`A start sends ${pulses.count || '?'} pulse${pulses.count === 1 ? '' : 's'} of ${pulses.onMs || '?'} ms with ${pulses.offMs || '?'} ms between them, like coins in the slot.`}
+      </Text>
+      <Row wrap style={{ alignItems: 'flex-start' }}>
+        <TextField label="Number of pulses" value={countText} onChangeText={digits(setCountText)} keyboardType="number-pad" style={{ flex: 1 }} />
+        <TextField label="Pulse length (ms)" value={onText} onChangeText={digits(setOnText)} keyboardType="number-pad" style={{ flex: 1 }} />
+        <TextField label="Gap between (ms)" value={offText} onChangeText={digits(setOffText)} keyboardType="number-pad" style={{ flex: 1 }} />
+      </Row>
+      {pulseError && <Text tone="danger">{pulseError}</Text>}
       <Toggle
         label="In use"
-        description="Switch off while a machine is broken so nobody can be sent to it."
+        description="Switch off while a machine is broken so nobody can be sent to it. Any order waiting on it is taken off."
         value={enabled}
         onChange={setEnabled}
       />

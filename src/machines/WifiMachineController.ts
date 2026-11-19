@@ -4,18 +4,18 @@ import type {
   ConnectResult,
   ControllerState,
   MachineController,
-  UnlockResult,
+  PulseSettings,
+  StartResult,
   Unsubscribe,
 } from './MachineController';
 import {
   challengeResponse,
-  commandResponse,
-  COMMAND_PATHS,
   isValidChannel,
   MIN_KEY_LENGTH,
-  signCommand,
+  pulsesProblem,
+  signStart,
+  startResponse,
   statusResponse,
-  type LockCommand,
 } from './protocol';
 
 export interface HttpRequest {
@@ -50,10 +50,10 @@ export interface WifiTimings {
 export const DEFAULT_TIMINGS: WifiTimings = { requestTimeoutMs: 3000, healthIntervalMs: 20000 };
 
 const DETAILS = {
-  notConfigured: 'Set the lock controller address and key in Manage, Machines and locks.',
-  unreachable: 'Cannot reach the lock controller. Check that it has power and is on the shop Wi-Fi.',
-  notOurs: 'Something answered at that address, but it is not the lock controller. Check the address.',
-  badKey: 'The lock key in the app does not match the one on the lock controller.',
+  notConfigured: 'Set the machine controller address and key in Manage, Machines.',
+  unreachable: 'Cannot reach the machine controller. Check that it has power and is on the shop Wi-Fi.',
+  notOurs: 'Something answered at that address, but it is not the machine controller. Check the address.',
+  badKey: 'The key in the app does not match the one on the machine controller.',
 };
 
 type CheckedReply<T> = { kind: 'ok'; data: T } | { kind: 'unreachable' } | { kind: 'not-ours' };
@@ -87,20 +87,19 @@ export const fetchHttp: HttpClient = async ({ method, url, body, timeoutMs }) =>
 };
 
 /**
- * Talks to the ESP32 lock controller over the shop Wi-Fi. Every unlock and lock is signed with the
- * shared key over a single-use challenge from the ESP32, so it cannot be forged or replayed.
- * A command is never retried: if its reply is lost the door may already have changed, so the
- * controller asks the ESP32 for its real state instead. The ESP32's status reply is the source of
- * truth for which doors are unlocked.
+ * Talks to the ESP32 machine controller over the shop Wi-Fi. Every start is signed with the shared
+ * key over a single-use challenge from the ESP32, so it cannot be forged or replayed.
+ * A start is never sent twice. If its reply is lost, the controller asks the ESP32 which start it
+ * last carried out; only when the ESP32 cannot be reached at all is the result "timeout".
  */
 export class WifiMachineController implements MachineController {
   readonly kind = 'wifi' as const;
-  private current: ControllerState = { status: 'disconnected', detail: null, unlockedChannels: [] };
+  private current: ControllerState = { status: 'disconnected', detail: null };
   private listeners = new Set<(state: ControllerState) => void>();
   private queue: Promise<unknown> = Promise.resolve();
   private connecting: Promise<ConnectResult> | null = null;
   private healthTimer: ReturnType<typeof setInterval> | null = null;
-  /** Set when the ESP32 refused a signature; cleared by the next command it accepts. */
+  /** Set when the ESP32 refused a signature; cleared by the next start it accepts. */
   private keyRejected = false;
 
   constructor(
@@ -141,17 +140,9 @@ export class WifiMachineController implements MachineController {
     this.setState({ status: 'disconnected', detail: null });
   }
 
-  unlock(hardwareChannel: number): Promise<UnlockResult> {
-    return this.enqueue('unlock', hardwareChannel);
-  }
-
-  lock(hardwareChannel: number): Promise<UnlockResult> {
-    return this.enqueue('lock', hardwareChannel);
-  }
-
-  /** One command at a time, so challenges never cross. */
-  private enqueue(command: LockCommand, channel: number): Promise<UnlockResult> {
-    const run = () => this.send(command, channel);
+  /** One start at a time, so challenges never cross. */
+  start(hardwareChannel: number, pulses: PulseSettings): Promise<StartResult> {
+    const run = () => this.send(hardwareChannel, pulses);
     const result = this.queue.then(run, run);
     this.queue = result;
     return result;
@@ -175,7 +166,7 @@ export class WifiMachineController implements MachineController {
   /**
    * GET that is safe to repeat (status, challenge): one retry when the request fails or the
    * reply is unreadable. "Not ours" only when something answered with readable data that is not
-   * the lock controller's.
+   * the machine controller's.
    */
   private async getChecked<T>(path: string, schema: z.ZodType<T>): Promise<CheckedReply<T>> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -204,15 +195,12 @@ export class WifiMachineController implements MachineController {
       this.setState({ status: 'error', detail: DETAILS.notOurs });
       return 'failed';
     }
-    this.setState(
-      this.keyRejected ? { status: 'error', detail: DETAILS.badKey } : { status: 'ready', detail: null },
-      reply.data.unlocked,
-    );
+    this.setState(this.keyRejected ? { status: 'error', detail: DETAILS.badKey } : { status: 'ready', detail: null });
     return 'connected';
   }
 
-  private async send(command: LockCommand, channel: number): Promise<UnlockResult> {
-    if (!isValidChannel(channel)) return 'rejected';
+  private async send(channel: number, pulses: PulseSettings): Promise<StartResult> {
+    if (!isValidChannel(channel) || pulsesProblem(pulses) !== null) return 'rejected';
     const usable = this.current.status === 'ready' || this.keyRejected;
     if (!usable && (await this.connect()) !== 'connected') return 'not-connected';
 
@@ -227,31 +215,25 @@ export class WifiMachineController implements MachineController {
     }
     const { challenge } = issued.data;
 
-    const signature = signCommand(this.config.key, command, channel, challenge);
+    const signature = signStart(this.config.key, channel, pulses, challenge);
+    const body =
+      `channel=${channel}&pulses=${pulses.count}&onMs=${pulses.onMs}&offMs=${pulses.offMs}` +
+      `&challenge=${challenge}&signature=${signature}`;
     let reply: HttpReply;
     try {
-      reply = await this.http({
-        method: 'POST',
-        url: this.url(COMMAND_PATHS[command]),
-        body: `channel=${channel}&challenge=${challenge}&signature=${signature}`,
-        timeoutMs: this.timings.requestTimeoutMs,
-      });
+      reply = await this.http({ method: 'POST', url: this.url('/start'), body, timeoutMs: this.timings.requestTimeoutMs });
     } catch {
-      void this.checkStatus();
-      return 'timeout';
+      return this.resolveLost(challenge);
     }
-    const parsed = commandResponse.safeParse(reply.json);
-    if (!parsed.success) {
-      void this.checkStatus();
-      return 'timeout';
-    }
+    const parsed = startResponse.safeParse(reply.json);
+    if (!parsed.success) return this.resolveLost(challenge);
     if (parsed.data.ok) {
       if (parsed.data.channel !== channel) return 'rejected';
       this.keyRejected = false;
-      const others = this.current.unlockedChannels.filter((c) => c !== channel);
-      this.setState({ status: 'ready', detail: null }, command === 'unlock' ? [...others, channel] : others);
+      this.setState({ status: 'ready', detail: null });
       return 'acked';
     }
+    if (parsed.data.error === 'busy') return 'busy';
     if (parsed.data.error === 'bad-signature') {
       this.keyRejected = true;
       this.setState({ status: 'error', detail: DETAILS.badKey });
@@ -259,17 +241,19 @@ export class WifiMachineController implements MachineController {
     return 'rejected';
   }
 
-  private setState(
-    next: Pick<ControllerState, 'status' | 'detail'>,
-    unlocked: readonly number[] = this.current.unlockedChannels,
-  ): void {
-    const unlockedChannels = [...unlocked].sort((a, b) => a - b);
-    const unchanged =
-      next.status === this.current.status &&
-      next.detail === this.current.detail &&
-      unlockedChannels.join() === this.current.unlockedChannels.join();
-    if (unchanged) return;
-    this.current = { status: next.status, detail: next.detail, unlockedChannels };
-    this.listeners.forEach((listener) => listener(this.current));
+  /** The reply to a start was lost: ask the ESP32 whether it carried out this very start. */
+  private async resolveLost(challenge: string): Promise<StartResult> {
+    const status = await this.getChecked('/status', statusResponse);
+    if (status.kind !== 'ok') {
+      this.setState({ status: 'disconnected', detail: DETAILS.unreachable });
+      return 'timeout';
+    }
+    return status.data.lastAccepted === challenge ? 'acked' : 'failed';
+  }
+
+  private setState(next: ControllerState): void {
+    if (next.status === this.current.status && next.detail === this.current.detail) return;
+    this.current = next;
+    this.listeners.forEach((listener) => listener(next));
   }
 }

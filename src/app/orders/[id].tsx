@@ -15,8 +15,8 @@ import {
 import { can } from '@/domain/permissions';
 import { serviceLabel } from '@/domain/pricing';
 import { selectableStatuses, statusLabel } from '@/domain/statuses';
-import { MACHINE_TYPE_LABELS, unlockAllowance, type MachineType } from '@/domain/unlockPolicy';
-import { unlockUsage } from '@/services/machines';
+import { MACHINE_TYPE_LABELS, machineAllowance } from '@/domain/machinePolicy';
+import { machinesAssignedTo, machineUsage } from '@/services/machines';
 import { getOrderDetail, receivePayment, updateOrderStatus, voidOrder } from '@/services/orders';
 import { getAllSettings } from '@/services/settings';
 import { useActor } from '@/state/AppProvider';
@@ -26,8 +26,8 @@ import { usePrintReceipt } from '@/state/usePrintReceipt';
 import { Button } from '@/ui/Button';
 import { Choice, Dialog } from '@/ui/controls';
 import { Divider, EmptyState, ListRow, Notice, Panel, Row, Screen, Section } from '@/ui/layout';
-import { MachinePickerDialog } from '@/ui/machines/UnlockDialogs';
-import { UnlockResultBadge } from '@/ui/machines/UnlockResultBadge';
+import { AssignMachineDialog } from '@/ui/machines/MachineDialogs';
+import { StartResultBadge } from '@/ui/machines/StartResultBadge';
 import { BalanceBadge, StatusBadge } from '@/ui/StatusBadge';
 import { Text } from '@/ui/Text';
 import { TextField } from '@/ui/TextField';
@@ -42,14 +42,15 @@ export default function OrderDetails() {
   const actor = useActor();
   const { print, printing } = usePrintReceipt();
   const [dialog, setDialog] = useState<'pay' | 'status' | 'void' | null>(null);
-  const [unlockType, setUnlockType] = useState<MachineType | null>(null);
+  const [assigning, setAssigning] = useState(false);
   const data = useData(
     (c) => {
       const detail = getOrderDetail(c, id);
       const settings = getAllSettings(c.db);
       return {
         detail,
-        usage: detail ? unlockUsage(c, detail.order.id) : { WASHER: 0, DRYER: 0 },
+        usage: detail ? machineUsage(c, detail.order.id) : { WASHER: 0, DRYER: 0 },
+        assigned: detail ? machinesAssignedTo(c, detail.order.id) : [],
         statuses: selectableStatuses(settings.customStatuses, settings.hiddenStatuses, can.setAuditedStatus(actor.role)),
       };
     },
@@ -70,7 +71,7 @@ export default function OrderDetails() {
 
   const { order } = detail;
   const voided = order.voidedAt !== null;
-  const allowance = unlockAllowance(order);
+  const allowance = machineAllowance(order);
   const machinesOpen = !voided && allowance > 0 && order.status !== 'COMPLETED' && order.status !== 'AUDITED';
 
   return (
@@ -83,7 +84,7 @@ export default function OrderDetails() {
           </Notice>
         )}
         {fresh === '1' && !voided && (
-          <Notice tone="success">Order saved. Next, unlock a washer for the first load.</Notice>
+          <Notice tone="success">Order saved. Next, assign it to a washer, then start the washer from Machines.</Notice>
         )}
 
         <View style={styles.head}>
@@ -110,44 +111,46 @@ export default function OrderDetails() {
           )}
         </Row>
 
-        <Section title="Machines" description="Each load allows one washer and one dryer unlock.">
-          {allowance === 0 ? (
+        <Section
+          title="Machines"
+          description={`Each load allows one washer and one dryer. Used: ${data.usage.WASHER} of ${allowance} washers, ${data.usage.DRYER} of ${allowance} dryers.`}
+          action={
+            allowance > 0 ? (
+              <Button
+                label="Assign to machine"
+                icon="washing-machine"
+                kind={data.usage.WASHER === 0 ? 'primary' : 'secondary'}
+                disabled={!machinesOpen}
+                onPress={() => setAssigning(true)}
+              />
+            ) : undefined
+          }
+        >
+          {allowance === 0 && (
             <Text tone="muted">
-              {`This ${serviceLabel(order.service).toLowerCase()} order came from the old app and does not unlock machines.`}
+              {`This ${serviceLabel(order.service).toLowerCase()} order came from the old app and does not use the machines.`}
             </Text>
-          ) : (
-            <Row wrap>
-              {(['WASHER', 'DRYER'] as const).map((type) => {
-                const used = data.usage[type];
-                const left = allowance - used;
-                return (
-                  <Panel key={type} style={styles.machineBox}>
-                    <Text variant="label" tone="muted">
-                      {`${MACHINE_TYPE_LABELS[type]} unlocks`}
-                    </Text>
-                    <Text variant="figure" numeric>
-                      {`${used} of ${allowance}`}
-                    </Text>
-                    <Button
-                      label={left > 0 ? `Unlock a ${MACHINE_TYPE_LABELS[type].toLowerCase()}` : 'All used'}
-                      icon="lock-open-variant-outline"
-                      kind={type === 'WASHER' && used === 0 ? 'primary' : 'secondary'}
-                      disabled={!machinesOpen || left <= 0}
-                      onPress={() => setUnlockType(type)}
-                    />
-                  </Panel>
-                );
-              })}
-            </Row>
+          )}
+          {data.assigned.length > 0 && (
+            <Panel>
+              {data.assigned.map((machine, index) => (
+                <ListRow
+                  key={machine.id}
+                  title={machine.name}
+                  subtitle={`${MACHINE_TYPE_LABELS[machine.type]} · waiting to start · assigned by ${machine.assignedByName ?? 'someone'}`}
+                  last={index === data.assigned.length - 1}
+                />
+              ))}
+            </Panel>
           )}
           {detail.unlocks.length > 0 && (
             <Panel>
-              {detail.unlocks.map((unlock, index) => (
+              {detail.unlocks.map((start, index) => (
                 <ListRow
-                  key={unlock.id}
-                  title={unlock.machineName}
-                  subtitle={`${formatShopDateTime(unlock.at)} · ${unlock.employeeName}${unlock.kind === 'OVERRIDE' ? ` · override: ${unlock.overrideReason ?? ''}` : ''}`}
-                  right={<UnlockResultBadge result={unlock.result} />}
+                  key={start.id}
+                  title={start.machineName}
+                  subtitle={`${formatShopDateTime(start.at)} · ${start.employeeName}${start.kind === 'OVERRIDE' ? ` · override: ${start.overrideReason ?? ''}` : ''}`}
+                  right={<StartResultBadge result={start.result} />}
                   last={index === detail.unlocks.length - 1}
                 />
               ))}
@@ -215,7 +218,7 @@ export default function OrderDetails() {
         <StatusDialog orderId={order.id} current={order.status} statuses={data.statuses} onClose={() => setDialog(null)} />
       )}
       {dialog === 'void' && <VoidDialog orderId={order.id} paid={detail.paid} onClose={() => setDialog(null)} />}
-      {unlockType && <MachinePickerDialog orderId={order.id} type={unlockType} onClose={() => setUnlockType(null)} />}
+      {assigning && <AssignMachineDialog orderId={order.id} onClose={() => setAssigning(false)} />}
     </>
   );
 }
@@ -381,8 +384,8 @@ function VoidDialog({ orderId, paid, onClose }: { orderId: string; paid: number;
       }
     >
       <Text>
-        The order stays on record, marked as voided. Loyalty loads and add-on stock are given back. Machine unlocks
-        already made stay in the log.
+        The order stays on record, marked as voided. Loyalty loads and add-on stock are given back. Machine starts
+        already made stay in the log, and any machine still waiting on this order is freed.
       </Text>
       {paid > 0 && (
         <Notice tone="warning">{`${formatPeso(paid)} was paid on this order. It stops counting as revenue; refund the customer if needed.`}</Notice>
@@ -397,5 +400,4 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   head: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: space.md },
   pad: { padding: space.lg, gap: space.sm },
-  machineBox: { padding: space.lg, gap: space.sm, flexGrow: 1, minWidth: 220 },
 });

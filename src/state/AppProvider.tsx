@@ -28,7 +28,7 @@ interface AppState {
   /** Bumped after every write so screens re-read the database. */
   version: number;
   refresh: () => void;
-  /** Rebuild the lock controller after its settings (simulate, address, key) change. */
+  /** Rebuild the machine controller after its settings (simulate, address, key) change. */
   reloadLockController: () => void;
 }
 

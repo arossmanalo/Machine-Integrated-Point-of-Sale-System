@@ -12,10 +12,11 @@ import {
 } from '@/domain/payments';
 import { can } from '@/domain/permissions';
 import { computeOrderTotal, CURRENT_SERVICE, loadRangeForWeight, type OrderTotal } from '@/domain/pricing';
-import { INITIAL_STATUS, normalizeStatus, selectableStatuses } from '@/domain/statuses';
+import { INITIAL_STATUS, isClosedStatus, normalizeStatus, selectableStatuses } from '@/domain/statuses';
 import {
   customers,
   inventoryItems,
+  machines,
   machineUnlocks,
   orderItems,
   orders,
@@ -292,7 +293,7 @@ export function createTestOrder(ctx: ServiceContext, actor: Actor): OrderRow {
       name: TEST_CUSTOMER_NAME,
       phone: '',
       address: '',
-      notes: 'Used for testing the door locks. Void its orders after testing.',
+      notes: 'Used for testing the machines. Void its orders after testing.',
     });
   return createOrder(
     ctx,
@@ -369,7 +370,18 @@ export function updateOrderStatus(
   );
   if (!allowed.includes(next)) throw new UserFacingError('You cannot set that status.');
   requireOpenOrder(ctx.db, orderId);
-  ctx.db.update(orders).set({ status: next }).where(eq(orders.id, orderId)).run();
+  ctx.db.transaction((tx) => {
+    tx.update(orders).set({ status: next }).where(eq(orders.id, orderId)).run();
+    if (isClosedStatus(next)) releaseMachines(tx, orderId);
+  });
+}
+
+/** A finished or voided order no longer waits on any machine. */
+function releaseMachines(db: Db, orderId: string): void {
+  db.update(machines)
+    .set({ assignedOrderId: null, assignedAt: null, assignedByName: null })
+    .where(eq(machines.assignedOrderId, orderId))
+    .run();
 }
 
 /**
@@ -386,6 +398,7 @@ export function voidOrder(ctx: ServiceContext, actor: Actor, orderId: string, re
       .set({ voidedAt: ctx.now(), voidedByName: actor.username, voidReason: why })
       .where(eq(orders.id, orderId))
       .run();
+    releaseMachines(tx, orderId);
     const customer = tx.select().from(customers).where(eq(customers.id, order.customerId)).get();
     if (customer && order.service === CURRENT_SERVICE) {
       const billable = order.promoApplied ? order.loadCount - 1 : order.loadCount;

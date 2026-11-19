@@ -1,20 +1,34 @@
 /**
- * The only way the app reaches the door locks. Screens and services use this interface and
- * never the network code directly, so the lock controller can be swapped or simulated.
- * The controller knows nothing about orders, staff or PINs: it pulses a hardware channel.
+ * The only way the app reaches the machines. Screens and services use this interface and never
+ * the network code directly, so the machine controller can be swapped or simulated.
+ * The controller knows nothing about orders, staff or PINs: it sends pulses to a hardware channel.
  */
 export type ControllerStatus = 'disconnected' | 'connecting' | 'ready' | 'error';
 
 export type ConnectResult = 'connected' | 'not-configured' | 'unreachable' | 'failed';
 
-export type UnlockResult = 'acked' | 'rejected' | 'timeout' | 'not-connected';
+/**
+ * What happened to a start:
+ * - acked: the controller accepted it and is sending the pulses.
+ * - rejected: the controller refused it (wrong key, bad channel or pulse settings).
+ * - busy: that machine is still receiving the pulses of an earlier start.
+ * - failed: the controller confirmed it did not get the command; nothing was started.
+ * - timeout: no answer and no way to check, so the machine may or may not have started.
+ * - not-connected: the controller could not be reached; nothing was sent.
+ */
+export type StartResult = 'acked' | 'rejected' | 'busy' | 'failed' | 'timeout' | 'not-connected';
+
+/** One start: `count` pulses of `onMs`, each followed by `offMs`. */
+export interface PulseSettings {
+  count: number;
+  onMs: number;
+  offMs: number;
+}
 
 export interface ControllerState {
   status: ControllerStatus;
   /** Plain-language reason for 'error' or 'disconnected', for the status chip. */
   detail: string | null;
-  /** Channels unlocked right now. A door stays unlocked until it is locked again. */
-  unlockedChannels: readonly number[];
 }
 
 export type Unsubscribe = () => void;
@@ -25,14 +39,12 @@ export interface MachineController {
   disconnect(): Promise<void>;
   state(): ControllerState;
   onStateChange(listener: (state: ControllerState) => void): Unsubscribe;
-  unlock(hardwareChannel: number): Promise<UnlockResult>;
-  /** Locks the door again. Uses the same results as unlock. */
-  lock(hardwareChannel: number): Promise<UnlockResult>;
+  start(hardwareChannel: number, pulses: PulseSettings): Promise<StartResult>;
 }
 
 export const STATUS_LABELS: Record<ControllerStatus, string> = {
-  disconnected: 'Locks offline',
-  connecting: 'Connecting to locks',
-  ready: 'Locks ready',
-  error: 'Lock controller error',
+  disconnected: 'Machines offline',
+  connecting: 'Connecting to machines',
+  ready: 'Machines ready',
+  error: 'Machine controller error',
 };

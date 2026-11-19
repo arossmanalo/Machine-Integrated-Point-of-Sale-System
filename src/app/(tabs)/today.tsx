@@ -54,7 +54,7 @@ export default function Today() {
     <Screen>
       {controllerState.status !== 'ready' && (
         <Notice tone="warning">
-          {controllerState.detail ?? 'The door-lock controller is not connected. Machines cannot be unlocked.'}
+          {controllerState.detail ?? 'The machine controller is not connected. Machines cannot be started.'}
         </Notice>
       )}
 

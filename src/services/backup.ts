@@ -141,6 +141,13 @@ const tableSchemas = {
     hardwareChannel: int,
     enabled: z.boolean(),
     sortOrder: int,
+    // Backups made before pulse starts lack these; they get the defaults of migration 0002.
+    pulseCount: int.default(1),
+    pulseOnMs: int.default(500),
+    pulseOffMs: int.default(500),
+    assignedOrderId: z.string().nullable().default(null),
+    assignedAt: int.nullable().default(null),
+    assignedByName: z.string().nullable().default(null),
   }),
   machineUnlocks: z.object({
     id: int,
@@ -155,7 +162,7 @@ const tableSchemas = {
     kind: z.enum(['ORDER', 'OVERRIDE', 'OVERRIDE_DENIED', 'TEST']),
     overrideReason: maybeText,
     overrideNote: maybeText,
-    result: z.enum(['PENDING', 'ACKED', 'REJECTED', 'TIMEOUT', 'NOT_CONNECTED', 'DENIED']),
+    result: z.enum(['PENDING', 'ACKED', 'REJECTED', 'BUSY', 'FAILED', 'TIMEOUT', 'NOT_CONNECTED', 'DENIED']),
     resolvedAt: maybeInt,
   }),
 };
@@ -196,13 +203,14 @@ export function restoreBackup(ctx: ServiceContext, actor: Actor, parsed: unknown
   const { tables } = result.data;
   ctx.db.transaction((tx) => {
     tx.delete(machineUnlocks).run();
+    // Machines can point at an order they are assigned to, so they go before orders.
+    tx.delete(machines).run();
     tx.delete(payments).run();
     tx.delete(orderItems).run();
     tx.delete(orders).run();
     tx.delete(customers).run();
     tx.delete(inventoryItems).run();
     tx.delete(expenses).run();
-    tx.delete(machines).run();
     tx.delete(sequences).run();
     tx.delete(settings).where(notInArray(settings.key, [...DEVICE_ONLY_SETTINGS])).run();
     tx.delete(users).run();
