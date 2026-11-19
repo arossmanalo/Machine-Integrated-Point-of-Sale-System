@@ -3,6 +3,7 @@ import { router, type Href } from 'expo-router';
 
 import { can, type Role } from '@/domain/permissions';
 import { useActor } from '@/state/AppProvider';
+import { AppUpdatesSection } from '@/ui/AppUpdates';
 import type { IconName } from '@/ui/Button';
 import { ListRow, Panel, Screen, Section } from '@/ui/layout';
 import { colors } from '@/ui/theme';
@@ -43,6 +44,7 @@ export default function Manage() {
           ))}
         </Panel>
       </Section>
+      <AppUpdatesSection />
     </Screen>
   );
 }

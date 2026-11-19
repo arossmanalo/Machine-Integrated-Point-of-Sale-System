@@ -18,7 +18,10 @@
       "permissions": [
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_CONNECT"
-      ]
+      ],
+      "runtimeVersion": {
+        "policy": "appVersion"
+      }
     },
     "plugins": [
       "expo-router",
@@ -37,6 +40,20 @@
     "scheme": "laundrypos",
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "0f01f49d-6733-42ab-a9b4-479183a0423e"
+      }
+    },
+    "owner": "arossmanalo",
+    "updates": {
+      "url": "https://u.expo.dev/0f01f49d-6733-42ab-a9b4-479183a0423e",
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      },
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
     }
   }
 }

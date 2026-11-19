@@ -27,6 +27,13 @@ POS app for our family laundry shop. It currently runs as a Kotlin Android app o
 - A debug APK loads its JavaScript from Metro (`npx expo start` in this project, then `adb reverse tcp:8081 tcp:8081`).
 - Release signing: put the keystore and `keystore.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) in `android/`; both are git-ignored. Without them, release builds use the debug key and must not go to the shop tablet.
 
+### Updating the tablet (EAS Update)
+
+- The app gets over-the-air updates from EAS project `@arossmanalo/laundry-pos` on channel `production` (set in `app.json` under `updates`, with `expo-channel-name` in `requestHeaders` because the APK is built locally, not by EAS Build).
+- JavaScript-only changes (screens, rules, text, almost everything in `src/`): run checks, commit, then from the project folder `npx eas-cli@latest update --channel production --platform android --message "<what changed>"`. The tablet downloads it when the app opens and runs it from the next start; Manage › About this app › Check for updates applies it at once. That section also shows which update is running.
+- Native changes need a new APK: a new native package, `app.json` plugins or permissions, `modules/`, or an Expo SDK upgrade. Bump `version` in `app.json` first: `runtimeVersion` follows it (`appVersion` policy), so old APKs never get JavaScript they cannot run. Then build and install as above.
+- The ESP32 sketch is separate and still goes over USB.
+
 ## Machine integration (built; LED prototype not yet tested on hardware)
 
 ### Goal
