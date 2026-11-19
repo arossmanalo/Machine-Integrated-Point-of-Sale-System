@@ -106,6 +106,15 @@ export default function OrderDetails() {
           )}
           {!voided && <Button label="Change status" kind="secondary" onPress={() => setDialog('status')} />}
           <Button label="Print receipt" kind="secondary" icon="printer-outline" busy={printing} onPress={() => void print(order.id)} />
+          {allowance > 0 && (
+            <Button
+              label="Assign to machine"
+              icon="washing-machine"
+              kind={data.usage.WASHER === 0 && machinesOpen ? 'primary' : 'secondary'}
+              disabled={!machinesOpen}
+              onPress={() => setAssigning(true)}
+            />
+          )}
           {!voided && can.voidOrder(actor.role) && (
             <Button label="Void order" kind="danger" onPress={() => setDialog('void')} />
           )}
@@ -114,17 +123,6 @@ export default function OrderDetails() {
         <Section
           title="Machines"
           description={`Each load allows one washer and one dryer. Used: ${data.usage.WASHER} of ${allowance} washers, ${data.usage.DRYER} of ${allowance} dryers.`}
-          action={
-            allowance > 0 ? (
-              <Button
-                label="Assign to machine"
-                icon="washing-machine"
-                kind={data.usage.WASHER === 0 ? 'primary' : 'secondary'}
-                disabled={!machinesOpen}
-                onPress={() => setAssigning(true)}
-              />
-            ) : undefined
-          }
         >
           {allowance === 0 && (
             <Text tone="muted">

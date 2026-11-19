@@ -222,7 +222,7 @@ function MachineDialog({ machine, nextChannel, onClose }: { machine: MachineRow 
       <Row wrap style={{ alignItems: 'flex-start' }}>
         <TextField label="Number of pulses" value={countText} onChangeText={digits(setCountText)} keyboardType="number-pad" style={{ flex: 1 }} />
         <TextField label="Pulse length (ms)" value={onText} onChangeText={digits(setOnText)} keyboardType="number-pad" style={{ flex: 1 }} />
-        <TextField label="Gap between (ms)" value={offText} onChangeText={digits(setOffText)} keyboardType="number-pad" style={{ flex: 1 }} />
+        <TextField label="Gap (ms)" value={offText} onChangeText={digits(setOffText)} keyboardType="number-pad" style={{ flex: 1 }} />
       </Row>
       {pulseError && <Text tone="danger">{pulseError}</Text>}
       <Toggle

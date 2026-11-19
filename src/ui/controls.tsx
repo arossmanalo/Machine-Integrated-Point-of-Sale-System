@@ -1,7 +1,7 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type { ReactNode } from 'react';
 import { KeyboardAvoidingView, Modal, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Text } from './Text';
 import { colors, elevation, MIN_TOUCH, radius, space } from './theme';
@@ -154,43 +154,66 @@ export function Badge({ label, tone = 'neutral' }: { label: string; tone?: Badge
   );
 }
 
-/** A modal sheet with a title, scrollable body and actions along the bottom. */
-export function Dialog({
-  visible,
-  title,
-  onClose,
-  children,
-  actions,
-}: {
+interface DialogProps {
   visible: boolean;
   title: string;
   onClose: () => void;
   children: ReactNode;
   actions: ReactNode;
-}) {
+}
+
+/**
+ * A modal sheet with a title, scrollable body and actions along the bottom. The modal is its own
+ * window, so it gets its own SafeAreaProvider: the insets of the main screen do not cover it, and
+ * without this the actions slid under tablet taskbars and navigation bars.
+ */
+export function Dialog({ visible, onClose, ...rest }: DialogProps) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+      statusBarTranslucent
+      navigationBarTranslucent
+    >
+      <SafeAreaProvider>
+        <DialogFrame visible={visible} onClose={onClose} {...rest} />
+      </SafeAreaProvider>
+    </Modal>
+  );
+}
+
+function DialogFrame({ title, onClose, children, actions }: DialogProps) {
   const insets = useSafeAreaInsets();
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <KeyboardAvoidingView
-        behavior="padding"
-        style={[styles.scrim, { paddingTop: insets.top + space.lg, paddingBottom: insets.bottom + space.lg }]}
-      >
-        <View style={styles.dialog} accessibilityViewIsModal>
-          <View style={styles.dialogHeader}>
-            <Text variant="heading" style={styles.flex}>
-              {title}
-            </Text>
-            <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={onClose} style={styles.close}>
-              <MaterialCommunityIcons name="close" size={22} color={colors.textMuted} />
-            </Pressable>
-          </View>
-          <ScrollView contentContainerStyle={styles.dialogBody} keyboardShouldPersistTaps="handled">
-            {children}
-          </ScrollView>
-          <View style={styles.dialogActions}>{actions}</View>
+    <KeyboardAvoidingView
+      behavior="padding"
+      style={[
+        styles.scrim,
+        {
+          paddingTop: insets.top + space.lg,
+          paddingBottom: insets.bottom + space.lg,
+          paddingLeft: insets.left + space.lg,
+          paddingRight: insets.right + space.lg,
+        },
+      ]}
+    >
+      <View style={styles.dialog} accessibilityViewIsModal>
+        <View style={styles.dialogHeader}>
+          <Text variant="heading" style={styles.flex}>
+            {title}
+          </Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={onClose} style={styles.close}>
+            <MaterialCommunityIcons name="close" size={22} color={colors.textMuted} />
+          </Pressable>
         </View>
-      </KeyboardAvoidingView>
-    </Modal>
+        <ScrollView contentContainerStyle={styles.dialogBody} keyboardShouldPersistTaps="handled">
+          {children}
+        </ScrollView>
+        <View style={styles.dialogActions}>{actions}</View>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -229,7 +252,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(11, 18, 32, 0.45)',
     justifyContent: 'center',
-    paddingHorizontal: space.lg,
   },
   dialog: {
     width: '100%',
