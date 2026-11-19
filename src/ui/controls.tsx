@@ -186,8 +186,7 @@ export function Dialog({ visible, onClose, ...rest }: DialogProps) {
 
 function DialogFrame({ title, onClose, children, actions, insets }: DialogProps & { insets: EdgeInsets }) {
   return (
-    <KeyboardAvoidingView
-      behavior="padding"
+    <View
       style={[
         styles.scrim,
         {
@@ -198,21 +197,23 @@ function DialogFrame({ title, onClose, children, actions, insets }: DialogProps 
         },
       ]}
     >
-      <View style={styles.dialog} accessibilityViewIsModal>
-        <View style={styles.dialogHeader}>
-          <Text variant="heading" style={styles.flex}>
-            {title}
-          </Text>
-          <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={onClose} style={styles.close}>
-            <MaterialCommunityIcons name="close" size={22} color={colors.textMuted} />
-          </Pressable>
+      <KeyboardAvoidingView behavior="padding" style={styles.dialogArea}>
+        <View style={styles.dialog} accessibilityViewIsModal>
+          <View style={styles.dialogHeader}>
+            <Text variant="heading" style={styles.flex}>
+              {title}
+            </Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={onClose} style={styles.close}>
+              <MaterialCommunityIcons name="close" size={22} color={colors.textMuted} />
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.dialogBody} keyboardShouldPersistTaps="handled">
+            {children}
+          </ScrollView>
+          <View style={styles.dialogActions}>{actions}</View>
         </View>
-        <ScrollView contentContainerStyle={styles.dialogBody} keyboardShouldPersistTaps="handled">
-          {children}
-        </ScrollView>
-        <View style={styles.dialogActions}>{actions}</View>
-      </View>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -250,8 +251,8 @@ const styles = StyleSheet.create({
   scrim: {
     flex: 1,
     backgroundColor: 'rgba(11, 18, 32, 0.45)',
-    justifyContent: 'center',
   },
+  dialogArea: { flex: 1, justifyContent: 'center' },
   dialog: {
     width: '100%',
     maxWidth: 560,
