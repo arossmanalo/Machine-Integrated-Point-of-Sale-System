@@ -13,6 +13,8 @@ class FakeEsp32 {
   key = KEY;
   down = false;
   device = DEVICE_NAME;
+  /** Sent in /status; undefined acts like a sketch from before pulseMs was reported. */
+  pulseMs: number | undefined = 1500;
   /** The pulse happens but the reply never arrives. */
   loseNextPulseReply = false;
   /** The next this-many replies arrive empty, as a dropped kept-alive connection reads. */
@@ -30,7 +32,9 @@ class FakeEsp32 {
       this.garbleNext -= 1;
       if (path !== '/pulse') return { status: 200, json: null };
     }
-    if (path === '/status') return { status: 200, json: { device: this.device, channels: 6 } };
+    if (path === '/status') {
+      return { status: 200, json: { device: this.device, channels: 6, pulseMs: this.pulseMs } };
+    }
     if (path === '/challenge') {
       this.counter += 1;
       this.challenge = this.counter.toString(16).padStart(32, '0');
@@ -237,6 +241,54 @@ describe('WifiMachineController', () => {
     await expect(controller.unlock(4)).resolves.toBe('acked');
     expect(controller.state().status).toBe('ready');
     await controller.disconnect();
+  });
+});
+
+describe('open doors', () => {
+  it('shows a door unlocked for the pulse length the board reports, then locked again', async () => {
+    jest.useFakeTimers();
+    const { controller } = setup();
+    await controller.connect();
+    await controller.unlock(3);
+    expect(controller.state().openChannels).toEqual([3]);
+    await jest.advanceTimersByTimeAsync(1499);
+    expect(controller.state().openChannels).toEqual([3]);
+    await jest.advanceTimersByTimeAsync(1);
+    expect(controller.state().openChannels).toEqual([]);
+  });
+
+  it('falls back to 2 seconds when the board does not say', async () => {
+    jest.useFakeTimers();
+    const { esp, controller } = setup();
+    esp.pulseMs = undefined;
+    await controller.connect();
+    await controller.unlock(1);
+    await jest.advanceTimersByTimeAsync(1999);
+    expect(controller.state().openChannels).toEqual([1]);
+    await jest.advanceTimersByTimeAsync(1);
+    expect(controller.state().openChannels).toEqual([]);
+  });
+
+  it('keeps a refused or lost unlock shown as locked', async () => {
+    const { esp, controller } = setup();
+    await controller.connect();
+    esp.key = 'a different passphrase';
+    await controller.unlock(1);
+    esp.key = KEY;
+    esp.loseNextPulseReply = true;
+    await controller.unlock(2);
+    expect(controller.state().openChannels).toEqual([]);
+  });
+
+  it('works the same on the simulated controller', async () => {
+    jest.useFakeTimers();
+    const mock = new MockMachineController(0, 500);
+    await mock.connect();
+    await mock.unlock(4);
+    expect(mock.state().openChannels).toEqual([4]);
+    await jest.advanceTimersByTimeAsync(500);
+    expect(mock.state().openChannels).toEqual([]);
+    await mock.disconnect();
   });
 });
 

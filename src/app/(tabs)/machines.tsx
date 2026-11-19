@@ -7,11 +7,14 @@ import type { MachineRow } from '@/db/schema';
 import { formatShopDateTime } from '@/domain/dates';
 import { can } from '@/domain/permissions';
 import { MACHINE_TYPE_LABELS, MACHINE_TYPES } from '@/domain/unlockPolicy';
-import { lastUnlocks, listMachines } from '@/services/machines';
+import { lastUnlocks, listMachines, RESULT_MESSAGES, testPulse } from '@/services/machines';
+import { createTestOrder, voidOrder } from '@/services/orders';
 import { useActor, useApp } from '@/state/AppProvider';
-import { useData } from '@/state/hooks';
+import { useAction, useData } from '@/state/hooks';
+import { useToast } from '@/state/toast';
 import { Button } from '@/ui/Button';
-import { EmptyState, Notice, Panel, Screen, Section } from '@/ui/layout';
+import { Badge } from '@/ui/controls';
+import { EmptyState, Notice, Panel, Row, Screen, Section } from '@/ui/layout';
 import { OrderPickerDialog, OverrideDialog } from '@/ui/machines/UnlockDialogs';
 import { Text } from '@/ui/Text';
 import { colors, MIN_TOUCH, radius, space } from '@/ui/theme';
@@ -21,6 +24,33 @@ export default function Machines() {
   const { controller, controllerState } = useApp();
   const [picking, setPicking] = useState<MachineRow | null>(null);
   const [overriding, setOverriding] = useState<MachineRow | null>(null);
+  const [testOrderId, setTestOrderId] = useState<string | null>(null);
+  const action = useAction();
+  const toast = useToast();
+  const owner = can.manageMachines(actor.role);
+  const showLockState = controllerState.status === 'ready' || controllerState.openChannels.length > 0;
+
+  async function testUnlock(machine: MachineRow) {
+    const result = await action.run((c) => testPulse(c, controller, actor, machine.id));
+    if (!result.ok) return;
+    toast(
+      result.value === 'acked' ? `${machine.name} unlocked (test)` : `${machine.name}: ${RESULT_MESSAGES[result.value]}`,
+      result.value === 'acked' ? 'success' : 'danger',
+    );
+  }
+
+  async function makeTestOrder() {
+    const result = await action.run((c) => createTestOrder(c, actor));
+    if (result.ok) setTestOrderId(result.value.id);
+  }
+
+  async function voidTestOrder(orderId: string) {
+    const result = await action.run((c) => voidOrder(c, actor, orderId, 'Test order'));
+    if (result.ok) {
+      setTestOrderId(null);
+      toast(`Test order ${orderId} voided`, 'success');
+    }
+  }
   const data = useData((c) => {
     const machines = listMachines(c);
     return { machines, last: lastUnlocks(c, machines.map((m) => m.id)) };
@@ -62,6 +92,7 @@ export default function Machines() {
               <View style={styles.grid}>
                 {list.map((machine) => {
                   const last = data.last.get(machine.id);
+                  const open = controllerState.openChannels.includes(machine.hardwareChannel);
                   return (
                     <Pressable
                       key={machine.id}
@@ -80,7 +111,12 @@ export default function Machines() {
                         size={28}
                         color={machine.enabled ? colors.accent : colors.textMuted}
                       />
-                      <Text variant="bodyStrong">{machine.name}</Text>
+                      <Row>
+                        <Text variant="bodyStrong" style={styles.name}>
+                          {machine.name}
+                        </Text>
+                        {showLockState && <Badge label={open ? 'Unlocked' : 'Locked'} tone={open ? 'warning' : 'neutral'} />}
+                      </Row>
                       <Text variant="caption" tone="muted">
                         {!machine.enabled
                           ? 'Switched off'
@@ -88,6 +124,16 @@ export default function Machines() {
                             ? `Opened ${formatShopDateTime(last.at)}${last.orderId ? ` · ${last.orderId}` : ' · override'}`
                             : 'Not opened yet'}
                       </Text>
+                      {owner && (
+                        <Button
+                          label="Test unlock"
+                          kind="quiet"
+                          icon="lock-open-variant-outline"
+                          onPress={() => void testUnlock(machine)}
+                          busy={action.busy}
+                          accessibilityHint="Owner only. Opens this door without an order and logs it as a test."
+                        />
+                      )}
                     </Pressable>
                   );
                 })}
@@ -95,6 +141,24 @@ export default function Machines() {
             </Section>
           );
         })
+      )}
+      {owner && data.machines.length > 0 && (
+        <Section
+          title="Testing"
+          description="Only the owner sees this. Test unlock on a machine opens it without an order. To try the staff flow instead, create a test order, tap a machine and pick it. Test orders are Pay later and take no supplies; void them when you are done."
+        >
+          {testOrderId === null ? (
+            <Button label="Create test order" kind="secondary" icon="clipboard-plus-outline" onPress={makeTestOrder} busy={action.busy} />
+          ) : (
+            <Notice
+              tone="info"
+              action={<Button label="Void test order" kind="secondary" onPress={() => void voidTestOrder(testOrderId)} busy={action.busy} />}
+            >
+              {`Test order ${testOrderId} is ready. Tap a machine and pick it to unlock.`}
+            </Notice>
+          )}
+          {action.error && <Notice tone="danger">{action.error}</Notice>}
+        </Section>
       )}
       {can.viewUnlockLog(actor.role) && data.machines.length > 0 && (
         <Button label="View unlock log" kind="quiet" icon="history" onPress={() => router.push('/manage/unlock-log')} />
@@ -130,4 +194,5 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   off: { opacity: 0.55 },
+  name: { flex: 1 },
 });

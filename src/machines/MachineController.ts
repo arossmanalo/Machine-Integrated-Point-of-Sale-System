@@ -13,6 +13,8 @@ export interface ControllerState {
   status: ControllerStatus;
   /** Plain-language reason for 'error' or 'disconnected', for the status chip. */
   detail: string | null;
+  /** Channels unlocked right now, each for the lock controller's pulse length after an unlock. */
+  openChannels: readonly number[];
 }
 
 export type Unsubscribe = () => void;

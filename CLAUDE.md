@@ -50,7 +50,7 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 
 ### HTTP protocol (the contract between app and ESP32)
 
-- `GET /status` → `{"device":"laundry-locks","channels":14}`. The app checks it on connect and every 20 s, since Wi-Fi gives no unplug event.
+- `GET /status` → `{"device":"laundry-locks","channels":14,"pulseMs":2000}`. The app checks it on connect and every 20 s, since Wi-Fi gives no unplug event, and uses `pulseMs` to show a machine as Unlocked for exactly as long as the ESP32 holds it open (2 s if missing).
 - `GET /challenge` → `{"challenge":"<32 hex>"}`, single use, expires after 10 s.
 - `POST /pulse`, form body `channel=<n>&challenge=<hex>&signature=<hex>`, where signature = hex HMAC-SHA256(lock key, `P<n>:<challenge>`). Replies `200 {"ok":true,"channel":n}` or `4xx {"ok":false,"error":"bad-channel"|"bad-signature"|"stale-challenge"}`. Every attempt uses up the challenge.
 - The signature is why a phone on the same Wi-Fi cannot open doors and a captured request cannot be replayed. The ESP32 has no clock, so there are no timestamps.

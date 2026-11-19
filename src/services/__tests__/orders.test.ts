@@ -4,6 +4,7 @@ import { createCustomer, getCustomer } from '../customers';
 import { adjustStock, createInventoryItem, listInventory, updateInventoryItem } from '../inventory';
 import {
   createOrder,
+  createTestOrder,
   getOrderDetail,
   listOrderSummaries,
   quoteOrder,
@@ -194,6 +195,29 @@ describe('status and void', () => {
     expect(listInventory(ctx).find((i) => i.id === fabcon)?.currentStock).toBe(10);
     expect(getOrderDetail(ctx, created.id)?.order.voidReason).toBe('Entered twice');
     expect(() => updateOrderStatus(ctx, testOwner, created.id, 'READY')).toThrow('voided');
+  });
+});
+
+describe('test orders', () => {
+  it('lets only the owner make one, with no money and no supplies taken', () => {
+    const { ctx, detergent } = setup();
+    expect(() => createTestOrder(ctx, testEmployee)).toThrow('owner');
+    const first = createTestOrder(ctx, testOwner);
+    const detail = getOrderDetail(ctx, first.id);
+    expect(detail).toMatchObject({ customerName: 'Test customer', paid: 0 });
+    expect(detail?.order.loadCount).toBe(1);
+    expect(listInventory(ctx).find((i) => i.id === detergent)?.currentStock).toBe(20);
+
+    const second = createTestOrder(ctx, testOwner);
+    expect(second.customerId).toBe(first.customerId);
+    voidOrder(ctx, testOwner, first.id, 'Test order');
+    expect(getOrderDetail(ctx, first.id)?.order.voidedAt).not.toBeNull();
+  });
+
+  it('real orders still take supplies', () => {
+    const { ctx, detergent, order } = setup();
+    createOrder(ctx, testEmployee, order());
+    expect(listInventory(ctx).find((i) => i.id === detergent)?.currentStock).toBe(18);
   });
 });
 

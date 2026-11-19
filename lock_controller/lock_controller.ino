@@ -87,7 +87,8 @@ void loop() {
 
 void handleStatus() {
   server.send(200, "application/json",
-              String("{\"device\":\"laundry-locks\",\"channels\":") + NUM_CHANNELS + "}");
+              String("{\"device\":\"laundry-locks\",\"channels\":") + NUM_CHANNELS +
+                  ",\"pulseMs\":" + PULSE_MS + "}");
 }
 
 void handleChallenge() {

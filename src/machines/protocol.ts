@@ -7,7 +7,7 @@ import { z } from 'zod';
  * The HTTP contract with the ESP32 sketch in lock_controller/lock_controller.ino.
  * Keep this file, the sketch and CLAUDE.md in step.
  *
- *   GET  /status     -> {"device":"laundry-locks","channels":6}
+ *   GET  /status     -> {"device":"laundry-locks","channels":14,"pulseMs":2000}
  *   GET  /challenge  -> {"challenge":"<32 hex chars>"}   single use, expires after 10 s
  *   POST /pulse      form body channel=<n>&challenge=<hex>&signature=<hex>
  *                    -> 200 {"ok":true,"channel":n}
@@ -27,6 +27,8 @@ export const LOCK_CHANNEL_TERMINALS = [
 ] as const;
 export const MAX_CHANNEL = LOCK_CHANNEL_TERMINALS.length;
 export const MIN_KEY_LENGTH = 12;
+/** How long a door stays unlocked when the lock controller does not say (older sketches). */
+export const DEFAULT_PULSE_MS = 2000;
 
 export function isValidChannel(channel: number): boolean {
   return Number.isInteger(channel) && channel >= 1 && channel <= MAX_CHANNEL;
@@ -56,6 +58,7 @@ export function normalizeAddress(input: string): string | null {
 export const statusResponse = z.object({
   device: z.literal(DEVICE_NAME),
   channels: z.number().int().nonnegative(),
+  pulseMs: z.number().int().positive().optional(),
 });
 
 export const challengeResponse = z.object({ challenge: z.string().regex(/^[0-9a-f]{32}$/) });

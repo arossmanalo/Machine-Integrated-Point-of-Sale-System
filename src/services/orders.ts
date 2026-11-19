@@ -1,4 +1,4 @@
-import { asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import { autoConsumeAmount } from '@/domain/inventory';
 import { isPromoEligible, loyaltyAfterOrder, loyaltyAfterVoid } from '@/domain/loyalty';
@@ -29,6 +29,7 @@ import {
 } from '@/db/schema';
 import { UserFacingError, type Actor, type Db, type ServiceContext } from '@/db/types';
 
+import { createCustomer } from './customers';
 import { takeNextId } from './sequences';
 import { getSetting } from './settings';
 
@@ -142,7 +143,17 @@ function initialPayment(input: NewOrderInput, total: number): PaymentInput | nul
 }
 
 /** Creates the order, its first payment, loyalty and stock changes in one transaction. */
-export function createOrder(ctx: ServiceContext, actor: Actor, input: NewOrderInput): OrderRow {
+export interface CreateOrderOptions {
+  /** Take "use one per load" supplies off stock. Off only for test orders. */
+  useSupplies?: boolean;
+}
+
+export function createOrder(
+  ctx: ServiceContext,
+  actor: Actor,
+  input: NewOrderInput,
+  { useSupplies = true }: CreateOrderOptions = {},
+): OrderRow {
   if (!(input.weightKg > 0) || !Number.isFinite(input.weightKg)) {
     throw new UserFacingError('Enter the weight in kilograms.');
   }
@@ -241,12 +252,14 @@ export function createOrder(ctx: ServiceContext, actor: Actor, input: NewOrderIn
       .where(eq(customers.id, customer.id))
       .run();
 
-    const autoItems = tx
-      .select()
-      .from(inventoryItems)
-      .where(eq(inventoryItems.autoConsume, true))
-      .all()
-      .filter((item) => item.archivedAt === null);
+    const autoItems = !useSupplies
+      ? []
+      : tx
+          .select()
+          .from(inventoryItems)
+          .where(eq(inventoryItems.autoConsume, true))
+          .all()
+          .filter((item) => item.archivedAt === null);
     for (const item of autoItems) {
       const used = autoConsumeAmount(item.currentStock, input.loads);
       if (used > 0) {
@@ -258,6 +271,46 @@ export function createOrder(ctx: ServiceContext, actor: Actor, input: NewOrderIn
     }
     return order;
   });
+}
+
+export const TEST_CUSTOMER_NAME = 'Test customer';
+
+/**
+ * A one-load Pay later order for "Test customer", so the owner can try the staff unlock flow on
+ * the real locks. It takes no supplies off stock and no money; void it afterwards.
+ */
+export function createTestOrder(ctx: ServiceContext, actor: Actor): OrderRow {
+  if (!can.manageMachines(actor.role)) throw new UserFacingError('Only the owner can create test orders.');
+  const existing = ctx.db
+    .select()
+    .from(customers)
+    .where(and(eq(customers.name, TEST_CUSTOMER_NAME), isNull(customers.archivedAt)))
+    .get();
+  const customer =
+    existing ??
+    createCustomer(ctx, {
+      name: TEST_CUSTOMER_NAME,
+      phone: '',
+      address: '',
+      notes: 'Used for testing the door locks. Void its orders after testing.',
+    });
+  return createOrder(
+    ctx,
+    actor,
+    {
+      customerId: customer.id,
+      weightKg: 8,
+      loads: 1,
+      addOns: [],
+      paymentMethod: 'PAY_LATER',
+      downPayment: 0,
+      channel: 'CASH',
+      gcashReference: '',
+      cashReceived: null,
+      placedAt: null,
+    },
+    { useSupplies: false },
+  );
 }
 
 function requireOpenOrder(db: Db, id: string): OrderRow {

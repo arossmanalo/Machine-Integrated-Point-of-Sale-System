@@ -5,17 +5,22 @@ import type {
   UnlockResult,
   Unsubscribe,
 } from './MachineController';
-import { isValidChannel } from './protocol';
+import { OpenDoors } from './OpenDoors';
+import { DEFAULT_PULSE_MS, isValidChannel } from './protocol';
 
 /** Stands in for the ESP32 lock controller during development, tests and demos. */
 export class MockMachineController implements MachineController {
   readonly kind = 'mock' as const;
   readonly pulses: number[] = [];
-  private current: ControllerState = { status: 'disconnected', detail: null };
+  private current: ControllerState = { status: 'disconnected', detail: null, openChannels: [] };
   private listeners = new Set<(state: ControllerState) => void>();
   private nextResult: UnlockResult | null = null;
+  private doors = new OpenDoors(() => this.setState(this.current));
 
-  constructor(private readonly latencyMs = 150) {}
+  constructor(
+    private readonly latencyMs = 150,
+    private readonly pulseMs = DEFAULT_PULSE_MS,
+  ) {}
 
   /** Make the next unlock return this result instead of 'acked'. */
   failNextUnlock(result: Exclude<UnlockResult, 'acked'>): void {
@@ -28,6 +33,7 @@ export class MockMachineController implements MachineController {
   }
 
   async disconnect(): Promise<void> {
+    this.doors.clear();
     this.setState({ status: 'disconnected', detail: null });
   }
 
@@ -48,12 +54,15 @@ export class MockMachineController implements MachineController {
     if (this.latencyMs > 0) await new Promise((resolve) => setTimeout(resolve, this.latencyMs));
     const result = this.nextResult ?? 'acked';
     this.nextResult = null;
-    if (result === 'acked') this.pulses.push(hardwareChannel);
+    if (result === 'acked') {
+      this.pulses.push(hardwareChannel);
+      this.doors.open(hardwareChannel, this.pulseMs);
+    }
     return result;
   }
 
-  private setState(next: ControllerState): void {
-    this.current = next;
-    this.listeners.forEach((listener) => listener(next));
+  private setState(next: Pick<ControllerState, 'status' | 'detail'>): void {
+    this.current = { status: next.status, detail: next.detail, openChannels: this.doors.channels() };
+    this.listeners.forEach((listener) => listener(this.current));
   }
 }

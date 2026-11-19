@@ -78,3 +78,5 @@ The lock controller has 14 channels. Wire each machine's lock to the terminal fo
 | Terminal | D25 | D26 | D27 | D32 | D33 | D13 | D18 | D19 | D21 | D22 | D23 | D4 | RX2 | TX2 |
 
 Leave the other terminals free: some of them switch on briefly while the board starts, which would open a door.
+
+**Testing the locks (owner).** On the **Machines** tab each machine shows **Locked** or **Unlocked**; after an unlock it shows Unlocked for as long as the door is held open. The owner also sees **Test unlock** on each machine, which opens it without an order and is logged as a test, and a **Testing** section with **Create test order**. A test order is Pay later, takes no supplies, and lets you try the staff flow: tap a machine, pick the test order, unlock. Tap **Void test order** when you are done so it does not stay in the open jobs.

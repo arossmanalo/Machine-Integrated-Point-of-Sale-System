@@ -7,8 +7,10 @@ import type {
   UnlockResult,
   Unsubscribe,
 } from './MachineController';
+import { OpenDoors } from './OpenDoors';
 import {
   challengeResponse,
+  DEFAULT_PULSE_MS,
   isValidChannel,
   MIN_KEY_LENGTH,
   pulseResponse,
@@ -91,13 +93,16 @@ export const fetchHttp: HttpClient = async ({ method, url, body, timeoutMs }) =>
  */
 export class WifiMachineController implements MachineController {
   readonly kind = 'wifi' as const;
-  private current: ControllerState = { status: 'disconnected', detail: null };
+  private current: ControllerState = { status: 'disconnected', detail: null, openChannels: [] };
   private listeners = new Set<(state: ControllerState) => void>();
   private queue: Promise<unknown> = Promise.resolve();
   private connecting: Promise<ConnectResult> | null = null;
   private healthTimer: ReturnType<typeof setInterval> | null = null;
   /** Set when the ESP32 refused a signature; cleared by the next pulse it accepts. */
   private keyRejected = false;
+  /** How long the ESP32 holds a door unlocked, from its status reply. */
+  private pulseMs = DEFAULT_PULSE_MS;
+  private doors = new OpenDoors(() => this.setState(this.current));
 
   constructor(
     private readonly config: WifiConfig,
@@ -133,6 +138,7 @@ export class WifiMachineController implements MachineController {
 
   async disconnect(): Promise<void> {
     if (this.healthTimer !== null) clearInterval(this.healthTimer);
+    this.doors.clear();
     this.healthTimer = null;
     this.setState({ status: 'disconnected', detail: null });
   }
@@ -191,6 +197,7 @@ export class WifiMachineController implements MachineController {
       this.setState({ status: 'error', detail: DETAILS.notOurs });
       return 'failed';
     }
+    this.pulseMs = reply.data.pulseMs ?? DEFAULT_PULSE_MS;
     this.setState(this.keyRejected ? { status: 'error', detail: DETAILS.badKey } : { status: 'ready', detail: null });
     return 'connected';
   }
@@ -229,6 +236,7 @@ export class WifiMachineController implements MachineController {
     if (parsed.data.ok) {
       if (parsed.data.channel !== channel) return 'rejected';
       this.keyRejected = false;
+      this.doors.open(channel, this.pulseMs);
       this.setState({ status: 'ready', detail: null });
       return 'acked';
     }
@@ -239,9 +247,14 @@ export class WifiMachineController implements MachineController {
     return 'rejected';
   }
 
-  private setState(next: ControllerState): void {
-    if (next.status === this.current.status && next.detail === this.current.detail) return;
-    this.current = next;
-    this.listeners.forEach((listener) => listener(next));
+  private setState(next: Pick<ControllerState, 'status' | 'detail'>): void {
+    const openChannels = this.doors.channels();
+    const unchanged =
+      next.status === this.current.status &&
+      next.detail === this.current.detail &&
+      openChannels.join() === this.current.openChannels.join();
+    if (unchanged) return;
+    this.current = { status: next.status, detail: next.detail, openChannels };
+    this.listeners.forEach((listener) => listener(this.current));
   }
 }
