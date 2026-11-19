@@ -46,6 +46,9 @@ void setup() {
     Serial.println(WiFi.localIP());
   }, ARDUINO_EVENT_WIFI_STA_GOT_IP);
   WiFi.mode(WIFI_STA);
+  // Power saving makes the radio nap between beacons, so requests from the tablet were
+  // sometimes answered late or dropped. The board runs from a charger, so stay awake.
+  WiFi.setSleep(false);
   WiFi.setHostname("laundry-locks");
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
