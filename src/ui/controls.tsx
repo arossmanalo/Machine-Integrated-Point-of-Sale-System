@@ -1,7 +1,7 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type { ReactNode } from 'react';
 import { KeyboardAvoidingView, Modal, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
-import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets, type EdgeInsets } from 'react-native-safe-area-context';
 
 import { Text } from './Text';
 import { colors, elevation, MIN_TOUCH, radius, space } from './theme';
@@ -163,11 +163,13 @@ interface DialogProps {
 }
 
 /**
- * A modal sheet with a title, scrollable body and actions along the bottom. The modal is its own
- * window, so it gets its own SafeAreaProvider: the insets of the main screen do not cover it, and
- * without this the actions slid under tablet taskbars and navigation bars.
+ * A modal sheet with a title, scrollable body and actions along the bottom. The modal draws edge to
+ * edge like the main window, so it is padded by the main window's insets (measured outside the
+ * modal; inside it they read as zero on the shop tablet) and shrinks to fit, so its actions stay
+ * above taskbars and navigation bars.
  */
 export function Dialog({ visible, onClose, ...rest }: DialogProps) {
+  const insets = useSafeAreaInsets();
   return (
     <Modal
       visible={visible}
@@ -177,15 +179,12 @@ export function Dialog({ visible, onClose, ...rest }: DialogProps) {
       statusBarTranslucent
       navigationBarTranslucent
     >
-      <SafeAreaProvider>
-        <DialogFrame visible={visible} onClose={onClose} {...rest} />
-      </SafeAreaProvider>
+      <DialogFrame visible={visible} onClose={onClose} insets={insets} {...rest} />
     </Modal>
   );
 }
 
-function DialogFrame({ title, onClose, children, actions }: DialogProps) {
-  const insets = useSafeAreaInsets();
+function DialogFrame({ title, onClose, children, actions, insets }: DialogProps & { insets: EdgeInsets }) {
   return (
     <KeyboardAvoidingView
       behavior="padding"
@@ -256,7 +255,7 @@ const styles = StyleSheet.create({
   dialog: {
     width: '100%',
     maxWidth: 560,
-    maxHeight: '100%',
+    flexShrink: 1,
     alignSelf: 'center',
     backgroundColor: colors.surface,
     borderRadius: radius.md,
