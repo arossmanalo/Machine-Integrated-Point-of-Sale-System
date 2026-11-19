@@ -50,7 +50,7 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 
 ### HTTP protocol (the contract between app and ESP32)
 
-- `GET /status` → `{"device":"laundry-locks","channels":6}`. The app checks it on connect and every 20 s, since Wi-Fi gives no unplug event.
+- `GET /status` → `{"device":"laundry-locks","channels":14}`. The app checks it on connect and every 20 s, since Wi-Fi gives no unplug event.
 - `GET /challenge` → `{"challenge":"<32 hex>"}`, single use, expires after 10 s.
 - `POST /pulse`, form body `channel=<n>&challenge=<hex>&signature=<hex>`, where signature = hex HMAC-SHA256(lock key, `P<n>:<challenge>`). Replies `200 {"ok":true,"channel":n}` or `4xx {"ok":false,"error":"bad-channel"|"bad-signature"|"stale-challenge"}`. Every attempt uses up the challenge.
 - The signature is why a phone on the same Wi-Fi cannot open doors and a captured request cannot be replayed. The ESP32 has no clock, so there are no timestamps.
@@ -59,7 +59,7 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 
 ### Existing code
 
-- `lock_controller/lock_controller.ino`: the ESP32 sketch (Arduino core for ESP32 4.0 or newer, board "ESP32 Dev Module"; it uses the core's `HMACBuilder`). It compiles: 76% of flash, 15% of RAM. The board package lives in `D:\Arduino15` (set in `%USERPROFILE%\.arduinoIDErduino-cli.yaml`) because C: is nearly full. Non-blocking, so several machines can pulse at once. Wi-Fi name, password and lock key go in `lock_controller/config.h`, copied from `config.example.h`; `config.h` is git-ignored.
+- `lock_controller/lock_controller.ino`: the ESP32 sketch (Arduino core for ESP32 4.0 or newer, board "ESP32 Dev Module"; it uses the core's `HMACBuilder`). It compiles: 76% of flash, 15% of RAM. The board package lives in `D:\Arduino15` (set in `%USERPROFILE%\.arduinoIDE\arduino-cli.yaml`) because C: is nearly full. Non-blocking, so several machines can pulse at once. Wi-Fi name, password and lock key go in `lock_controller/config.h`, copied from `config.example.h`; `config.h` is git-ignored.
 - `src/machines/protocol.ts`: the contract in TypeScript (signing, address parsing, reply schemas). `src/machines/WifiMachineController.ts`: one command at a time, success only on `{"ok":true}` for the same channel. Only `src/state/AppProvider.tsx` may import it (enforced by ESLint).
 - The lock address and key are settings (`lockControllerAddress`, `lockControllerKey`), saved through `saveLockController` (owner only). They are included in backups, which are owner-only.
 - `machine_pulser/machine_pulser.ino` and `modules/machine-serial/ArduinoPulser.kt` are the old USB drafts, kept for reference only.
