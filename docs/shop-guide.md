@@ -73,9 +73,22 @@ Everything lives only on this tablet. Go to **Manage › Backup and import › S
 
 The lock controller has 14 channels. Wire each machine's lock to the terminal for its channel; the app shows the terminal next to each machine.
 
-| Channel | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Terminal | D25 | D26 | D27 | D32 | D33 | D13 | D18 | D19 | D21 | D22 | D23 | D4 | RX2 | TX2 |
+| Channel | Terminal | Green strip (USB port at the top) | ESP32 pin |
+|---|---|---|---|
+| 1 | D25 | right strip | GPIO 25 |
+| 2 | D26 | right strip | GPIO 26 |
+| 3 | D27 | right strip | GPIO 27 |
+| 4 | D32 | right strip | GPIO 32 |
+| 5 | D33 | right strip | GPIO 33 |
+| 6 | D13 | right strip | GPIO 13 |
+| 7 | D18 | left strip | GPIO 18 |
+| 8 | D19 | left strip | GPIO 19 |
+| 9 | D21 | left strip | GPIO 21 |
+| 10 | D22 | left strip | GPIO 22 |
+| 11 | D23 | left strip | GPIO 23 |
+| 12 | D4 | left strip | GPIO 4 |
+| 13 | RX2 | left strip | GPIO 16 |
+| 14 | TX2 | left strip | GPIO 17 |
 
 Leave the other terminals free: some of them switch on briefly while the board starts, which would open a door.
 

@@ -50,7 +50,26 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 
 - One LED per machine stands in for the door lock. The hardware side (relays, 12V solenoid locks, mounting) will be done by my dad later.
 - Hardware: ESP32 DevKit (ESP-32D / WROOM-32 module, type HW-394, on a screw-terminal board with USB-C and a CH340 USB chip), LEDs each through a 220Ω resistor, with a shared GND rail.
-- 14 channels, board labels in order: D25, D26, D27, D32, D33, D13, D18, D19, D21, D22, D23, D4, RX2 (GPIO 16), TX2 (GPIO 17). Those are all the pins that are safe for a lock: they avoid the boot-strapping pins (0, 2, 5, 12, 15), GPIO 14 (pulses at boot), flash (6–11), USB serial (1, 3) and input-only pins (34–39). The list lives in `LOCK_PINS` in the sketch and `LOCK_CHANNEL_TERMINALS` in `protocol.ts`; change both together. A WROVER board cannot use channels 13–14 (PSRAM). More than 14 machines needs an I/O expander (MCP23017 or PCF8575) or a second ESP32.
+- 14 channels. Each channel is one screw terminal on the board:
+
+  | Channel | Terminal | Green strip (USB port at the top) | ESP32 pin |
+  |---|---|---|---|
+  | 1 | D25 | right strip | GPIO 25 |
+  | 2 | D26 | right strip | GPIO 26 |
+  | 3 | D27 | right strip | GPIO 27 |
+  | 4 | D32 | right strip | GPIO 32 |
+  | 5 | D33 | right strip | GPIO 33 |
+  | 6 | D13 | right strip | GPIO 13 |
+  | 7 | D18 | left strip | GPIO 18 |
+  | 8 | D19 | left strip | GPIO 19 |
+  | 9 | D21 | left strip | GPIO 21 |
+  | 10 | D22 | left strip | GPIO 22 |
+  | 11 | D23 | left strip | GPIO 23 |
+  | 12 | D4 | left strip | GPIO 4 |
+  | 13 | RX2 | left strip | GPIO 16 |
+  | 14 | TX2 | left strip | GPIO 17 |
+
+- Those are all the pins that are safe for a lock: they avoid the boot-strapping pins (0, 2, 5, 12, 15), GPIO 14 (pulses at boot), flash (6–11), USB serial (1, 3) and input-only pins (34–39). The list lives in `LOCK_PINS` in the sketch and `LOCK_CHANNEL_TERMINALS` in `protocol.ts`; change both together. A WROVER board cannot use channels 13–14 (PSRAM). More than 14 machines needs an I/O expander (MCP23017 or PCF8575) or a second ESP32.
 - `WiFi.setSleep(false)` is required: with modem sleep on, the tablet intermittently could not reach the ESP32.
 - Connection: the ESP32 and the tablet are both on the shop Wi-Fi (2.4 GHz). The owner enters the ESP32's address (reserve it in the router) and the lock key in Manage › Machines and locks. The ESP32 is powered separately (USB charger).
 - Moved from a USB-wired Arduino Uno to the ESP32 on 2026-11-19.
