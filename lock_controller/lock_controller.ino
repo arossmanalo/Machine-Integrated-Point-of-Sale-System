@@ -4,10 +4,12 @@
 // Wi-Fi cannot open a door without the key, and a recorded request cannot be replayed.
 // The contract is in src/machines/protocol.ts; keep the two in step.
 //
-// Board: ESP32 DevKit (ESP32-WROOM-32 or -WROVER), Arduino core for ESP32 4.0 or newer
-// (Tools > Board > esp32 > ESP32 Dev Module).
-// Outputs avoid the boot-strapping pins (0, 2, 5, 12, 15), the flash pins (6-11),
-// the input-only pins (34-39) and the WROVER PSRAM pins (16, 17).
+// Board: ESP32 DevKit with an ESP32-WROOM-32 / -32D / -32E module, Arduino core for ESP32
+// 4.0 or newer (Tools > Board > esp32 > ESP32 Dev Module). Not WROVER: it uses GPIO 16 and 17
+// for its extra memory, and those are channels 13 and 14 here.
+// Outputs avoid the boot-strapping pins (0, 2, 5, 12, 15), GPIO 14 (it pulses during boot,
+// which could open a door at power-on), the flash pins (6-11), the USB serial pins (1, 3)
+// and the input-only pins (34-39). That leaves exactly these 14.
 //
 // Wiring per LED (prototype): GPIO -> 220 ohm resistor -> LED long leg (+), short leg (-) -> GND.
 // Real locks: GPIO drives a relay or MOSFET module, never the 12 V solenoid directly.
@@ -23,7 +25,9 @@
 
 #include "config.h"
 
-const int LOCK_PINS[] = {25, 26, 27, 32, 33, 13};  // channel 1..6
+// Channel n uses LOCK_PINS[n - 1]. Board labels: D25 D26 D27 D32 D33 D13 D18 D19 D21 D22 D23 D4
+// RX2 TX2. Keep in step with LOCK_CHANNEL_TERMINALS in src/machines/protocol.ts.
+const int LOCK_PINS[] = {25, 26, 27, 32, 33, 13, 18, 19, 21, 22, 23, 4, 16, 17};
 const int NUM_CHANNELS = sizeof(LOCK_PINS) / sizeof(LOCK_PINS[0]);
 const unsigned long PULSE_MS = 500;                // LEDs; about 3000-5000 for real locks
 const unsigned long CHALLENGE_TTL_MS = 10000;

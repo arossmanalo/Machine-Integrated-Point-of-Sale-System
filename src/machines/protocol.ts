@@ -17,11 +17,23 @@ import { z } from 'zod';
  * app and the sketch, so a phone on the same Wi-Fi cannot open doors without the POS.
  */
 export const DEVICE_NAME = 'laundry-locks';
-export const MAX_CHANNEL = 99;
+
+/**
+ * The board terminal behind each channel (channel n is entry n - 1). Matches LOCK_PINS in the
+ * sketch: D25 is GPIO 25, RX2 is GPIO 16, TX2 is GPIO 17.
+ */
+export const LOCK_CHANNEL_TERMINALS = [
+  'D25', 'D26', 'D27', 'D32', 'D33', 'D13', 'D18', 'D19', 'D21', 'D22', 'D23', 'D4', 'RX2', 'TX2',
+] as const;
+export const MAX_CHANNEL = LOCK_CHANNEL_TERMINALS.length;
 export const MIN_KEY_LENGTH = 12;
 
 export function isValidChannel(channel: number): boolean {
   return Number.isInteger(channel) && channel >= 1 && channel <= MAX_CHANNEL;
+}
+
+export function channelTerminal(channel: number): string | null {
+  return isValidChannel(channel) ? LOCK_CHANNEL_TERMINALS[channel - 1] : null;
 }
 
 export function signPulse(key: string, channel: number, challenge: string): string {

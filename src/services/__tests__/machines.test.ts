@@ -163,6 +163,10 @@ describe('machine settings', () => {
       addMachine(ctx, owner, { name: 'Dup', type: 'WASHER', hardwareChannel: 1, enabled: true }),
     ).toThrow('already used by Washer 1');
     expect(() =>
+      addMachine(ctx, owner, { name: 'Washer 15', type: 'WASHER', hardwareChannel: 15, enabled: true }),
+    ).toThrow('from 1 to 14');
+    expect(addMachine(ctx, owner, { name: 'Dryer 7', type: 'DRYER', hardwareChannel: 14, enabled: true })).toBeGreaterThan(0);
+    expect(() =>
       addMachine(ctx, testEmployee, { name: 'X', type: 'WASHER', hardwareChannel: 9, enabled: true }),
     ).toThrow('owner');
     await expect(testPulse(ctx, controller, testEmployee, washers[0])).rejects.toThrow('owner');

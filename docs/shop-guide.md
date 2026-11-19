@@ -70,3 +70,11 @@ Everything lives only on this tablet. Go to **Manage › Backup and import › S
 ### Setting up machines
 
 **Manage › Machines and locks**: add each machine with its type and lock channel (the lock controller output it is wired to). Use **Test** to pulse one lock. Switch a machine off while it is broken so nobody gets sent to it. **Simulate locks** is for training; turn it off for real use.
+
+The lock controller has 14 channels. Wire each machine's lock to the terminal for its channel; the app shows the terminal next to each machine.
+
+| Channel | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Terminal | D25 | D26 | D27 | D32 | D33 | D13 | D18 | D19 | D21 | D22 | D23 | D4 | RX2 | TX2 |
+
+Leave the other terminals free: some of them switch on briefly while the board starts, which would open a door.

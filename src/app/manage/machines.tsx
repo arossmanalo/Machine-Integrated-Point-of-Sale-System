@@ -4,7 +4,7 @@ import type { MachineRow } from '@/db/schema';
 import { can } from '@/domain/permissions';
 import { MACHINE_TYPE_LABELS, MACHINE_TYPES, type MachineType } from '@/domain/unlockPolicy';
 import { STATUS_LABELS } from '@/machines/MachineController';
-import { MIN_KEY_LENGTH, normalizeAddress } from '@/machines/protocol';
+import { channelTerminal, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress } from '@/machines/protocol';
 import { changeOwnerPin } from '@/services/auth';
 import {
   addMachine,
@@ -108,7 +108,7 @@ export default function MachineSettings() {
 
         <Section
           title="Machines"
-          description="The lock channel is the lock controller output wired to that machine's door lock (1 is GPIO 25, 2 is 26, 3 is 27, 4 is 32, 5 is 33, 6 is 13)."
+          description={`Each machine's lock channel (1 to ${MAX_CHANNEL}) is the lock controller terminal its door lock is wired to.`}
           action={<Button label="Add machine" icon="plus" onPress={() => setEditing('new')} />}
         >
           <Panel>
@@ -119,7 +119,9 @@ export default function MachineSettings() {
                 <ListRow
                   key={machine.id}
                   title={machine.name}
-                  subtitle={`${MACHINE_TYPE_LABELS[machine.type]} · lock channel ${machine.hardwareChannel}`}
+                  subtitle={`${MACHINE_TYPE_LABELS[machine.type]} · lock channel ${machine.hardwareChannel} (${
+                    channelTerminal(machine.hardwareChannel) ?? 'not on the board'
+                  })`}
                   right={
                     <Row>
                       {!machine.enabled && <Badge label="Off" tone="warning" />}
@@ -187,7 +189,11 @@ function MachineDialog({ machine, nextChannel, onClose }: { machine: MachineRow 
         value={channelText}
         onChangeText={(text) => setChannelText(text.replace(/\D/g, ''))}
         keyboardType="number-pad"
-        hint="The lock controller output for this door, 1 to 6."
+        hint={
+          channelTerminal(Number(channelText)) === null
+            ? `A number from 1 to ${MAX_CHANNEL}.`
+            : `Wire this door's lock to terminal ${channelTerminal(Number(channelText))} on the lock controller.`
+        }
       />
       <Toggle
         label="In use"

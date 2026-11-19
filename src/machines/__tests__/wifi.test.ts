@@ -1,7 +1,7 @@
 import { createHmac } from 'crypto';
 
 import { MockMachineController } from '../MockMachineController';
-import { DEVICE_NAME, normalizeAddress, signPulse } from '../protocol';
+import { channelTerminal, DEVICE_NAME, MAX_CHANNEL, normalizeAddress, signPulse } from '../protocol';
 import { WifiMachineController, type HttpReply, type HttpRequest } from '../WifiMachineController';
 
 const KEY = 'correct horse battery';
@@ -73,6 +73,15 @@ describe('protocol', () => {
     expect(normalizeAddress('https://192.168.1.50')).toBeNull();
     expect(normalizeAddress('192.168.1.50/unlock')).toBeNull();
     expect(normalizeAddress('192.168.1.50:99999')).toBeNull();
+  });
+
+  it('names the board terminal for each of the 14 channels', () => {
+    expect(MAX_CHANNEL).toBe(14);
+    expect(channelTerminal(1)).toBe('D25');
+    expect(channelTerminal(7)).toBe('D18');
+    expect(channelTerminal(14)).toBe('TX2');
+    expect(channelTerminal(0)).toBeNull();
+    expect(channelTerminal(15)).toBeNull();
   });
 
   it('signs exactly like a standard HMAC-SHA256, as the ESP32 computes it', () => {

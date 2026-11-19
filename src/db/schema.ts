@@ -127,7 +127,7 @@ export const machines = sqliteTable('machines', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
   type: text('type', { enum: ['WASHER', 'DRYER'] }).notNull(),
-  /** Which lock controller output (1 to 6) drives this machine's lock. */
+  /** Which lock controller channel (1 to 14, see LOCK_CHANNEL_TERMINALS) drives this machine's lock. */
   hardwareChannel: integer('hardware_channel').notNull(),
   enabled: bool('enabled').notNull().default(true),
   sortOrder: integer('sort_order').notNull().default(0),

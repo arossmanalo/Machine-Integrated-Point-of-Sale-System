@@ -42,7 +42,9 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 ### Current phase: LED prototype
 
 - One LED per machine stands in for the door lock. The hardware side (relays, 12V solenoid locks, mounting) will be done by my dad later.
-- Hardware: ESP32 DevKit (WROOM-32 or WROVER), LEDs on GPIO 25, 26, 27, 32, 33, 13 (channels 1–6), each through a 220Ω resistor, with a shared GND rail. These pins avoid the ESP32's boot-strapping, flash, input-only and PSRAM pins.
+- Hardware: ESP32 DevKit (ESP-32D / WROOM-32 module, type HW-394, on a screw-terminal board with USB-C and a CH340 USB chip), LEDs each through a 220Ω resistor, with a shared GND rail.
+- 14 channels, board labels in order: D25, D26, D27, D32, D33, D13, D18, D19, D21, D22, D23, D4, RX2 (GPIO 16), TX2 (GPIO 17). Those are all the pins that are safe for a lock: they avoid the boot-strapping pins (0, 2, 5, 12, 15), GPIO 14 (pulses at boot), flash (6–11), USB serial (1, 3) and input-only pins (34–39). The list lives in `LOCK_PINS` in the sketch and `LOCK_CHANNEL_TERMINALS` in `protocol.ts`; change both together. A WROVER board cannot use channels 13–14 (PSRAM). More than 14 machines needs an I/O expander (MCP23017 or PCF8575) or a second ESP32.
+- `WiFi.setSleep(false)` is required: with modem sleep on, the tablet intermittently could not reach the ESP32.
 - Connection: the ESP32 and the tablet are both on the shop Wi-Fi (2.4 GHz). The owner enters the ESP32's address (reserve it in the router) and the lock key in Manage › Machines and locks. The ESP32 is powered separately (USB charger).
 - Moved from a USB-wired Arduino Uno to the ESP32 on 2026-11-19.
 
