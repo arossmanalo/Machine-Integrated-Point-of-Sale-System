@@ -1,3 +1,5 @@
+import type { z } from 'zod';
+
 import type {
   ConnectResult,
   ControllerState,
@@ -52,6 +54,8 @@ const DETAILS = {
   badKey: 'The lock key in the app does not match the one on the lock controller.',
 };
 
+type CheckedReply<T> = { kind: 'ok'; data: T } | { kind: 'unreachable' } | { kind: 'not-ours' };
+
 export const fetchHttp: HttpClient = async ({ method, url, body, timeoutMs }) => {
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), timeoutMs);
@@ -59,7 +63,12 @@ export const fetchHttp: HttpClient = async ({ method, url, body, timeoutMs }) =>
     const response = await fetch(url, {
       method,
       body,
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/x-www-form-urlencoded' },
+      // The ESP32's small web server can close a kept-alive connection under Android's feet,
+      // which reads as an empty reply. A fresh connection per request avoids that.
+      headers:
+        body === undefined
+          ? { Connection: 'close' }
+          : { Connection: 'close', 'Content-Type': 'application/x-www-form-urlencoded' },
       signal: abort.signal,
     });
     const text = await response.text();
@@ -150,15 +159,35 @@ export class WifiMachineController implements MachineController {
     }, this.timings.healthIntervalMs);
   }
 
+  /**
+   * GET that is safe to repeat (status, challenge): one retry when the request fails or the
+   * reply is unreadable. "Not ours" only when something answered with readable data that is not
+   * the lock controller's.
+   */
+  private async getChecked<T>(path: string, schema: z.ZodType<T>): Promise<CheckedReply<T>> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let reply: HttpReply;
+      try {
+        reply = await this.http({ method: 'GET', url: this.url(path), timeoutMs: this.timings.requestTimeoutMs });
+      } catch {
+        // No answer this time; the loop tries once more before calling it unreachable.
+        continue;
+      }
+      if (reply.json === null) continue;
+      const parsed = schema.safeParse(reply.json);
+      if (reply.status === 200 && parsed.success) return { kind: 'ok', data: parsed.data };
+      return { kind: 'not-ours' };
+    }
+    return { kind: 'unreachable' };
+  }
+
   private async checkStatus(): Promise<ConnectResult> {
-    let reply: HttpReply;
-    try {
-      reply = await this.http({ method: 'GET', url: this.url('/status'), timeoutMs: this.timings.requestTimeoutMs });
-    } catch {
+    const reply = await this.getChecked('/status', statusResponse);
+    if (reply.kind === 'unreachable') {
       this.setState({ status: 'disconnected', detail: DETAILS.unreachable });
       return 'unreachable';
     }
-    if (reply.status !== 200 || !statusResponse.safeParse(reply.json).success) {
+    if (reply.kind === 'not-ours') {
       this.setState({ status: 'error', detail: DETAILS.notOurs });
       return 'failed';
     }
@@ -171,23 +200,16 @@ export class WifiMachineController implements MachineController {
     const usable = this.current.status === 'ready' || this.keyRejected;
     if (!usable && (await this.connect()) !== 'connected') return 'not-connected';
 
-    let challenge: string;
-    try {
-      const reply = await this.http({
-        method: 'GET',
-        url: this.url('/challenge'),
-        timeoutMs: this.timings.requestTimeoutMs,
-      });
-      const parsed = challengeResponse.safeParse(reply.json);
-      if (!parsed.success) {
-        this.setState({ status: 'error', detail: DETAILS.notOurs });
-        return 'not-connected';
-      }
-      challenge = parsed.data.challenge;
-    } catch {
-      this.setState({ status: 'disconnected', detail: DETAILS.unreachable });
+    const issued = await this.getChecked('/challenge', challengeResponse);
+    if (issued.kind !== 'ok') {
+      this.setState(
+        issued.kind === 'not-ours'
+          ? { status: 'error', detail: DETAILS.notOurs }
+          : { status: 'disconnected', detail: DETAILS.unreachable },
+      );
       return 'not-connected';
     }
+    const { challenge } = issued.data;
 
     const signature = signPulse(this.config.key, channel, challenge);
     let reply: HttpReply;

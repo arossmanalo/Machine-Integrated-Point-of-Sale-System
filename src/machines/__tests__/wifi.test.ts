@@ -15,6 +15,8 @@ class FakeEsp32 {
   device = DEVICE_NAME;
   /** The pulse happens but the reply never arrives. */
   loseNextPulseReply = false;
+  /** The next this-many replies arrive empty, as a dropped kept-alive connection reads. */
+  garbleNext = 0;
   pulses: number[] = [];
   log: string[] = [];
   private challenge: string | null = null;
@@ -24,6 +26,10 @@ class FakeEsp32 {
     const path = request.url.replace(BASE, '');
     this.log.push(`${request.method} ${path}`);
     if (this.down) throw new Error('Network request failed');
+    if (this.garbleNext > 0) {
+      this.garbleNext -= 1;
+      if (path !== '/pulse') return { status: 200, json: null };
+    }
     if (path === '/status') return { status: 200, json: { device: this.device, channels: 6 } };
     if (path === '/challenge') {
       this.counter += 1;
@@ -54,13 +60,22 @@ class FakeEsp32 {
   };
 }
 
+/** Every controller a test makes, so a failing test still stops its health-check timer. */
+const made: WifiMachineController[] = [];
+
+function track(controller: WifiMachineController): WifiMachineController {
+  made.push(controller);
+  return controller;
+}
+
 function setup(config: { baseUrl: string | null; key: string } = { baseUrl: BASE, key: KEY }) {
   const esp = new FakeEsp32();
-  const controller = new WifiMachineController(config, esp.http, timings);
+  const controller = track(new WifiMachineController(config, esp.http, timings));
   return { esp, controller };
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await Promise.all(made.splice(0).map((controller) => controller.disconnect()));
   jest.useRealTimers();
 });
 
@@ -148,6 +163,38 @@ describe('WifiMachineController', () => {
     await expect(controller.unlock(2)).resolves.toBe('timeout');
     expect(esp.log.filter((line) => line === 'POST /pulse')).toHaveLength(1);
     expect(esp.pulses).toEqual([2]);
+    await controller.disconnect();
+  });
+
+  it('shrugs off one unreadable reply to a status or challenge request', async () => {
+    const { esp, controller } = setup();
+    esp.garbleNext = 1;
+    await expect(controller.connect()).resolves.toBe('connected');
+    esp.garbleNext = 1;
+    await expect(controller.unlock(2)).resolves.toBe('acked');
+    expect(esp.log).toEqual(['GET /status', 'GET /status', 'GET /challenge', 'GET /challenge', 'POST /pulse']);
+    await controller.disconnect();
+  });
+
+  it('calls repeated unreadable replies unreachable, not the wrong device', async () => {
+    const { esp, controller } = setup();
+    esp.garbleNext = 2;
+    await expect(controller.connect()).resolves.toBe('unreachable');
+    expect(controller.state()).toMatchObject({ status: 'disconnected', detail: expect.stringContaining('Cannot reach') });
+    await controller.disconnect();
+  });
+
+  it('never repeats a pulse, even when its reply is unreadable', async () => {
+    const esp = new FakeEsp32();
+    const unreadablePulses = async (request: HttpRequest): Promise<HttpReply> => {
+      const reply = await esp.http(request);
+      return request.url.endsWith('/pulse') ? { status: 200, json: null } : reply;
+    };
+    const controller = track(new WifiMachineController({ baseUrl: BASE, key: KEY }, unreadablePulses, timings));
+    await controller.connect();
+    await expect(controller.unlock(3)).resolves.toBe('timeout');
+    expect(esp.pulses).toEqual([3]);
+    expect(esp.log.filter((line) => line === 'POST /pulse')).toHaveLength(1);
     await controller.disconnect();
   });
 
