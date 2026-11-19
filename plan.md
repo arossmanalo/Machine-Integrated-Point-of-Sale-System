@@ -4,6 +4,8 @@ This plan covers two things: rebuilding the existing Kotlin POS in React Native 
 
 It is based on a full read of the old app (`arossmanalo/Laundry-Pos`, commit `7e6bcf4`, about 5,500 lines of Kotlin) and the two draft files in this repo (`machine_pulser/machine_pulser.ino`, `ArduinoPulser.kt`).
 
+> **2026-11-19:** the lock controller moved from a USB-wired Arduino Uno to an ESP32 on the shop Wi-Fi, with signed HTTP requests. The USB parts of this plan (the `machine-serial` module, the serial protocol, OTG and cable risks) no longer apply. `CLAUDE.md` describes the current design.
+
 Nothing here is built yet. Items marked **Decision** are choices I made that you can overrule; section 11 records the answers you gave on 2026-11-12 and the one question still open.
 
 **Change from the old app:** the new app sells one service only, Wash-Dry-Fold. `WASH` and `WASH_DRY` are removed. Section 1 still describes all three because that is what the old app does and what old data contains.

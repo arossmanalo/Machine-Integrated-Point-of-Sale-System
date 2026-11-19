@@ -2,23 +2,17 @@
 const { defineConfig } = require('eslint/config');
 const expoConfig = require('eslint-config-expo/flat');
 
-const nativeModuleImports = {
-  'no-restricted-imports': [
-    'error',
-    {
-      patterns: [
-        {
-          group: ['**/modules/machine-serial', '**/modules/machine-serial/**'],
-          message: 'Only src/machines/UsbSerialMachineController.ts may use the USB module.',
-        },
-        {
-          group: ['**/modules/receipt-printer', '**/modules/receipt-printer/**'],
-          message: 'Only src/printing/BluetoothReceiptPrinter.ts may use the printer module.',
-        },
-      ],
-    },
-  ],
+const printerModule = {
+  group: ['**/modules/receipt-printer', '**/modules/receipt-printer/**'],
+  message: 'Only src/printing/BluetoothReceiptPrinter.ts may use the printer module.',
 };
+
+const lockController = {
+  group: ['**/machines/WifiMachineController'],
+  message: 'Only src/state/AppProvider.tsx creates the lock controller. Use the MachineController from useApp().',
+};
+
+const restrict = (...patterns) => ({ 'no-restricted-imports': ['error', { patterns }] });
 
 module.exports = defineConfig([
   expoConfig,
@@ -27,10 +21,15 @@ module.exports = defineConfig([
   },
   {
     files: ['src/**/*.{ts,tsx}'],
-    ignores: [
-      'src/machines/UsbSerialMachineController.ts',
-      'src/printing/BluetoothReceiptPrinter.ts',
-    ],
-    rules: nativeModuleImports,
+    ignores: ['src/printing/BluetoothReceiptPrinter.ts', 'src/state/AppProvider.tsx', 'src/**/__tests__/**'],
+    rules: restrict(printerModule, lockController),
+  },
+  {
+    files: ['src/printing/BluetoothReceiptPrinter.ts'],
+    rules: restrict(lockController),
+  },
+  {
+    files: ['src/state/AppProvider.tsx'],
+    rules: restrict(printerModule),
   },
 ]);

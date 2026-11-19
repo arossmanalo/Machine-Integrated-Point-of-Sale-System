@@ -71,7 +71,7 @@ export function decideOrderUnlock(check: UnlockCheck): UnlockDecision {
     return deny('allowance-used', message);
   }
   if (!check.controllerReady) {
-    return deny('not-connected', 'The lock controller is not connected. Check the USB cable.');
+    return deny('not-connected', 'Cannot reach the lock controller. Check that it has power and is on the shop Wi-Fi.');
   }
   return { allowed: true };
 }

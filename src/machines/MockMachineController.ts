@@ -7,7 +7,7 @@ import type {
 } from './MachineController';
 import { isValidChannel } from './protocol';
 
-/** Stands in for the Arduino during development, tests and demos. */
+/** Stands in for the ESP32 lock controller during development, tests and demos. */
 export class MockMachineController implements MachineController {
   readonly kind = 'mock' as const;
   readonly pulses: number[] = [];

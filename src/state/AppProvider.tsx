@@ -9,11 +9,11 @@ import {
   type ReactNode,
 } from 'react';
 
-import type { Actor, ServiceContext } from '@/db/types';
+import type { Actor, Db, ServiceContext } from '@/db/types';
 import type { ControllerState, MachineController } from '@/machines/MachineController';
 import { MockMachineController } from '@/machines/MockMachineController';
-import type { SerialMachineController } from '@/machines/SerialMachineController';
-import { createUsbSerialMachineController } from '@/machines/UsbSerialMachineController';
+import { normalizeAddress } from '@/machines/protocol';
+import { WifiMachineController } from '@/machines/WifiMachineController';
 import type { ReceiptPrinter } from '@/printing/ReceiptPrinter';
 import { restoreSession } from '@/services/auth';
 import { getSetting } from '@/services/settings';
@@ -28,18 +28,18 @@ interface AppState {
   /** Bumped after every write so screens re-read the database. */
   version: number;
   refresh: () => void;
-  /** Swap between the real USB controller and the simulated one (owner setting). */
-  setSimulatedLocks: (simulate: boolean) => void;
+  /** Rebuild the lock controller after its settings (simulate, address, key) change. */
+  reloadLockController: () => void;
 }
 
 const AppContext = createContext<AppState | null>(null);
 
-function makeController(simulate: boolean): MachineController {
-  return simulate ? new MockMachineController() : createUsbSerialMachineController();
-}
-
-function isSerial(controller: MachineController): controller is SerialMachineController {
-  return controller.kind === 'usb';
+function makeController(db: Db): MachineController {
+  if (getSetting(db, 'simulateMachines')) return new MockMachineController();
+  return new WifiMachineController({
+    baseUrl: normalizeAddress(getSetting(db, 'lockControllerAddress')),
+    key: getSetting(db, 'lockControllerKey'),
+  });
 }
 
 export function AppProvider({
@@ -53,9 +53,7 @@ export function AppProvider({
 }) {
   const [user, setUser] = useState<Actor | null>(() => restoreSession(ctx));
   const [version, setVersion] = useState(0);
-  const [controller, setController] = useState<MachineController>(() =>
-    makeController(getSetting(ctx.db, 'simulateMachines')),
-  );
+  const [controller, setController] = useState<MachineController>(() => makeController(ctx.db));
   const subscribe = useCallback(
     (onChange: () => void) => controller.onStateChange(onChange),
     [controller],
@@ -64,19 +62,14 @@ export function AppProvider({
 
   useEffect(() => {
     void controller.connect();
+    return () => {
+      void controller.disconnect();
+    };
   }, [controller]);
 
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
 
-  const setSimulatedLocks = useCallback(
-    (simulate: boolean) => {
-      if ((controller.kind === 'mock') === simulate) return;
-      if (isSerial(controller)) void controller.dispose();
-      else void controller.disconnect();
-      setController(makeController(simulate));
-    },
-    [controller],
-  );
+  const reloadLockController = useCallback(() => setController(makeController(ctx.db)), [ctx.db]);
 
   const value = useMemo<AppState>(
     () => ({
@@ -88,9 +81,9 @@ export function AppProvider({
       setUser,
       version,
       refresh,
-      setSimulatedLocks,
+      reloadLockController,
     }),
-    [ctx, printer, controller, controllerState, user, version, refresh, setSimulatedLocks],
+    [ctx, printer, controller, controllerState, user, version, refresh, reloadLockController],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

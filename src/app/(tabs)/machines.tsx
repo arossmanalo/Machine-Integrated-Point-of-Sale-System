@@ -45,7 +45,7 @@ export default function Machines() {
           <EmptyState
             icon="washing-machine"
             title="No machines set up"
-            body="Add each washer and dryer with the Arduino channel its lock is wired to."
+            body="Add each washer and dryer with the lock controller channel its lock is wired to."
             action={
               can.manageMachines(actor.role) ? (
                 <Button label="Set up machines" onPress={() => router.push('/manage/machines')} />

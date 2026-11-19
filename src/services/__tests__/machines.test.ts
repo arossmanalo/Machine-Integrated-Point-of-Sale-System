@@ -7,12 +7,14 @@ import {
   addMachine,
   listUnlocks,
   overrideUnlock,
+  saveLockController,
   testPulse,
   unlockForOrder,
   unlockUsage,
   updateMachine,
 } from '../machines';
 import { createOrder, updateOrderStatus, voidOrder } from '../orders';
+import { getSetting } from '../settings';
 
 async function setup() {
   const ctx = createTestContext();
@@ -166,5 +168,18 @@ describe('machine settings', () => {
     await expect(testPulse(ctx, controller, testEmployee, washers[0])).rejects.toThrow('owner');
     await expect(testPulse(ctx, controller, owner, washers[0])).resolves.toBe('acked');
     expect(listUnlocks(ctx, { start: 0, end: ctx.now() + 1 })[0].kind).toBe('TEST');
+  });
+
+  it('saves the lock controller address and key for the owner only, after checking them', async () => {
+    const { ctx, owner } = await setup();
+    const good = { address: ' 192.168.1.50 ', key: 'correct horse battery' };
+    expect(() => saveLockController(ctx, testEmployee, good)).toThrow('owner');
+    expect(() => saveLockController(ctx, owner, { ...good, address: 'not an address!' })).toThrow('192.168.1.50');
+    expect(() => saveLockController(ctx, owner, { ...good, key: 'short' })).toThrow('at least 12');
+    expect(getSetting(ctx.db, 'lockControllerAddress')).toBe('');
+
+    saveLockController(ctx, owner, good);
+    expect(getSetting(ctx.db, 'lockControllerAddress')).toBe('192.168.1.50');
+    expect(getSetting(ctx.db, 'lockControllerKey')).toBe('correct horse battery');
   });
 });

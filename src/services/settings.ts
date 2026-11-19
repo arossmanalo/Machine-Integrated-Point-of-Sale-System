@@ -19,6 +19,10 @@ const settingSchemas = {
   pinLock: z.object({ failures: z.number().int(), lockedUntil: z.number().nullable() }),
   sessionUserId: z.string().nullable(),
   simulateMachines: z.boolean(),
+  /** What the owner typed, e.g. "192.168.1.50"; turned into a URL by normalizeAddress. */
+  lockControllerAddress: z.string(),
+  /** Shared passphrase that signs every pulse; must match LOCK_KEY in the ESP32 sketch. */
+  lockControllerKey: z.string(),
 };
 
 export type SettingKey = keyof typeof settingSchemas;
@@ -37,6 +41,8 @@ export const DEFAULT_SETTINGS: Settings = {
   pinLock: PIN_UNLOCKED,
   sessionUserId: null,
   simulateMachines: false,
+  lockControllerAddress: '',
+  lockControllerKey: '',
 };
 
 function parseStored<K extends SettingKey>(key: K, raw: string | undefined): Settings[K] {

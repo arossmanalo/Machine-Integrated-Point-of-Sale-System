@@ -44,6 +44,7 @@ yarn-error.*
 .env
 *.keystore
 keystore.properties
+lock_controller/config.h
 
 # Gradle output inside local native modules
 modules/*/android/build/

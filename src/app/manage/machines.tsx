@@ -4,8 +4,16 @@ import type { MachineRow } from '@/db/schema';
 import { can } from '@/domain/permissions';
 import { MACHINE_TYPE_LABELS, MACHINE_TYPES, type MachineType } from '@/domain/unlockPolicy';
 import { STATUS_LABELS } from '@/machines/MachineController';
+import { MIN_KEY_LENGTH, normalizeAddress } from '@/machines/protocol';
 import { changeOwnerPin } from '@/services/auth';
-import { addMachine, listMachines, RESULT_MESSAGES, testPulse, updateMachine } from '@/services/machines';
+import {
+  addMachine,
+  listMachines,
+  RESULT_MESSAGES,
+  saveLockController,
+  testPulse,
+  updateMachine,
+} from '@/services/machines';
 import { getSetting, setSetting } from '@/services/settings';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData } from '@/state/hooks';
@@ -19,13 +27,29 @@ import { TextField } from '@/ui/TextField';
 
 export default function MachineSettings() {
   const actor = useActor();
-  const { controller, controllerState, setSimulatedLocks } = useApp();
+  const { controller, controllerState, reloadLockController } = useApp();
   const action = useAction();
   const toast = useToast();
   const [editing, setEditing] = useState<MachineRow | 'new' | null>(null);
   const [changingPin, setChangingPin] = useState(false);
   const machines = useData(listMachines);
   const simulate = useData((c) => getSetting(c.db, 'simulateMachines'));
+  const saved = useData((c) => ({
+    address: getSetting(c.db, 'lockControllerAddress'),
+    key: getSetting(c.db, 'lockControllerKey'),
+  }));
+  const [address, setAddress] = useState(saved.address);
+  const [key, setKey] = useState(saved.key);
+  const changed = address.trim() !== saved.address || key !== saved.key;
+  const addressError = address.trim() !== '' && normalizeAddress(address) === null;
+
+  async function saveConnection() {
+    const result = await action.run((c) => saveLockController(c, actor, { address, key }));
+    if (result.ok) {
+      reloadLockController();
+      toast('Lock controller settings saved');
+    }
+  }
 
   async function test(machine: MachineRow) {
     const result = await action.run((c) => testPulse(c, controller, actor, machine.id));
@@ -45,22 +69,46 @@ export default function MachineSettings() {
             <Text style={{ flex: 1 }}>
               {`${STATUS_LABELS[controllerState.status]}${controllerState.detail ? `. ${controllerState.detail}` : ''}`}
             </Text>
-            <Button label="Reconnect" kind="secondary" icon="usb" onPress={() => void controller.connect()} />
+            <Button label="Check connection" kind="secondary" icon="wifi" onPress={() => void controller.connect()} />
           </Row>
+          <TextField
+            label="Address"
+            value={address}
+            onChangeText={setAddress}
+            placeholder="192.168.1.50"
+            autoCapitalize="none"
+            keyboardType="url"
+            hint="The lock controller shows it on the serial monitor when it starts. Reserve it in the router so it stays the same."
+            error={addressError ? 'Enter an address like 192.168.1.50.' : null}
+          />
+          <TextField
+            label="Lock key"
+            value={key}
+            onChangeText={setKey}
+            autoCapitalize="none"
+            secureTextEntry
+            hint={`The same passphrase as LOCK_KEY on the lock controller, at least ${MIN_KEY_LENGTH} characters. Anyone who knows it can open doors.`}
+          />
+          <Button
+            label="Save lock settings"
+            onPress={saveConnection}
+            busy={action.busy}
+            disabled={!changed || addressError}
+          />
           <Toggle
             label="Simulate locks"
-            description="For demos and training: unlocks are recorded but no command goes to the Arduino."
+            description="For demos and training: unlocks are recorded but nothing is sent to the lock controller."
             value={simulate}
             onChange={async (value) => {
               const result = await action.run((c) => setSetting(c.db, 'simulateMachines', value));
-              if (result.ok) setSimulatedLocks(value);
+              if (result.ok) reloadLockController();
             }}
           />
         </Section>
 
         <Section
           title="Machines"
-          description="The lock channel is the Arduino output wired to that machine's door lock (P1 is pin 2, P2 is pin 3, and so on)."
+          description="The lock channel is the lock controller output wired to that machine's door lock (1 is GPIO 25, 2 is 26, 3 is 27, 4 is 32, 5 is 33, 6 is 13)."
           action={<Button label="Add machine" icon="plus" onPress={() => setEditing('new')} />}
         >
           <Panel>
@@ -139,7 +187,7 @@ function MachineDialog({ machine, nextChannel, onClose }: { machine: MachineRow 
         value={channelText}
         onChangeText={(text) => setChannelText(text.replace(/\D/g, ''))}
         keyboardType="number-pad"
-        hint="The number n the app sends as P<n>. The LED board uses 1 to 6."
+        hint="The lock controller output for this door, 1 to 6."
       />
       <Toggle
         label="In use"

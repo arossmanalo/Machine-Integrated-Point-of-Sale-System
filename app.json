@@ -28,13 +28,10 @@
         "expo-build-properties",
         {
           "android": {
-            "extraMavenRepos": [
-              "https://jitpack.io"
-            ]
+            "usesCleartextTraffic": true
           }
         }
       ],
-      "./plugins/withUsbDeviceFilter",
       "./plugins/withReleaseSigning"
     ],
     "scheme": "laundrypos",

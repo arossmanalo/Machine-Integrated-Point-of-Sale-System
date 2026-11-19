@@ -31,8 +31,8 @@ Open the order (from **Orders** or the customer's history) and tap **Receive pay
 
 | What you see | What to do |
 |---|---|
-| **Locks offline** at the top | Check the USB cable between the tablet and the lock box. Tap the chip to reconnect. |
-| **No answer** after an unlock | Try once more. If it keeps happening, check the cable and tell the owner. |
+| **Locks offline** at the top | Check that the lock box has power and the tablet is on the shop Wi-Fi. Tap the chip to reconnect. |
+| **No answer** after an unlock | Look at the door first: it may have opened anyway. Only try again if it did not, and tell the owner if it keeps happening. |
 | Printer does not print | Make sure the printer is on and charged. Use **Print receipt** on the order page to try again. |
 
 ## For the owner
@@ -69,4 +69,4 @@ Everything lives only on this tablet. Go to **Manage › Backup and import › S
 
 ### Setting up machines
 
-**Manage › Machines and locks**: add each machine with its type and lock channel (the Arduino output it is wired to). Use **Test** to pulse one lock. Switch a machine off while it is broken so nobody gets sent to it. **Simulate locks** is for training; turn it off for real use.
+**Manage › Machines and locks**: add each machine with its type and lock channel (the lock controller output it is wired to). Use **Test** to pulse one lock. Switch a machine off while it is broken so nobody gets sent to it. **Simulate locks** is for training; turn it off for real use.

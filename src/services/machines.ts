@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gte, inArray, lt, ne, or } from 'drizzle-orm';
 
 import { can } from '@/domain/permissions';
 import { decideOrderUnlock, MACHINE_TYPES, type MachineType } from '@/domain/unlockPolicy';
-import { isValidChannel, MAX_CHANNEL } from '@/machines/protocol';
+import { isValidChannel, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress } from '@/machines/protocol';
 import type { MachineController, UnlockResult } from '@/machines/MachineController';
 import {
   machines,
@@ -16,6 +16,7 @@ import {
 import { UserFacingError, type Actor, type Db, type ServiceContext } from '@/db/types';
 
 import { checkOwnerPin } from './auth';
+import { setSetting } from './settings';
 
 /** A pending row younger than this still holds its allowance (the reply may be on its way). */
 const PENDING_HOLD_MS = 30 * 1000;
@@ -32,9 +33,9 @@ const RESULT_CODES: Record<UnlockResult, UnlockResultCode> = {
 
 export const RESULT_MESSAGES: Record<UnlockResult, string> = {
   acked: 'Door unlocked.',
-  rejected: 'The lock controller refused the command. Check the machine channel in Settings.',
-  timeout: 'The lock controller did not answer. Check the cable and try again.',
-  'not-connected': 'The lock controller is not connected. Check the USB cable.',
+  rejected: 'The lock controller refused the command. Check the machine channel and lock key in Manage.',
+  timeout: 'The lock controller did not answer, so the door may or may not have opened. Check it before trying again.',
+  'not-connected': 'Cannot reach the lock controller. Check that it has power and is on the shop Wi-Fi.',
 };
 
 // ---------- Machine list ----------
@@ -86,6 +87,26 @@ export function updateMachine(ctx: ServiceContext, actor: Actor, id: number, inp
   requireOwner(actor);
   const values = checkMachine(ctx.db, input, id);
   ctx.db.update(machines).set(values).where(eq(machines.id, id)).run();
+}
+
+export interface LockControllerInput {
+  address: string;
+  key: string;
+}
+
+/** Where the ESP32 is on the shop Wi-Fi and the passphrase that signs every pulse. */
+export function saveLockController(ctx: ServiceContext, actor: Actor, input: LockControllerInput): void {
+  requireOwner(actor);
+  if (normalizeAddress(input.address) === null) {
+    throw new UserFacingError('Enter the address shown by the lock controller, such as 192.168.1.50.');
+  }
+  if (input.key.length < MIN_KEY_LENGTH) {
+    throw new UserFacingError(`The lock key needs at least ${MIN_KEY_LENGTH} characters.`);
+  }
+  ctx.db.transaction((tx) => {
+    setSetting(tx, 'lockControllerAddress', input.address.trim());
+    setSetting(tx, 'lockControllerKey', input.key);
+  });
 }
 
 function requireMachine(db: Db, id: number): MachineRow {
@@ -158,7 +179,7 @@ function writeLog(ctx: ServiceContext, entry: LogEntry): number {
   return row.id;
 }
 
-/** Logs first, then sends, then records what the Arduino said. */
+/** Logs first, then sends, then records what the lock controller said. */
 async function sendAndRecord(
   ctx: ServiceContext,
   controller: MachineController,

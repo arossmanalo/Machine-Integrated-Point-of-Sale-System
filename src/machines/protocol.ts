@@ -1,47 +1,56 @@
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
+import { z } from 'zod';
+
 /**
- * The serial contract with the Arduino sketch in machine_pulser/machine_pulser.ino.
- * 9600 baud, 8N1, newline-terminated ASCII. Keep this file, the sketch and CLAUDE.md in step.
+ * The HTTP contract with the ESP32 sketch in lock_controller/lock_controller.ino.
+ * Keep this file, the sketch and CLAUDE.md in step.
+ *
+ *   GET  /status     -> {"device":"laundry-locks","channels":6}
+ *   GET  /challenge  -> {"challenge":"<32 hex chars>"}   single use, expires after 10 s
+ *   POST /pulse      form body channel=<n>&challenge=<hex>&signature=<hex>
+ *                    -> 200 {"ok":true,"channel":n}
+ *                    -> 4xx {"ok":false,"error":"bad-channel"|"bad-signature"|"stale-challenge"}
+ *
+ * signature = hex(HMAC-SHA256(key, "P<n>:<challenge>")). The key is a passphrase set in both the
+ * app and the sketch, so a phone on the same Wi-Fi cannot open doors without the POS.
  */
-export const BAUD_RATE = 9600;
+export const DEVICE_NAME = 'laundry-locks';
 export const MAX_CHANNEL = 99;
+export const MIN_KEY_LENGTH = 12;
 
 export function isValidChannel(channel: number): boolean {
   return Number.isInteger(channel) && channel >= 1 && channel <= MAX_CHANNEL;
 }
 
-export function encodePulse(channel: number): string {
-  if (!isValidChannel(channel)) throw new RangeError(`Invalid machine channel: ${channel}`);
-  return `P${channel}\n`;
+export function signPulse(key: string, channel: number, challenge: string): string {
+  return bytesToHex(hmac(sha256, utf8ToBytes(key), utf8ToBytes(`P${channel}:${challenge}`)));
 }
 
-export type ArduinoLine =
-  | { kind: 'ready' }
-  | { kind: 'ok'; channel: number }
-  | { kind: 'error'; command: string }
-  | { kind: 'other'; text: string };
-
-export function parseLine(raw: string): ArduinoLine {
-  const text = raw.trim();
-  if (text === 'READY') return { kind: 'ready' };
-  const ok = /^OK P(\d+)$/.exec(text);
-  if (ok) return { kind: 'ok', channel: Number(ok[1]) };
-  if (text.startsWith('ERR')) return { kind: 'error', command: text.slice(3).trim() };
-  return { kind: 'other', text };
+/**
+ * Turns what the owner typed ("192.168.1.50", "192.168.1.50:8080", "http://laundry-locks.local")
+ * into a base URL, or null if it is not a host the app can reach over plain HTTP.
+ */
+export function normalizeAddress(input: string): string | null {
+  const trimmed = input.trim().replace(/^http:\/\//i, '').replace(/\/+$/, '');
+  const match = /^([a-z0-9.-]+)(?::(\d{1,5}))?$/i.exec(trimmed);
+  if (!match) return null;
+  const [, host, port] = match;
+  if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) return null;
+  return `http://${host.toLowerCase()}${port ? `:${port}` : ''}`;
 }
 
-/** Collects serial chunks and hands back complete lines. Partial lines wait for the rest. */
-export class LineBuffer {
-  private pending = '';
+export const statusResponse = z.object({
+  device: z.literal(DEVICE_NAME),
+  channels: z.number().int().nonnegative(),
+});
 
-  push(chunk: string): string[] {
-    this.pending += chunk;
-    const parts = this.pending.split(/\r?\n|\r/);
-    this.pending = parts.pop() ?? '';
-    if (this.pending.length > 256) this.pending = '';
-    return parts.filter((line) => line.trim().length > 0);
-  }
+export const challengeResponse = z.object({ challenge: z.string().regex(/^[0-9a-f]{32}$/) });
 
-  clear(): void {
-    this.pending = '';
-  }
-}
+export const pulseResponse = z.union([
+  z.object({ ok: z.literal(true), channel: z.number().int() }),
+  z.object({ ok: z.literal(false), error: z.enum(['bad-channel', 'bad-signature', 'stale-challenge']) }),
+]);
+
+export type PulseResponse = z.infer<typeof pulseResponse>;
