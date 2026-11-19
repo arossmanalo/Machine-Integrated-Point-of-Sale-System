@@ -55,7 +55,7 @@ export default function MachineSettings() {
     const result = await action.run((c) => testPulse(c, controller, actor, machine.id));
     if (result.ok) {
       toast(
-        result.value === 'acked' ? `${machine.name}: test pulse sent` : `${machine.name}: ${RESULT_MESSAGES[result.value]}`,
+        result.value === 'acked' ? `${machine.name} unlocked (test). Lock it on the Machines tab.` : `${machine.name}: ${RESULT_MESSAGES[result.value]}`,
         result.value === 'acked' ? 'success' : 'danger',
       );
     }

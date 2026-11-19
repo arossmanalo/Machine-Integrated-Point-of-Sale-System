@@ -7,14 +7,17 @@ import { z } from 'zod';
  * The HTTP contract with the ESP32 sketch in lock_controller/lock_controller.ino.
  * Keep this file, the sketch and CLAUDE.md in step.
  *
- *   GET  /status     -> {"device":"laundry-locks","channels":14,"pulseMs":2000}
+ *   GET  /status     -> {"device":"laundry-locks","channels":14,"unlocked":[2,5]}
  *   GET  /challenge  -> {"challenge":"<32 hex chars>"}   single use, expires after 10 s
- *   POST /pulse      form body channel=<n>&challenge=<hex>&signature=<hex>
+ *   POST /unlock     form body channel=<n>&challenge=<hex>&signature=<hex>
+ *   POST /lock       same body
  *                    -> 200 {"ok":true,"channel":n}
  *                    -> 4xx {"ok":false,"error":"bad-channel"|"bad-signature"|"stale-challenge"}
  *
- * signature = hex(HMAC-SHA256(key, "P<n>:<challenge>")). The key is a passphrase set in both the
- * app and the sketch, so a phone on the same Wi-Fi cannot open doors without the POS.
+ * A door stays unlocked until it is locked; every door is locked after the ESP32 restarts.
+ * signature = hex(HMAC-SHA256(key, "U<n>:<challenge>")) to unlock, "L<n>:<challenge>" to lock.
+ * The key is a passphrase set in both the app and the sketch, so a phone on the same Wi-Fi
+ * cannot unlock or lock doors without the POS.
  */
 export const DEVICE_NAME = 'laundry-locks';
 
@@ -27,8 +30,10 @@ export const LOCK_CHANNEL_TERMINALS = [
 ] as const;
 export const MAX_CHANNEL = LOCK_CHANNEL_TERMINALS.length;
 export const MIN_KEY_LENGTH = 12;
-/** How long a door stays unlocked when the lock controller does not say (older sketches). */
-export const DEFAULT_PULSE_MS = 2000;
+
+export type LockCommand = 'unlock' | 'lock';
+export const COMMAND_PATHS: Record<LockCommand, string> = { unlock: '/unlock', lock: '/lock' };
+const COMMAND_LETTERS: Record<LockCommand, string> = { unlock: 'U', lock: 'L' };
 
 export function isValidChannel(channel: number): boolean {
   return Number.isInteger(channel) && channel >= 1 && channel <= MAX_CHANNEL;
@@ -38,8 +43,9 @@ export function channelTerminal(channel: number): string | null {
   return isValidChannel(channel) ? LOCK_CHANNEL_TERMINALS[channel - 1] : null;
 }
 
-export function signPulse(key: string, channel: number, challenge: string): string {
-  return bytesToHex(hmac(sha256, utf8ToBytes(key), utf8ToBytes(`P${channel}:${challenge}`)));
+export function signCommand(key: string, command: LockCommand, channel: number, challenge: string): string {
+  const message = `${COMMAND_LETTERS[command]}${channel}:${challenge}`;
+  return bytesToHex(hmac(sha256, utf8ToBytes(key), utf8ToBytes(message)));
 }
 
 /**
@@ -58,14 +64,14 @@ export function normalizeAddress(input: string): string | null {
 export const statusResponse = z.object({
   device: z.literal(DEVICE_NAME),
   channels: z.number().int().nonnegative(),
-  pulseMs: z.number().int().positive().optional(),
+  /** Channels unlocked right now, as the ESP32 sees them. */
+  unlocked: z.array(z.number().int()),
 });
 
 export const challengeResponse = z.object({ challenge: z.string().regex(/^[0-9a-f]{32}$/) });
 
-export const pulseResponse = z.union([
+export const commandResponse = z.union([
   z.object({ ok: z.literal(true), channel: z.number().int() }),
   z.object({ ok: z.literal(false), error: z.enum(['bad-channel', 'bad-signature', 'stale-challenge']) }),
 ]);
 
-export type PulseResponse = z.infer<typeof pulseResponse>;

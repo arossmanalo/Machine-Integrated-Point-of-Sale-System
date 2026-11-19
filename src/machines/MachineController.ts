@@ -13,8 +13,8 @@ export interface ControllerState {
   status: ControllerStatus;
   /** Plain-language reason for 'error' or 'disconnected', for the status chip. */
   detail: string | null;
-  /** Channels unlocked right now, each for the lock controller's pulse length after an unlock. */
-  openChannels: readonly number[];
+  /** Channels unlocked right now. A door stays unlocked until it is locked again. */
+  unlockedChannels: readonly number[];
 }
 
 export type Unsubscribe = () => void;
@@ -26,6 +26,8 @@ export interface MachineController {
   state(): ControllerState;
   onStateChange(listener: (state: ControllerState) => void): Unsubscribe;
   unlock(hardwareChannel: number): Promise<UnlockResult>;
+  /** Locks the door again. Uses the same results as unlock. */
+  lock(hardwareChannel: number): Promise<UnlockResult>;
 }
 
 export const STATUS_LABELS: Record<ControllerStatus, string> = {

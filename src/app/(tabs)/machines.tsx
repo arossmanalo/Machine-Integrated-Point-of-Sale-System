@@ -7,7 +7,7 @@ import type { MachineRow } from '@/db/schema';
 import { formatShopDateTime } from '@/domain/dates';
 import { can } from '@/domain/permissions';
 import { MACHINE_TYPE_LABELS, MACHINE_TYPES } from '@/domain/unlockPolicy';
-import { lastUnlocks, listMachines, RESULT_MESSAGES, testPulse } from '@/services/machines';
+import { lastUnlocks, listMachines, lockMachine, RESULT_MESSAGES, testPulse } from '@/services/machines';
 import { createTestOrder, voidOrder } from '@/services/orders';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData } from '@/state/hooks';
@@ -28,13 +28,24 @@ export default function Machines() {
   const action = useAction();
   const toast = useToast();
   const owner = can.manageMachines(actor.role);
-  const showLockState = controllerState.status === 'ready' || controllerState.openChannels.length > 0;
+  const showLockState = controllerState.status === 'ready';
 
   async function testUnlock(machine: MachineRow) {
     const result = await action.run((c) => testPulse(c, controller, actor, machine.id));
     if (!result.ok) return;
     toast(
-      result.value === 'acked' ? `${machine.name} unlocked (test)` : `${machine.name}: ${RESULT_MESSAGES[result.value]}`,
+      result.value === 'acked'
+        ? `${machine.name} unlocked (test). It stays unlocked until you lock it.`
+        : `${machine.name}: ${RESULT_MESSAGES[result.value]}`,
+      result.value === 'acked' ? 'success' : 'danger',
+    );
+  }
+
+  async function lockDoor(machine: MachineRow) {
+    const result = await action.run((c) => lockMachine(c, controller, machine.id));
+    if (!result.ok) return;
+    toast(
+      result.value === 'acked' ? `${machine.name} locked` : `${machine.name}: ${RESULT_MESSAGES[result.value]}`,
       result.value === 'acked' ? 'success' : 'danger',
     );
   }
@@ -92,7 +103,7 @@ export default function Machines() {
               <View style={styles.grid}>
                 {list.map((machine) => {
                   const last = data.last.get(machine.id);
-                  const open = controllerState.openChannels.includes(machine.hardwareChannel);
+                  const unlocked = controllerState.unlockedChannels.includes(machine.hardwareChannel);
                   return (
                     <Pressable
                       key={machine.id}
@@ -115,24 +126,37 @@ export default function Machines() {
                         <Text variant="bodyStrong" style={styles.name}>
                           {machine.name}
                         </Text>
-                        {showLockState && <Badge label={open ? 'Unlocked' : 'Locked'} tone={open ? 'warning' : 'neutral'} />}
+                        {showLockState && (
+                          <Badge label={unlocked ? 'Unlocked' : 'Locked'} tone={unlocked ? 'warning' : 'neutral'} />
+                        )}
                       </Row>
                       <Text variant="caption" tone="muted">
                         {!machine.enabled
                           ? 'Switched off'
                           : last
-                            ? `Opened ${formatShopDateTime(last.at)}${last.orderId ? ` · ${last.orderId}` : ' · override'}`
+                            ? `Opened ${formatShopDateTime(last.at)} · ${last.orderId ?? (last.kind === 'TEST' ? 'test' : 'override')}`
                             : 'Not opened yet'}
                       </Text>
-                      {owner && (
+                      {showLockState && unlocked ? (
                         <Button
-                          label="Test unlock"
-                          kind="quiet"
-                          icon="lock-open-variant-outline"
-                          onPress={() => void testUnlock(machine)}
+                          label="Lock"
+                          kind="secondary"
+                          icon="lock-outline"
+                          onPress={() => void lockDoor(machine)}
                           busy={action.busy}
-                          accessibilityHint="Owner only. Opens this door without an order and logs it as a test."
+                          accessibilityHint="Locks this door again."
                         />
+                      ) : (
+                        owner && (
+                          <Button
+                            label="Test unlock"
+                            kind="quiet"
+                            icon="lock-open-variant-outline"
+                            onPress={() => void testUnlock(machine)}
+                            busy={action.busy}
+                            accessibilityHint="Owner only. Unlocks this door without an order and logs it as a test."
+                          />
+                        )
                       )}
                     </Pressable>
                   );
@@ -145,7 +169,7 @@ export default function Machines() {
       {owner && data.machines.length > 0 && (
         <Section
           title="Testing"
-          description="Only the owner sees this. Test unlock on a machine opens it without an order. To try the staff flow instead, create a test order, tap a machine and pick it. Test orders are Pay later and take no supplies; void them when you are done."
+          description="Only the owner sees this. Test unlock on a machine unlocks it without an order; it stays unlocked until someone taps Lock. To try the staff flow instead, create a test order, tap a machine and pick it. Test orders are Pay later and take no supplies; void them when you are done."
         >
           {testOrderId === null ? (
             <Button label="Create test order" kind="secondary" icon="clipboard-plus-outline" onPress={makeTestOrder} busy={action.busy} />

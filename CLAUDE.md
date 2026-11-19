@@ -37,7 +37,7 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 
 - Machines keep running normally. The POS does not control power.
 - Each machine door gets an electronic lock. The POS unlocks a machine's door only for an order that exists in the POS.
-- Flow: employee creates the order and payment → assigns a machine → taps Unlock → the POS sends a signed command over Wi-Fi → the ESP32 pulses that machine's lock open for a few seconds → the door relocks when closed.
+- Flow: employee creates the order and payment → assigns a machine → taps Unlock → the POS sends a signed command over Wi-Fi → the ESP32 unlocks that machine's door → it stays unlocked until someone taps Lock on the Machines tab (changed from a timed pulse on 2026-11-19 at the user's request).
 
 ### Current phase: LED prototype
 
@@ -50,17 +50,18 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 
 ### HTTP protocol (the contract between app and ESP32)
 
-- `GET /status` → `{"device":"laundry-locks","channels":14,"pulseMs":2000}`. The app checks it on connect and every 20 s, since Wi-Fi gives no unplug event, and uses `pulseMs` to show a machine as Unlocked for exactly as long as the ESP32 holds it open (2 s if missing).
+- `GET /status` → `{"device":"laundry-locks","channels":14,"unlocked":[2,5]}`. The app checks it on connect and every 20 s, since Wi-Fi gives no unplug event. `unlocked` is the source of truth for which doors are open; after a restart the ESP32 locks every door.
 - `GET /challenge` → `{"challenge":"<32 hex>"}`, single use, expires after 10 s.
-- `POST /pulse`, form body `channel=<n>&challenge=<hex>&signature=<hex>`, where signature = hex HMAC-SHA256(lock key, `P<n>:<challenge>`). Replies `200 {"ok":true,"channel":n}` or `4xx {"ok":false,"error":"bad-channel"|"bad-signature"|"stale-challenge"}`. Every attempt uses up the challenge.
+- `POST /unlock` and `POST /lock`, form body `channel=<n>&challenge=<hex>&signature=<hex>`, where signature = hex HMAC-SHA256(lock key, `U<n>:<challenge>`) to unlock or `L<n>:<challenge>` to lock. Replies `200 {"ok":true,"channel":n}` or `4xx {"ok":false,"error":"bad-channel"|"bad-signature"|"stale-challenge"}`. Every attempt uses up the challenge.
 - The signature is why a phone on the same Wi-Fi cannot open doors and a captured request cannot be replayed. The ESP32 has no clock, so there are no timestamps.
-- Requests time out after 3 s. A pulse is never retried: a lost reply may mean the door already opened, so the app reports "timeout" and logs it.
-- An unlock flips the output from `LOCKED_LEVEL` for `PULSE_MS` (2 s for the LED test, about 3–5 s for real locks). Both are ESP32-side settings only.
+- Requests time out after 3 s. A command is never retried: a lost reply may mean the door already changed, so the app reports "timeout", logs it, and re-reads `/status` to show the real state.
+- An unlock sets the output to the unlocked level and leaves it there; a lock sets it back. Unlocks are logged; locks are not (anyone signed in may lock, through `lockMachine`).
+- Real locks must be rated for staying unlocked a long time (continuous duty). A cheap 12 V solenoid held open for long overheats; pick the lock with that in mind.
 - `LOCKED_LEVEL` is HIGH for the LED prototype: the LED is lit while locked and dark while unlocked. Before wiring relays, check the relay module: an active-LOW module keeps HIGH; one that switches on with HIGH needs LOW, or every door stays unlocked. The pin is set to the locked level before it becomes an output, so it never shows "unlocked" at boot.
 
 ### Existing code
 
-- `lock_controller/lock_controller.ino`: the ESP32 sketch (Arduino core for ESP32 4.0 or newer, board "ESP32 Dev Module"; it uses the core's `HMACBuilder`). It compiles: 76% of flash, 15% of RAM. The board package lives in `D:\Arduino15` (set in `%USERPROFILE%\.arduinoIDE\arduino-cli.yaml`) because C: is nearly full. Non-blocking, so several machines can pulse at once. Wi-Fi name, password and lock key go in `lock_controller/config.h`, copied from `config.example.h`; `config.h` is git-ignored.
+- `lock_controller/lock_controller.ino`: the ESP32 sketch (Arduino core for ESP32 4.0 or newer, board "ESP32 Dev Module"; it uses the core's `HMACBuilder`). It compiles: 76% of flash, 15% of RAM. The board package lives in `D:\Arduino15` (set in `%USERPROFILE%\.arduinoIDE\arduino-cli.yaml`) because C: is nearly full. Each channel keeps its own locked or unlocked state, so several doors can be unlocked at once. Wi-Fi name, password and lock key go in `lock_controller/config.h`, copied from `config.example.h`; `config.h` is git-ignored.
 - `src/machines/protocol.ts`: the contract in TypeScript (signing, address parsing, reply schemas). `src/machines/WifiMachineController.ts`: one command at a time, success only on `{"ok":true}` for the same channel. Only `src/state/AppProvider.tsx` may import it (enforced by ESLint).
 - The lock address and key are settings (`lockControllerAddress`, `lockControllerKey`), saved through `saveLockController` (owner only). They are included in backups, which are owner-only.
 - `machine_pulser/machine_pulser.ino` and `modules/machine-serial/ArduinoPulser.kt` are the old USB drafts, kept for reference only.

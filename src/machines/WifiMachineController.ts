@@ -7,15 +7,15 @@ import type {
   UnlockResult,
   Unsubscribe,
 } from './MachineController';
-import { OpenDoors } from './OpenDoors';
 import {
   challengeResponse,
-  DEFAULT_PULSE_MS,
+  commandResponse,
+  COMMAND_PATHS,
   isValidChannel,
   MIN_KEY_LENGTH,
-  pulseResponse,
-  signPulse,
+  signCommand,
   statusResponse,
+  type LockCommand,
 } from './protocol';
 
 export interface HttpRequest {
@@ -87,22 +87,21 @@ export const fetchHttp: HttpClient = async ({ method, url, body, timeoutMs }) =>
 };
 
 /**
- * Talks to the ESP32 lock controller over the shop Wi-Fi. Every pulse is signed with the shared
- * key over a single-use challenge from the ESP32, so it cannot be forged or replayed.
- * A pulse is never retried: if the reply is lost the door may already have opened.
+ * Talks to the ESP32 lock controller over the shop Wi-Fi. Every unlock and lock is signed with the
+ * shared key over a single-use challenge from the ESP32, so it cannot be forged or replayed.
+ * A command is never retried: if its reply is lost the door may already have changed, so the
+ * controller asks the ESP32 for its real state instead. The ESP32's status reply is the source of
+ * truth for which doors are unlocked.
  */
 export class WifiMachineController implements MachineController {
   readonly kind = 'wifi' as const;
-  private current: ControllerState = { status: 'disconnected', detail: null, openChannels: [] };
+  private current: ControllerState = { status: 'disconnected', detail: null, unlockedChannels: [] };
   private listeners = new Set<(state: ControllerState) => void>();
   private queue: Promise<unknown> = Promise.resolve();
   private connecting: Promise<ConnectResult> | null = null;
   private healthTimer: ReturnType<typeof setInterval> | null = null;
-  /** Set when the ESP32 refused a signature; cleared by the next pulse it accepts. */
+  /** Set when the ESP32 refused a signature; cleared by the next command it accepts. */
   private keyRejected = false;
-  /** How long the ESP32 holds a door unlocked, from its status reply. */
-  private pulseMs = DEFAULT_PULSE_MS;
-  private doors = new OpenDoors(() => this.setState(this.current));
 
   constructor(
     private readonly config: WifiConfig,
@@ -138,13 +137,21 @@ export class WifiMachineController implements MachineController {
 
   async disconnect(): Promise<void> {
     if (this.healthTimer !== null) clearInterval(this.healthTimer);
-    this.doors.clear();
     this.healthTimer = null;
     this.setState({ status: 'disconnected', detail: null });
   }
 
   unlock(hardwareChannel: number): Promise<UnlockResult> {
-    const run = () => this.sendPulse(hardwareChannel);
+    return this.enqueue('unlock', hardwareChannel);
+  }
+
+  lock(hardwareChannel: number): Promise<UnlockResult> {
+    return this.enqueue('lock', hardwareChannel);
+  }
+
+  /** One command at a time, so challenges never cross. */
+  private enqueue(command: LockCommand, channel: number): Promise<UnlockResult> {
+    const run = () => this.send(command, channel);
     const result = this.queue.then(run, run);
     this.queue = result;
     return result;
@@ -197,12 +204,14 @@ export class WifiMachineController implements MachineController {
       this.setState({ status: 'error', detail: DETAILS.notOurs });
       return 'failed';
     }
-    this.pulseMs = reply.data.pulseMs ?? DEFAULT_PULSE_MS;
-    this.setState(this.keyRejected ? { status: 'error', detail: DETAILS.badKey } : { status: 'ready', detail: null });
+    this.setState(
+      this.keyRejected ? { status: 'error', detail: DETAILS.badKey } : { status: 'ready', detail: null },
+      reply.data.unlocked,
+    );
     return 'connected';
   }
 
-  private async sendPulse(channel: number): Promise<UnlockResult> {
+  private async send(command: LockCommand, channel: number): Promise<UnlockResult> {
     if (!isValidChannel(channel)) return 'rejected';
     const usable = this.current.status === 'ready' || this.keyRejected;
     if (!usable && (await this.connect()) !== 'connected') return 'not-connected';
@@ -218,12 +227,12 @@ export class WifiMachineController implements MachineController {
     }
     const { challenge } = issued.data;
 
-    const signature = signPulse(this.config.key, channel, challenge);
+    const signature = signCommand(this.config.key, command, channel, challenge);
     let reply: HttpReply;
     try {
       reply = await this.http({
         method: 'POST',
-        url: this.url('/pulse'),
+        url: this.url(COMMAND_PATHS[command]),
         body: `channel=${channel}&challenge=${challenge}&signature=${signature}`,
         timeoutMs: this.timings.requestTimeoutMs,
       });
@@ -231,13 +240,16 @@ export class WifiMachineController implements MachineController {
       void this.checkStatus();
       return 'timeout';
     }
-    const parsed = pulseResponse.safeParse(reply.json);
-    if (!parsed.success) return 'timeout';
+    const parsed = commandResponse.safeParse(reply.json);
+    if (!parsed.success) {
+      void this.checkStatus();
+      return 'timeout';
+    }
     if (parsed.data.ok) {
       if (parsed.data.channel !== channel) return 'rejected';
       this.keyRejected = false;
-      this.doors.open(channel, this.pulseMs);
-      this.setState({ status: 'ready', detail: null });
+      const others = this.current.unlockedChannels.filter((c) => c !== channel);
+      this.setState({ status: 'ready', detail: null }, command === 'unlock' ? [...others, channel] : others);
       return 'acked';
     }
     if (parsed.data.error === 'bad-signature') {
@@ -247,14 +259,17 @@ export class WifiMachineController implements MachineController {
     return 'rejected';
   }
 
-  private setState(next: Pick<ControllerState, 'status' | 'detail'>): void {
-    const openChannels = this.doors.channels();
+  private setState(
+    next: Pick<ControllerState, 'status' | 'detail'>,
+    unlocked: readonly number[] = this.current.unlockedChannels,
+  ): void {
+    const unlockedChannels = [...unlocked].sort((a, b) => a - b);
     const unchanged =
       next.status === this.current.status &&
       next.detail === this.current.detail &&
-      openChannels.join() === this.current.openChannels.join();
+      unlockedChannels.join() === this.current.unlockedChannels.join();
     if (unchanged) return;
-    this.current = { status: next.status, detail: next.detail, openChannels };
+    this.current = { status: next.status, detail: next.detail, unlockedChannels };
     this.listeners.forEach((listener) => listener(this.current));
   }
 }

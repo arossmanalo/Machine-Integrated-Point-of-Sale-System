@@ -1,7 +1,8 @@
 // Lock controller - ESP32 on the shop Wi-Fi.
-// The POS asks for a one-time challenge, signs "P<n>:<challenge>" with the shared lock key
-// (HMAC-SHA256) and posts it to /pulse. Only then does output n pulse. A phone on the same
-// Wi-Fi cannot open a door without the key, and a recorded request cannot be replayed.
+// The POS asks for a one-time challenge, signs "U<n>:<challenge>" (unlock) or "L<n>:<challenge>"
+// (lock) with the shared lock key (HMAC-SHA256) and posts it to /unlock or /lock. A door stays
+// unlocked until it is locked again. A phone on the same Wi-Fi cannot unlock or lock a door
+// without the key, and a recorded request cannot be replayed.
 // The contract is in src/machines/protocol.ts; keep the two in step.
 //
 // Board: ESP32 DevKit with an ESP32-WROOM-32 / -32D / -32E module, Arduino core for ESP32
@@ -12,9 +13,10 @@
 // and the input-only pins (34-39). That leaves exactly these 14.
 //
 // Wiring per LED (prototype): GPIO -> 220 ohm resistor -> LED long leg (+), short leg (-) -> GND.
-// With LOCKED_LEVEL = HIGH the LED is lit while the door is locked and goes dark while unlocked.
+// With LOCKED_LEVEL = HIGH the LED is lit while the door is locked and dark while it is unlocked.
 // Real locks: GPIO drives a relay or MOSFET module, never the 12 V solenoid directly. Set
 // LOCKED_LEVEL so the relay is OFF when locked; check the relay module before connecting it.
+// A door can now stay unlocked for a long time, so the lock must be rated for that.
 //
 // Setup: copy config.example.h to config.h, fill it in, then upload.
 // The address to enter in the app is printed on the serial monitor (115200 baud) at start.
@@ -31,16 +33,15 @@
 // RX2 TX2. Keep in step with LOCK_CHANNEL_TERMINALS in src/machines/protocol.ts.
 const int LOCK_PINS[] = {25, 26, 27, 32, 33, 13, 18, 19, 21, 22, 23, 4, 16, 17};
 const int NUM_CHANNELS = sizeof(LOCK_PINS) / sizeof(LOCK_PINS[0]);
-// The level an output sits at while its door is locked; an unlock flips it for PULSE_MS.
-// HIGH suits the LED prototype (lit = locked) and active-LOW relay modules. A relay module that
-// switches on with HIGH needs LOW here, or every door would stay unlocked.
+// The level an output sits at while its door is locked. HIGH suits the LED prototype
+// (lit = locked) and active-LOW relay modules. A relay module that switches on with HIGH needs
+// LOW here, or every door would be unlocked whenever it should be locked.
 const int LOCKED_LEVEL = HIGH;
 const int UNLOCKED_LEVEL = LOCKED_LEVEL == HIGH ? LOW : HIGH;
-const unsigned long PULSE_MS = 2000;               // long enough to see on an LED; 3000-5000 for locks
 const unsigned long CHALLENGE_TTL_MS = 10000;
 
 WebServer server(80);
-unsigned long relockAt[NUM_CHANNELS];               // 0 = locked
+bool unlocked[NUM_CHANNELS];                        // every door starts locked after a restart
 char challenge[33] = "";                            // empty = no challenge outstanding
 unsigned long challengeIssuedAt = 0;
 
@@ -50,7 +51,7 @@ void setup() {
     // Set the level before switching to output, so the pin never shows "unlocked" at boot.
     digitalWrite(LOCK_PINS[i], LOCKED_LEVEL);
     pinMode(LOCK_PINS[i], OUTPUT);
-    relockAt[i] = 0;
+    unlocked[i] = false;
   }
 
   WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t) {
@@ -67,28 +68,26 @@ void setup() {
 
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/challenge", HTTP_GET, handleChallenge);
-  server.on("/pulse", HTTP_POST, handlePulse);
+  server.on("/unlock", HTTP_POST, []() { handleCommand('U'); });
+  server.on("/lock", HTTP_POST, []() { handleCommand('L'); });
   server.onNotFound([]() { server.send(404, "application/json", "{\"ok\":false}"); });
   server.begin();
 }
 
 void loop() {
   server.handleClient();
-
-  // Non-blocking, so several doors can be open at the same time.
-  unsigned long now = millis();
-  for (int i = 0; i < NUM_CHANNELS; i++) {
-    if (relockAt[i] != 0 && (long)(now - relockAt[i]) >= 0) {
-      digitalWrite(LOCK_PINS[i], LOCKED_LEVEL);
-      relockAt[i] = 0;
-    }
-  }
 }
 
 void handleStatus() {
+  String list = "";
+  for (int i = 0; i < NUM_CHANNELS; i++) {
+    if (!unlocked[i]) continue;
+    if (list.length() > 0) list += ",";
+    list += String(i + 1);
+  }
   server.send(200, "application/json",
               String("{\"device\":\"laundry-locks\",\"channels\":") + NUM_CHANNELS +
-                  ",\"pulseMs\":" + PULSE_MS + "}");
+                  ",\"unlocked\":[" + list + "]}");
 }
 
 void handleChallenge() {
@@ -99,7 +98,8 @@ void handleChallenge() {
   server.send(200, "application/json", String("{\"challenge\":\"") + challenge + "\"}");
 }
 
-void handlePulse() {
+// action is 'U' (unlock) or 'L' (lock).
+void handleCommand(char action) {
   String sentChallenge = server.arg("challenge");
   String signature = server.arg("signature");
   long channel = server.arg("channel").toInt();
@@ -111,17 +111,16 @@ void handlePulse() {
   if (!fresh) return fail(409, "stale-challenge");
 
   char expected[65];
-  String message = String("P") + channel + ":" + sentChallenge;
+  String message = String(action) + channel + ":" + sentChallenge;
   sign(message, expected);
   if (!sameText(signature, expected)) return fail(401, "bad-signature");
   if (channel < 1 || channel > NUM_CHANNELS) return fail(400, "bad-channel");
 
   int i = channel - 1;
-  digitalWrite(LOCK_PINS[i], UNLOCKED_LEVEL);
-  relockAt[i] = millis() + PULSE_MS;
-  if (relockAt[i] == 0) relockAt[i] = 1;  // 0 means locked
+  unlocked[i] = action == 'U';
+  digitalWrite(LOCK_PINS[i], unlocked[i] ? UNLOCKED_LEVEL : LOCKED_LEVEL);
   server.send(200, "application/json", String("{\"ok\":true,\"channel\":") + channel + "}");
-  Serial.print("OK P");
+  Serial.print(unlocked[i] ? "UNLOCKED " : "LOCKED ");
   Serial.println(channel);
 }
 
@@ -131,7 +130,7 @@ void fail(int status, const char* error) {
   Serial.println(error);
 }
 
-// HMAC-SHA256, lowercase hex. Must match signPulse in src/machines/protocol.ts.
+// HMAC-SHA256, lowercase hex. Must match signCommand in src/machines/protocol.ts.
 void sign(const String& message, char* hexOut) {
   SHA256Builder sha256;
   HMACBuilder hmac(&sha256);

@@ -32,7 +32,7 @@ const RESULT_CODES: Record<UnlockResult, UnlockResultCode> = {
 };
 
 export const RESULT_MESSAGES: Record<UnlockResult, string> = {
-  acked: 'Door unlocked.',
+  acked: 'Done.',
   rejected: 'The lock controller refused the command. Check the machine channel and lock key in Manage.',
   timeout: 'The lock controller did not answer, so the door may or may not have opened. Check it before trying again.',
   'not-connected': 'Cannot reach the lock controller. Check that it has power and is on the shop Wi-Fi.',
@@ -285,6 +285,20 @@ export async function overrideUnlock(
 }
 
 /** Owner test pulse from Settings, logged as TEST. */
+/**
+ * Locks a door again. Anyone signed in may lock: it can only make the shop safer. Not logged,
+ * since the unlock log is about who opened which door.
+ */
+export async function lockMachine(
+  ctx: ServiceContext,
+  controller: MachineController,
+  machineId: number,
+): Promise<UnlockResult> {
+  const machine = requireMachine(ctx.db, machineId);
+  if (!isReady(controller)) return 'not-connected';
+  return controller.lock(machine.hardwareChannel);
+}
+
 export async function testPulse(
   ctx: ServiceContext,
   controller: MachineController,

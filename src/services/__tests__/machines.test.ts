@@ -6,6 +6,7 @@ import { createCustomer } from '../customers';
 import {
   addMachine,
   listUnlocks,
+  lockMachine,
   overrideUnlock,
   saveLockController,
   testPulse,
@@ -113,6 +114,19 @@ describe('order unlocks (LED prototype acceptance, run against the mock)', () =>
       'voided',
     );
     expect(controller.pulses).toEqual([]);
+  });
+});
+
+describe('locking', () => {
+  it('keeps an order unlock open until anyone locks it again', async () => {
+    const { ctx, controller, order, washers } = await setup();
+    await unlockForOrder(ctx, controller, testEmployee, order.id, washers[0]);
+    expect(controller.state().unlockedChannels).toEqual([1]);
+    await expect(lockMachine(ctx, controller, washers[0])).resolves.toBe('acked');
+    expect(controller.state().unlockedChannels).toEqual([]);
+    await controller.disconnect();
+    await expect(lockMachine(ctx, controller, washers[0])).resolves.toBe('not-connected');
+    await expect(lockMachine(ctx, controller, 999)).rejects.toThrow();
   });
 });
 

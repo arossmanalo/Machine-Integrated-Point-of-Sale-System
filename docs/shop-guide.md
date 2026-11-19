@@ -20,7 +20,7 @@ The washer and dryer doors only open for an order.
 
 - After saving an order, the order page shows **Unlock a washer** and **Unlock a dryer**. Each load allows one washer and one dryer.
 - Or go to **Machines**, tap the machine, and pick the order.
-- The door opens for a few seconds and locks again when it is closed.
+- The door stays unlocked until you lock it. When the laundry is in and the door is closed, go to **Machines** and tap **Lock** on that machine. A machine shows **Unlocked** until then.
 - If the app says there are no unlocks left, the order has used all of its loads. Ask the owner for an override.
 
 ### Payments later
@@ -69,7 +69,7 @@ Everything lives only on this tablet. Go to **Manage › Backup and import › S
 
 ### Setting up machines
 
-**Manage › Machines and locks**: add each machine with its type and lock channel (the lock controller output it is wired to). Use **Test** to pulse one lock. Switch a machine off while it is broken so nobody gets sent to it. **Simulate locks** is for training; turn it off for real use.
+**Manage › Machines and locks**: add each machine with its type and lock channel (the lock controller output it is wired to). Use **Test** to unlock one lock without an order; lock it again on the **Machines** tab. Switch a machine off while it is broken so nobody gets sent to it. **Simulate locks** is for training; turn it off for real use.
 
 The lock controller has 14 channels. Wire each machine's lock to the terminal for its channel; the app shows the terminal next to each machine.
 
@@ -79,4 +79,4 @@ The lock controller has 14 channels. Wire each machine's lock to the terminal fo
 
 Leave the other terminals free: some of them switch on briefly while the board starts, which would open a door.
 
-**Testing the locks (owner).** On the **Machines** tab each machine shows **Locked** or **Unlocked**; after an unlock it shows Unlocked for as long as the door is held open. The owner also sees **Test unlock** on each machine, which opens it without an order and is logged as a test, and a **Testing** section with **Create test order**. A test order is Pay later, takes no supplies, and lets you try the staff flow: tap a machine, pick the test order, unlock. Tap **Void test order** when you are done so it does not stay in the open jobs.
+**Testing the locks (owner).** On the **Machines** tab each machine shows **Locked** or **Unlocked**, as the lock controller reports it. An unlocked machine shows **Lock**, which anyone can tap. The owner also sees **Test unlock** on each locked machine, which unlocks it without an order and is logged as a test, and a **Testing** section with **Create test order**. A test order is Pay later, takes no supplies, and lets you try the staff flow: tap a machine, pick the test order, unlock. Tap **Void test order** when you are done so it does not stay in the open jobs.
