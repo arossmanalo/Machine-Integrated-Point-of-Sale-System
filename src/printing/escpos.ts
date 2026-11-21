@@ -95,6 +95,14 @@ export function buildReceipt(data: ReceiptData): Uint8Array {
   return Uint8Array.from(out);
 }
 
+/** A plain printout (such as the daily report): bold centred header, then left-aligned lines. */
+export function buildTextDocument(header: string, lines: readonly string[]): Uint8Array {
+  const out: number[] = [...INIT, ...ALIGN_CENTER, ...BOLD_ON, ...bytes(`${header}\n`), ...BOLD_OFF, ...ALIGN_LEFT];
+  for (const line of lines) out.push(...bytes(`${line}\n`));
+  out.push(...FEED_3);
+  return Uint8Array.from(out);
+}
+
 export function toBase64(data: Uint8Array): string {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
   let result = '';

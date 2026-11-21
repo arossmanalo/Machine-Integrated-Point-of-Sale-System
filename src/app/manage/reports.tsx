@@ -23,11 +23,12 @@ import { Button } from '@/ui/Button';
 import { Choice, Dialog, Stepper } from '@/ui/controls';
 import { EmptyState, ListRow, Notice, Panel, Row, Screen, Section, Stat } from '@/ui/layout';
 import { ManageScreen } from '@/ui/ManagerGate';
+import { DailyReportView } from '@/ui/reports/DailyReportView';
 import { Text } from '@/ui/Text';
 import { TextField } from '@/ui/TextField';
 import { colors, space } from '@/ui/theme';
 
-type Tab = 'summary' | 'year' | 'expenses';
+type Tab = 'daily' | 'summary' | 'year' | 'expenses';
 
 function figuresText(title: string, f: PeriodFigures): string {
   return [
@@ -44,7 +45,7 @@ function figuresText(title: string, f: PeriodFigures): string {
 
 export default function Reports() {
   const { ctx } = useApp();
-  const [tab, setTab] = useState<Tab>('summary');
+  const [tab, setTab] = useState<Tab>('daily');
   const data = useData((c): ReportData & { expenseRows: ReturnType<typeof listExpenses> } => {
     const expenseRows = listExpenses(c);
     return {
@@ -68,6 +69,7 @@ export default function Reports() {
           value={tab}
           onChange={setTab}
           options={[
+            { value: 'daily', label: 'Daily report' },
             { value: 'summary', label: 'Summary' },
             { value: 'year', label: 'By month' },
             { value: 'expenses', label: 'Expenses' },
@@ -77,6 +79,7 @@ export default function Reports() {
           Money is counted on the day it was paid. Orders and loads are counted on the day they were placed. Voided
           orders are left out.
         </Text>
+        {tab === 'daily' && <DailyReportView now={ctx.now()} />}
         {tab === 'summary' && <Summary data={data} now={ctx.now()} />}
         {tab === 'year' && <YearTable data={data} now={ctx.now()} />}
         {tab === 'expenses' && <Expenses rows={data.expenseRows} />}
