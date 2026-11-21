@@ -105,6 +105,10 @@ Money is counted on the day it was paid. Orders and loads are counted on the day
 
 **Print report** prints it on the receipt printer. **Export PDF** makes an A4 PDF of the day (named like `daily-report-2026-11-21.pdf`) and opens the share menu, so you can save it to Drive or send it by Messenger or email. **Share as text** sends it as plain text.
 
+### GCash QR code
+
+When a customer pays by GCash (on a new order or with **Receive payment**), the app shows the shop's GCash QR code for them to scan. To set it, open **Manage › Shop settings › GCash payments** and tap **Upload QR code**. Pick a screenshot of your GCash QR, drag the square over the code to crop it, and confirm. Only the owner can change it. The image is kept on this tablet and is not part of backups, so upload it again after restoring a backup on another tablet.
+
 ### Letting employees record expenses
 
 In **Manage › Shop settings › Expenses**, turn on **Employees can record expenses**. Employees then get **Record expense** on the Today screen. They can only enter today's expenses, saved under their name, and cannot see or delete any. The expense list in **Reports and expenses** shows who entered each one.

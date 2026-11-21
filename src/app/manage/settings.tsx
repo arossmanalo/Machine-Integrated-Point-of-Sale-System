@@ -13,6 +13,7 @@ import { Button } from '@/ui/Button';
 import { Toggle } from '@/ui/controls';
 import { Divider, ListRow, Notice, Panel, Row, Screen, Section } from '@/ui/layout';
 import { ManageScreen } from '@/ui/ManagerGate';
+import { GcashQrSetting } from '@/ui/orders/GcashQr';
 import { Text } from '@/ui/Text';
 import { TextField } from '@/ui/TextField';
 import { space } from '@/ui/theme';
@@ -25,6 +26,7 @@ export default function Settings() {
         <PriceSection current={settings.pricePerLoad} />
         <StatusSection custom={settings.customStatuses} hidden={settings.hiddenStatuses} />
         <ExpenseEntrySection allowed={settings.employeesRecordExpenses} />
+        <GcashSection />
         <PrinterSection
           printerName={settings.printerName}
           printerAddress={settings.printerAddress}
@@ -33,6 +35,17 @@ export default function Settings() {
         />
       </Screen>
     </ManageScreen>
+  );
+}
+
+/** Owner only: whose account customers pay into. */
+function GcashSection() {
+  const actor = useActor();
+  if (actor.role !== 'OWNER') return null;
+  return (
+    <Section title="GCash payments">
+      <GcashQrSetting />
+    </Section>
   );
 }
 

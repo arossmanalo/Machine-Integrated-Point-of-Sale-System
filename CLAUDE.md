@@ -18,6 +18,7 @@ POS app for our family laundry shop. It currently runs as a Kotlin Android app o
 - Checks: `npm run typecheck`, `npm run lint`, `npm test` (or `npm run check` for all three).
 - Shop decisions (2026-11-12): only Wash-Dry-Fold is sold; each load allows one washer and one dryer start; payment is not needed to start a machine; revenue counts on the day paid; admin or owner can void; only the owner PIN can override. Machines are started by assigned order (2026-11-19), not unlocked. The machine list (count and channels) is still to be decided with the hardware.
 - `docs/shop-guide.md` is the guide for staff and the owner.
+- GCash QR (2026-11-21, app 1.3.0): the owner uploads and crops it in Shop settings (`expo-image-picker`, native); the image is copied to the app's document folder and only its file name is stored (`gcashQrFile`), so it is not in backups. The shop's own QR is not committed: the repo is public.
 
 ### Building the Android app on this PC
 

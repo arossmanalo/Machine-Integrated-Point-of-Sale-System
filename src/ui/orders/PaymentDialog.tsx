@@ -13,6 +13,8 @@ import { Notice } from '../layout';
 import { Text } from '../Text';
 import { TextField } from '../TextField';
 
+import { GcashQrForCustomer } from './GcashQr';
+
 /** Records a payment on an order, starting with the full balance filled in. */
 export function PaymentDialog({ orderId, balance, onClose }: { orderId: string; balance: number; onClose: () => void }) {
   const actor = useActor();
@@ -81,7 +83,10 @@ export function PaymentDialog({ orderId, balance, onClose }: { orderId: string; 
           }
         />
       ) : (
-        <TextField label="GCash reference number" value={reference} onChangeText={setReference} keyboardType="number-pad" />
+        <>
+          <GcashQrForCustomer />
+          <TextField label="GCash reference number" value={reference} onChangeText={setReference} keyboardType="number-pad" />
+        </>
       )}
       {action.error && <Notice tone="danger">{action.error}</Notice>}
     </Dialog>

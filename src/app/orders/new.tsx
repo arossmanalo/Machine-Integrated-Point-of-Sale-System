@@ -23,6 +23,7 @@ import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData } from '@/state/hooks';
 import { useToast } from '@/state/toast';
 import { usePrintReceipt } from '@/state/usePrintReceipt';
+import { GcashQrForCustomer } from '@/ui/orders/GcashQr';
 import { Button } from '@/ui/Button';
 import { Choice, Stepper } from '@/ui/controls';
 import { CustomerDialog } from '@/ui/CustomerDialog';
@@ -332,13 +333,16 @@ export default function NewOrder() {
                   }
                 />
               ) : (
-                <TextField
-                  label="GCash reference number"
-                  value={gcashRef}
-                  onChangeText={setGcashRef}
-                  keyboardType="number-pad"
-                  error={gcashRef.trim() ? null : 'Required for GCash payments.'}
-                />
+                <>
+                  <GcashQrForCustomer />
+                  <TextField
+                    label="GCash reference number"
+                    value={gcashRef}
+                    onChangeText={setGcashRef}
+                    keyboardType="number-pad"
+                    error={gcashRef.trim() ? null : 'Required for GCash payments.'}
+                  />
+                </>
               )}
             </>
           )}

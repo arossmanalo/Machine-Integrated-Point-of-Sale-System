@@ -26,6 +26,8 @@ const settingSchemas = {
   requireReceiptScan: z.boolean(),
   /** When on, employees can enter expenses (today's only); they still cannot see or delete them. */
   employeesRecordExpenses: z.boolean(),
+  /** File in the app's document folder with the shop's GCash QR, shown when a customer pays by GCash. */
+  gcashQrFile: z.string().nullable(),
 };
 
 export type SettingKey = keyof typeof settingSchemas;
@@ -47,6 +49,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lockControllerKey: '',
   requireReceiptScan: true,
   employeesRecordExpenses: false,
+  gcashQrFile: null,
 };
 
 function parseStored<K extends SettingKey>(key: K, raw: string | undefined): Settings[K] {
