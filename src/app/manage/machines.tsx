@@ -9,6 +9,7 @@ import { channelTerminal, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress, pulsesP
 import { changeOwnerPin } from '@/services/auth';
 import {
   addMachine,
+  applyPulsesToMachines,
   listMachines,
   RESULT_MESSAGES,
   saveLockController,
@@ -161,6 +162,7 @@ export default function MachineSettings() {
       {editing && (
         <MachineDialog
           machine={editing === 'new' ? null : editing}
+          machines={machines}
           nextChannel={machines.reduce((max, m) => Math.max(max, m.hardwareChannel), 0) + 1}
           onClose={() => setEditing(null)}
         />
@@ -170,7 +172,19 @@ export default function MachineSettings() {
   );
 }
 
-function MachineDialog({ machine, nextChannel, onClose }: { machine: MachineRow | null; nextChannel: number; onClose: () => void }) {
+type PulseTargets = 'this' | 'all' | 'selected';
+
+function MachineDialog({
+  machine,
+  machines,
+  nextChannel,
+  onClose,
+}: {
+  machine: MachineRow | null;
+  machines: readonly MachineRow[];
+  nextChannel: number;
+  onClose: () => void;
+}) {
   const actor = useActor();
   const action = useAction();
   const [name, setName] = useState(machine?.name ?? '');
@@ -196,6 +210,17 @@ function MachineDialog({ machine, nextChannel, onClose }: { machine: MachineRow 
   const topUpPriceError = dryer && topUpPrice === null ? 'Enter a price like 20 or 20.50.' : null;
   const invalid = pulseError !== null || runError !== null || topUpPulseError !== null || topUpPriceError !== null;
   const digits = (set: (value: string) => void) => (text: string) => set(text.replace(/\D/g, ''));
+  const others = machines.filter((m) => m.id !== machine?.id);
+  const [targets, setTargets] = useState<PulseTargets>('this');
+  const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
+  const copyTo = targets === 'all' ? others.map((m) => m.id) : targets === 'selected' ? [...selected] : [];
+
+  function toggleSelected(id: number, on: boolean) {
+    const next = new Set(selected);
+    if (on) next.add(id);
+    else next.delete(id);
+    setSelected(next);
+  }
 
   async function save() {
     const input = {
@@ -210,10 +235,14 @@ function MachineDialog({ machine, nextChannel, onClose }: { machine: MachineRow 
       topUpPulseCount: Number(topUpCountText),
       topUpPrice: topUpPrice ?? 0,
     };
-    const result = await action.run((c) => {
-      if (machine) updateMachine(c, actor, machine.id, input);
-      else addMachine(c, actor, input);
-    });
+    const result = await action.run((c) =>
+      c.db.transaction((tx) => {
+        const txCtx = { ...c, db: tx };
+        if (machine) updateMachine(txCtx, actor, machine.id, input);
+        else addMachine(txCtx, actor, input);
+        applyPulsesToMachines(txCtx, actor, pulses, copyTo);
+      }),
+    );
     if (result.ok) onClose();
   }
 
@@ -252,6 +281,33 @@ function MachineDialog({ machine, nextChannel, onClose }: { machine: MachineRow 
         <TextField label="Gap (ms)" value={offText} onChangeText={digits(setOffText)} keyboardType="number-pad" style={{ flex: 1 }} />
       </Row>
       {pulseError && <Text tone="danger">{pulseError}</Text>}
+      {others.length > 0 && (
+        <Choice
+          label="Use these pulses on"
+          value={targets}
+          onChange={setTargets}
+          options={[
+            { value: 'this', label: 'This machine only' },
+            { value: 'all', label: `All machines (${others.length + 1})` },
+            { value: 'selected', label: 'Selected machines' },
+          ]}
+        />
+      )}
+      {targets === 'selected' &&
+        others.map((other) => (
+          <Toggle
+            key={other.id}
+            label={other.name}
+            description={`${MACHINE_TYPE_LABELS[other.type]} · now ${pulseSummary(other)}`}
+            value={selected.has(other.id)}
+            onChange={(on) => toggleSelected(other.id, on)}
+          />
+        ))}
+      {copyTo.length > 0 && (
+        <Text tone="muted">
+          {`Saving also gives ${copyTo.length} other machine${copyTo.length === 1 ? '' : 's'} these start pulses. Their run time and top-up settings stay as they are.`}
+        </Text>
+      )}
       <TextField
         label="Run time (minutes)"
         value={runText}

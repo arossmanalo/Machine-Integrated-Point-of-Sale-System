@@ -152,6 +152,24 @@ export function updateMachine(ctx: ServiceContext, actor: Actor, id: number, inp
   ctx.db.update(machines).set({ ...values, ...release }).where(eq(machines.id, id)).run();
 }
 
+/** Gives several machines the same start pulses (count, length and gap) in one step. */
+export function applyPulsesToMachines(
+  ctx: ServiceContext,
+  actor: Actor,
+  pulses: PulseSettings,
+  machineIds: readonly number[],
+): void {
+  requireOwner(actor);
+  const problem = pulsesProblem(pulses);
+  if (problem) throw new UserFacingError(problem);
+  if (machineIds.length === 0) return;
+  ctx.db
+    .update(machines)
+    .set({ pulseCount: pulses.count, pulseOnMs: pulses.onMs, pulseOffMs: pulses.offMs })
+    .where(inArray(machines.id, [...machineIds]))
+    .run();
+}
+
 export interface LockControllerInput {
   address: string;
   key: string;

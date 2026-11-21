@@ -5,6 +5,7 @@ import { completeFirstRunSetup } from '../auth';
 import { createCustomer } from '../customers';
 import {
   addMachine,
+  applyPulsesToMachines,
   assignOrder,
   listMachineLog,
   listMachines,
@@ -242,6 +243,18 @@ describe('machine settings', () => {
     await expect(testStart(ctx, controller, testEmployee, washers[0])).rejects.toThrow('owner');
     await expect(testStart(ctx, controller, owner, washers[0])).resolves.toBe('acked');
     expect(log()[0].kind).toBe('TEST');
+  });
+
+  it('copies start pulses to chosen machines only, for the owner, after checking them', async () => {
+    const { ctx, owner, washers, dryers, machineById } = await setup();
+    const pulses = { count: 12, onMs: 80, offMs: 70 };
+    expect(() => applyPulsesToMachines(ctx, testEmployee, pulses, washers)).toThrow('owner');
+    expect(() => applyPulsesToMachines(ctx, owner, { ...pulses, onMs: 5 }, washers)).toThrow('Pulse length');
+    applyPulsesToMachines(ctx, owner, pulses, [washers[1], dryers[0]]);
+    expect(machineById(washers[1])).toMatchObject({ pulseCount: 12, pulseOnMs: 80, pulseOffMs: 70 });
+    expect(machineById(dryers[0])).toMatchObject({ pulseCount: 12, pulseOnMs: 80, pulseOffMs: 70, topUpPulseCount: 2 });
+    expect(machineById(washers[0])).toMatchObject({ pulseCount: 3, pulseOnMs: 500 });
+    expect(machineById(dryers[1])).toMatchObject({ pulseCount: 1, pulseOnMs: 500 });
   });
 
   it('saves the controller address and key for the owner only, after checking them', async () => {
