@@ -86,7 +86,7 @@ export default function OrderDetails() {
           </Notice>
         )}
         {fresh === '1' && !voided && (
-          <Notice tone="success">Order saved. Next, load a washer and tap Start a machine.</Notice>
+          <Notice tone="success">Order saved. Next, load a washer and tap Assign machine.</Notice>
         )}
 
         <View style={styles.head}>
@@ -110,7 +110,7 @@ export default function OrderDetails() {
           <Button label="Print receipt" kind="secondary" icon="printer-outline" busy={printing} onPress={() => void print(order.id)} />
           {allowance > 0 && (
             <Button
-              label="Start a machine"
+              label="Assign machine"
               icon="washing-machine"
               kind={data.usage.WASHER === 0 && machinesOpen ? 'primary' : 'secondary'}
               disabled={!machinesOpen}
@@ -118,7 +118,8 @@ export default function OrderDetails() {
             />
           )}
           {!voided && can.voidOrder(actor.role) && (
-            <Button label="Void order" kind="danger" onPress={() => setDialog('void')} />
+            // Kept apart at the far end so it is not tapped by mistake next to the everyday actions.
+            <Button label="Void order" kind="danger" onPress={() => setDialog('void')} style={styles.pushRight} />
           )}
         </Row>
 
@@ -145,7 +146,7 @@ export default function OrderDetails() {
                 <ListRow
                   key={machine.id}
                   title={machine.name}
-                  subtitle={`${MACHINE_TYPE_LABELS[machine.type]} · did not start yet · try again from Machines or Start a machine`}
+                  subtitle={`${MACHINE_TYPE_LABELS[machine.type]} · did not run yet · try again from Machines or Assign machine`}
                   last={index === data.assigned.length - 1}
                 />
               ))}
@@ -414,4 +415,5 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   head: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: space.md },
   pad: { padding: space.lg, gap: space.sm },
+  pushRight: { marginLeft: 'auto' },
 });

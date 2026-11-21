@@ -47,10 +47,10 @@ function ConfirmStart({ machine, orderId, customerName }: { machine: MachineRow;
   return (
     <View style={styles.confirm}>
       <MaterialCommunityIcons name={machineIcon(machine.type)} size={40} color={colors.accent} />
-      <Text variant="heading">{`Start ${machine.name} for ${orderId}?`}</Text>
+      <Text variant="heading">{`Run ${machine.name} for ${orderId}?`}</Text>
       <Text>{customerName}</Text>
       <Text tone="muted">
-        {`Load the laundry and close the door first. ${machine.name} starts as soon as you tap Start and runs for ` +
+        {`Load the laundry and close the door first. ${machine.name} starts as soon as you tap Run machine and runs for ` +
           `${machine.runMinutes} minutes.`}
       </Text>
     </View>
@@ -92,14 +92,14 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
   const actions = chosen ? (
     <>
       <Button label="Back" kind="secondary" onPress={() => setChosen(null)} />
-      <Button label={`Start ${chosen.name}`} icon="play" onPress={() => void start(chosen)} busy={action.busy} />
+      <Button label="Run machine" icon="play" onPress={() => void start(chosen)} busy={action.busy} />
     </>
   ) : (
     <Button label="Close" kind="secondary" onPress={onClose} />
   );
 
   return (
-    <Dialog visible title={`Start a machine for ${orderId}`} onClose={onClose} actions={actions}>
+    <Dialog visible title={`Assign a machine to ${orderId}`} onClose={onClose} actions={actions}>
       {chosen ? (
         <ConfirmStart machine={chosen} orderId={orderId} customerName={data.customerName} />
       ) : (
@@ -239,7 +239,7 @@ export function OrderPickerDialog({
   const actions = chosen ? (
     <>
       <Button label="Back" kind="secondary" onPress={() => setChosen(null)} />
-      <Button label={`Start ${machine.name}`} icon="play" onPress={() => void start(chosen.orderId)} busy={action.busy} />
+      <Button label="Run machine" icon="play" onPress={() => void start(chosen.orderId)} busy={action.busy} />
     </>
   ) : (
     <>
@@ -248,7 +248,7 @@ export function OrderPickerDialog({
     </>
   );
   return (
-    <Dialog visible title={`Start ${machine.name}`} onClose={onClose} actions={actions}>
+    <Dialog visible title={`Assign an order to ${machine.name}`} onClose={onClose} actions={actions}>
       {chosen ? (
         <ConfirmStart machine={machine} orderId={chosen.orderId} customerName={chosen.customerName} />
       ) : (

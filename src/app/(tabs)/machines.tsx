@@ -189,10 +189,10 @@ export default function Machines() {
                       {!running && waiting !== null && (
                         <>
                           <Text variant="caption" tone="muted">
-                            {`${waiting} · ${data.customers.get(waiting) ?? ''}. The start did not go out; try again.`}
+                            {`${waiting} · ${data.customers.get(waiting) ?? ''}. It did not run; tap Run machine to try again.`}
                           </Text>
                           <Row wrap>
-                            <Button label="Start machine" icon="play" onPress={() => void start(machine)} busy={action.busy} />
+                            <Button label="Run machine" icon="play" onPress={() => void start(machine)} busy={action.busy} />
                             <Button label="Remove" kind="quiet" onPress={() => void remove(machine)} busy={action.busy} />
                           </Row>
                         </>

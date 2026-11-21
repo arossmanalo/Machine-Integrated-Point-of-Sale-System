@@ -19,12 +19,12 @@
 The washers and dryers only start for an order. Each load allows one washer and one dryer.
 
 1. Load the laundry and close the door.
-2. On the order page, tap **Start a machine**. A window shows the dryers on top and the washers below, like they stand in the shop. Tap the machine you loaded.
+2. On the order page, tap **Assign machine**. A window shows the dryers on top and the washers below, like they stand in the shop. Tap the machine you loaded.
    You can also go to **Machines**, tap a free machine, and pick the order.
-3. The app asks once: **Start Washer 1 for T0012?** Tap **Start**. The machine starts right away.
+3. The app asks once: **Run Washer 1 for T0012?** Tap **Run machine**. The machine starts right away.
 
 - While a machine runs, the **Machines** tab shows **In use** with a countdown and the order. Nobody can start it again until the countdown ends. If it finished early, tap **Mark as done**.
-- If a start did not go out (offline, busy), the machine shows **Did not start**. Tap **Start machine** to try again, or **Remove** to take the order off.
+- If a start did not go out (offline, busy), the machine shows **Did not start**. Tap **Run machine** to try again, or **Remove** to take the order off.
 - If the app says the order has used all its washers or dryers, it has used all of its loads. Ask the owner for an override.
 - The order page lists each load with the washer and dryer that ran it.
 
@@ -41,7 +41,7 @@ Open the order (from **Orders** or the customer's history) and tap **Receive pay
 | What you see | What to do |
 |---|---|
 | **Machines offline** at the top | Check that the machine controller box has power and the tablet is on the shop Wi-Fi. Tap the chip to reconnect. |
-| **Did not get the start** | Nothing happened. Tap **Start machine** again. |
+| **Did not get the start** | Nothing happened. Tap **Run machine** again. |
 | **Busy** | That machine is still getting the pulses from the last start. Wait a moment and try again. |
 | **Still running** | The machine's countdown has not ended. Wait, or tap **Mark as done** on the Machines tab if it already stopped. |
 | **No answer** after a start | Look at the machine: it may have started anyway. If it did not, ask the owner for an override; the app will not start it twice on its own. |
@@ -92,7 +92,7 @@ Everything lives only on this tablet. Go to **Manage › Backup and import › S
 
 **Manage › Machines**: add each machine with its type, its channel (the machine controller terminal it is wired to), its start pulses and its **run time** in minutes (what the in-use countdown counts down). For dryers, also set the **top-up pulses** (how many pulses give the dryer 5 more minutes) and the **top-up price**; a price of 0 switches top-ups off. Use **Test** to send a machine's pulses without an order. Switch a machine off while it is broken so nobody can start it. **Simulate machines** is for training; turn it off for real use.
 
-**Start pulses.** A start works like dropping coins in the machine's slot: it sends a number of pulses, each a set length, with a gap between them. Set all three per machine: **Number of pulses** (1 to 50), **Pulse length** and **Gap between** (20 to 5000 milliseconds; 1000 ms is one second). The defaults are 1 pulse of 500 ms with a 500 ms gap.
+**Start pulses.** A start works like dropping coins in the machine's slot: it sends a number of pulses, each a set length, with a gap between them. Set all three per machine: **Number of pulses** (1 to 50), **Pulse length** and **Gap between** (20 to 5000 milliseconds; 1000 ms is one second). The defaults are 1 pulse of 500 ms with a 500 ms gap. To give other machines the same pulses, pick **All machines** or **Selected machines** under **Use these pulses on** before saving; their run time and top-up settings are left alone.
 
 The machine controller has 14 channels. Wire each machine to the terminal for its channel; the app shows the terminal next to each machine.
 
