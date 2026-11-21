@@ -5,5 +5,12 @@
 #define WIFI_PASSWORD "shop-wifi-password"
 
 // Shared passphrase, at least 12 characters. Enter exactly the same text in the app under
-// Manage > Machines and locks > Lock key. Anyone who knows it can open doors, so keep it private.
+// Manage > Machines > Key. Anyone who knows it can start machines, so keep it private.
 #define LOCK_KEY "change-this-lock-key"
+
+// Optional fixed address, so the address saved in the app never changes. Pick one no other
+// device uses, ideally outside the router's DHCP range. Remove these three lines to let the
+// router choose (then reserve the address in the router instead).
+#define STATIC_IP "192.168.1.200"
+#define STATIC_GATEWAY "192.168.1.1"
+#define STATIC_SUBNET "255.255.255.0"

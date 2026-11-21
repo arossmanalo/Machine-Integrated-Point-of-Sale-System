@@ -19,6 +19,7 @@
 //
 // Setup: copy config.example.h to config.h, fill it in, then upload.
 // The address to enter in the app is printed on the serial monitor (115200 baud) at start.
+// Set STATIC_IP in config.h so that address never changes.
 
 #include <WiFi.h>
 #include <WebServer.h>
@@ -70,6 +71,15 @@ void setup() {
     Serial.println(WiFi.localIP());
   }, ARDUINO_EVENT_WIFI_STA_GOT_IP);
   WiFi.mode(WIFI_STA);
+#ifdef STATIC_IP
+  // A fixed address, so the one saved in the app stays right after the router restarts.
+  IPAddress ip, gateway, subnet;
+  if (ip.fromString(STATIC_IP) && gateway.fromString(STATIC_GATEWAY) && subnet.fromString(STATIC_SUBNET)) {
+    WiFi.config(ip, gateway, subnet, gateway);
+  } else {
+    Serial.println("ERR bad STATIC_IP, STATIC_GATEWAY or STATIC_SUBNET in config.h; using the router's address");
+  }
+#endif
   // Power saving makes the radio nap between beacons, so requests from the tablet were
   // sometimes answered late or dropped. The board runs from a charger, so stay awake.
   WiFi.setSleep(false);
