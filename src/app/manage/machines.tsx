@@ -13,6 +13,7 @@ import {
   listMachines,
   RESULT_MESSAGES,
   saveLockController,
+  setReceiptScanRequired,
   testStart,
   updateMachine,
 } from '@/services/machines';
@@ -50,6 +51,7 @@ export default function MachineSettings() {
   const [changingPin, setChangingPin] = useState(false);
   const machines = useData(listMachines);
   const simulate = useData((c) => getSetting(c.db, 'simulateMachines'));
+  const receiptScan = useData((c) => getSetting(c.db, 'requireReceiptScan'));
   const saved = useData((c) => ({
     address: getSetting(c.db, 'lockControllerAddress'),
     key: getSetting(c.db, 'lockControllerKey'),
@@ -121,6 +123,16 @@ export default function MachineSettings() {
               const result = await action.run((c) => setSetting(c.db, 'simulateMachines', value));
               if (result.ok) reloadLockController();
             }}
+          />
+          <Toggle
+            label="Scan receipt to run a machine"
+            description={
+              receiptScan
+                ? "Staff scan the QR code on the order's receipt before a machine runs. The receipt allows one washer and one dryer per load."
+                : 'Off: staff pick the order from a list, with no receipt needed. Anyone at the tablet can run a machine for any open order.'
+            }
+            value={receiptScan}
+            onChange={(value) => void action.run((c) => setReceiptScanRequired(c, actor, value))}
           />
         </Section>
 

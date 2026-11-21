@@ -24,6 +24,7 @@ The washers and dryers only start for an order, and only with that order's recei
 3. The camera opens. Hold the receipt's QR code in front of it. If the picture is from the wrong side, tap **Switch camera**. The first time, allow the app to use the camera.
 4. The app asks once: **Run Washer 1 for T0012?** Tap **Run machine**. The machine starts right away.
 
+- The owner can turn receipt scans off in **Manage › Machines › Scan receipt to run a machine**. Staff then pick the order from a list with no receipt, as before.
 - A receipt for another order, or any other QR code, is refused. Tap **Scan again** and use the right receipt.
 - **For testing only:** until the receipt printer arrives, one test QR code (`docs/test-receipt-qr.png`) works for every open order. On the Machines tab you then pick the order from the list. Anyone holding a copy of it can start machines for any order, so it is removed before the shop relies on receipts.
 

@@ -23,6 +23,8 @@ const settingSchemas = {
   lockControllerAddress: z.string(),
   /** Shared passphrase that signs every pulse; must match LOCK_KEY in the ESP32 sketch. */
   lockControllerKey: z.string(),
+  /** When on, running a machine for an order needs that order's receipt QR code scanned. */
+  requireReceiptScan: z.boolean(),
 };
 
 export type SettingKey = keyof typeof settingSchemas;
@@ -43,6 +45,7 @@ export const DEFAULT_SETTINGS: Settings = {
   simulateMachines: false,
   lockControllerAddress: '',
   lockControllerKey: '',
+  requireReceiptScan: true,
 };
 
 function parseStored<K extends SettingKey>(key: K, raw: string | undefined): Settings[K] {

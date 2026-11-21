@@ -19,6 +19,7 @@ import {
   type OverrideReason,
 } from '@/services/machines';
 import { getOrderDetail, listOrderSummaries } from '@/services/orders';
+import { getSetting } from '@/services/settings';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData, useNow } from '@/state/hooks';
 import { useToast } from '@/state/toast';
@@ -74,6 +75,8 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
   const now = useNow(15000);
   const [chosen, setChosen] = useState<MachineRow | null>(null);
   const [receiptCode, setReceiptCode] = useState<string | null>(null);
+  const scanOn = useData((c) => getSetting(c.db, 'requireReceiptScan'));
+  const needScan = scanOn && receiptCode === null;
   const data = useData(
     (c) => {
       const detail = getOrderDetail(c, orderId);
@@ -93,8 +96,10 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
     setReceiptCode(null);
   }
 
-  async function start(machine: MachineRow, code: string) {
-    const result = await action.run((c) => startOrderOnMachine(c, controller, actor, orderId, machine.id, code));
+  async function start(machine: MachineRow) {
+    const result = await action.run((c) =>
+      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode),
+    );
     if (!result.ok) return;
     report(result.value, machine.name);
     back();
@@ -104,9 +109,7 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
   const actions = chosen ? (
     <>
       <Button label="Back" kind="secondary" onPress={back} />
-      {receiptCode !== null && (
-        <Button label="Run machine" icon="play" onPress={() => void start(chosen, receiptCode)} busy={action.busy} />
-      )}
+      {!needScan && <Button label="Run machine" icon="play" onPress={() => void start(chosen)} busy={action.busy} />}
     </>
   ) : (
     <Button label="Close" kind="secondary" onPress={onClose} />
@@ -114,13 +117,13 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
 
   return (
     <Dialog visible title={`Assign a machine to ${orderId}`} onClose={onClose} actions={actions}>
-      {chosen && receiptCode === null ? (
+      {chosen && needScan ? (
         <ReceiptScanner
           prompt={`Scan the receipt for ${orderId} to run ${chosen.name}.`}
           check={(c, scanned) => checkReceiptFor(c, scanned, orderId)}
           onAccepted={setReceiptCode}
         />
-      ) : chosen && receiptCode !== null ? (
+      ) : chosen ? (
         <ConfirmStart machine={chosen} orderId={orderId} customerName={data.customerName} />
       ) : (
         <>
@@ -238,6 +241,7 @@ export function OrderPickerDialog({
   const report = useReportStart();
   const [chosen, setChosen] = useState<{ orderId: string; customerName: string } | null>(null);
   const [receiptCode, setReceiptCode] = useState<string | null>(null);
+  const scanOn = useData((c) => getSetting(c.db, 'requireReceiptScan'));
   const candidates = useData(
     (c) =>
       listOrderSummaries(c)
@@ -280,18 +284,20 @@ export function OrderPickerDialog({
     }
   }
 
-  async function start(orderId: string, code: string) {
-    const result = await action.run((c) => startOrderOnMachine(c, controller, actor, orderId, machine.id, code));
+  async function start(orderId: string) {
+    const result = await action.run((c) =>
+      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode),
+    );
     if (!result.ok) return;
     report(result.value, machine.name);
     if (result.value === 'acked' || result.value === 'timeout') onClose();
     else back();
   }
 
-  const actions = chosen && receiptCode !== null ? (
+  const actions = chosen ? (
     <>
       <Button label="Back" kind="secondary" onPress={back} />
-      <Button label="Run machine" icon="play" onPress={() => void start(chosen.orderId, receiptCode)} busy={action.busy} />
+      <Button label="Run machine" icon="play" onPress={() => void start(chosen.orderId)} busy={action.busy} />
     </>
   ) : (
     <>
@@ -301,9 +307,9 @@ export function OrderPickerDialog({
   );
   return (
     <Dialog visible title={`Assign an order to ${machine.name}`} onClose={onClose} actions={actions}>
-      {chosen && receiptCode !== null ? (
+      {chosen ? (
         <ConfirmStart machine={machine} orderId={chosen.orderId} customerName={chosen.customerName} />
-      ) : receiptCode === null ? (
+      ) : scanOn && receiptCode === null ? (
         <ReceiptScanner
           prompt={`Scan the order receipt to run ${machine.name}. No receipt, no start.`}
           check={checkScan}
@@ -311,7 +317,11 @@ export function OrderPickerDialog({
         />
       ) : (
         <>
-          <Text tone="muted">Test code scanned. Pick the order this load belongs to.</Text>
+          <Text tone="muted">
+            {scanOn
+              ? 'Test code scanned. Pick the order this load belongs to.'
+              : 'Pick the order this load belongs to. No order, no start.'}
+          </Text>
           {candidates.length === 0 ? (
             <EmptyState
               icon="receipt-text-outline"

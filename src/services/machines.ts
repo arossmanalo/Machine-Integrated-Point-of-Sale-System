@@ -31,7 +31,7 @@ import {
 import { UserFacingError, type Actor, type Db, type ServiceContext } from '@/db/types';
 
 import { checkOwnerPin } from './auth';
-import { setSetting } from './settings';
+import { getSetting, setSetting } from './settings';
 
 /** A pending row younger than this still holds its allowance (the reply may be on its way). */
 const PENDING_HOLD_MS = 30 * 1000;
@@ -189,6 +189,12 @@ export function saveLockController(ctx: ServiceContext, actor: Actor, input: Loc
     setSetting(tx, 'lockControllerAddress', input.address.trim());
     setSetting(tx, 'lockControllerKey', input.key);
   });
+}
+
+/** Owner only: whether staff must scan the order's receipt before a machine runs. */
+export function setReceiptScanRequired(ctx: ServiceContext, actor: Actor, required: boolean): void {
+  requireOwner(actor);
+  setSetting(ctx.db, 'requireReceiptScan', required);
 }
 
 function requireMachine(db: Db, id: number): MachineRow {
@@ -450,7 +456,7 @@ export async function startMachine(
 
 /**
  * Assigning an order to a machine starts it straight away, once the order's receipt QR code has
- * been scanned. If the start sends nothing (offline, busy, refused), the order stays on the
+ * been scanned (when the owner has receipt scans turned on). If the start sends nothing (offline, busy, refused), the order stays on the
  * machine so Run machine on the Machines tab can retry without scanning again.
  */
 export async function startOrderOnMachine(
@@ -459,9 +465,9 @@ export async function startOrderOnMachine(
   actor: Actor,
   orderId: string,
   machineId: number,
-  receiptCode: string,
+  receiptCode: string | null,
 ): Promise<StartResult> {
-  checkReceiptFor(ctx, receiptCode, orderId);
+  if (getSetting(ctx.db, 'requireReceiptScan')) checkReceiptFor(ctx, receiptCode ?? '', orderId);
   const machine = requireMachine(ctx.db, machineId);
   if (machine.assignedOrderId !== orderId) {
     ctx.db.transaction((tx) => {

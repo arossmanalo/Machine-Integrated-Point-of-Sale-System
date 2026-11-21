@@ -15,6 +15,7 @@ import {
   overrideStart,
   readReceiptCode,
   saveLockController,
+  setReceiptScanRequired,
   startMachine,
   startOrderOnMachine,
   testStart,
@@ -435,6 +436,20 @@ describe('receipt QR codes', () => {
     const { ctx, order } = await setup();
     expect(readReceiptCode(ctx, receiptOf(order))).toEqual({ kind: 'order', orderId: order.id });
     expect(() => readReceiptCode(ctx, receiptCodeFor('T9999', 'a'.repeat(32)))).toThrow('does not match order T9999');
+  });
+
+  it('the owner can turn receipt scans off and on', async () => {
+    const { ctx, owner, controller, order, washers } = await setup();
+    const run = (machineId: number) =>
+      startOrderOnMachine(ctx, controller, testEmployee, order.id, machineId, null);
+    await expect(run(washers[0])).rejects.toThrow('not a Laundry POS receipt');
+
+    expect(() => setReceiptScanRequired(ctx, testEmployee, false)).toThrow('Only the owner');
+    setReceiptScanRequired(ctx, owner, false);
+    await expect(run(washers[0])).resolves.toBe('acked');
+
+    setReceiptScanRequired(ctx, owner, true);
+    await expect(run(washers[1])).rejects.toThrow('not a Laundry POS receipt');
   });
 
   it('gives every order its own code', async () => {
