@@ -54,7 +54,7 @@ const STYLE = `
   table { width: 100%; border-collapse: collapse; }
   th { text-align: left; font-size: 8.5pt; color: #5b6676; font-weight: 600; padding: 3pt 5pt; border-bottom: 1px solid #c9d1dc; }
   td { padding: 3pt 5pt; border-bottom: 1px solid #e6eaf0; vertical-align: top; }
-  tr { page-break-inside: avoid; }
+  tr, tbody.order { page-break-inside: avoid; break-inside: avoid; }
   .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
   .sales td:last-child, .orders td:last-child, .orders th:last-child { text-align: right; }
   .sales td:first-child { color: #5b6676; }
@@ -88,7 +88,7 @@ export function dailyReportHtml(report: DailyReport, dayLabel: string, shopName:
     .join('');
 
   const orderRows = report.orders
-    .flatMap((entry) => {
+    .map((entry) => {
       const notes = [entry.order.voided ? 'Voided' : '', entry.placedToday ? '' : 'Earlier order'].filter(Boolean).join(', ');
       const label = `${e(entry.order.id)}<br><span class="muted">${e(entry.order.customerName)}${notes ? ` · ${notes}` : ''}</span>`;
       const loads = entry.loads.map((load, index) =>
@@ -101,7 +101,8 @@ export function dailyReportHtml(report: DailyReport, dayLabel: string, shopName:
         ]),
       );
       const overrides = entry.overrides.map((run) => row(['', 'Override', e(describeRun(run)), '', '']));
-      return [...loads, ...overrides];
+      // One tbody per order so its loads stay on one page with the order number.
+      return `<tbody class="order">${[...loads, ...overrides].join('')}</tbody>`;
     })
     .join('');
 
@@ -159,7 +160,7 @@ export function dailyReportHtml(report: DailyReport, dayLabel: string, shopName:
   ${
     report.orders.length === 0
       ? '<p class="muted">Nothing was ordered or run on this day.</p>'
-      : `<table class="orders">${head(['Order', 'Load', 'Washer', 'Dryer', 'Owes'])}<tbody>${orderRows}</tbody></table>`
+      : `<table class="orders">${head(['Order', 'Load', 'Washer', 'Dryer', 'Owes'])}${orderRows}</table>`
   }
 
   <h2>Machines</h2>
