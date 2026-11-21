@@ -414,7 +414,18 @@ export async function startOrderOnMachine(
   machineId: number,
 ): Promise<StartResult> {
   const machine = requireMachine(ctx.db, machineId);
-  if (machine.assignedOrderId !== orderId) assignOrder(ctx, actor, orderId, machineId);
+  if (machine.assignedOrderId !== orderId) {
+    ctx.db.transaction((tx) => {
+      // A start that sent nothing left the order waiting on another machine; staff chose this one instead.
+      tx.update(machines)
+        .set({ assignedOrderId: null, assignedAt: null, assignedByName: null })
+        .where(
+          and(eq(machines.assignedOrderId, orderId), eq(machines.type, machine.type), ne(machines.id, machineId)),
+        )
+        .run();
+      assignOrder({ ...ctx, db: tx }, actor, orderId, machineId);
+    });
+  }
   return startMachine(ctx, controller, actor, machineId);
 }
 

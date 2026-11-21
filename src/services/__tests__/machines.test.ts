@@ -294,6 +294,16 @@ describe('assigning starts the machine', () => {
     expect(machineUsage(ctx, order.id).WASHER).toBe(1);
   });
 
+  it('after a start that sent nothing, the order can go to another machine of that type', async () => {
+    const { ctx, controller, newOrder, washers, machineById } = await setup();
+    const oneLoad = newOrder();
+    controller.failNextStart('busy');
+    await expect(startOrderOnMachine(ctx, controller, testEmployee, oneLoad.id, washers[0])).resolves.toBe('busy');
+    await expect(startOrderOnMachine(ctx, controller, testEmployee, oneLoad.id, washers[1])).resolves.toBe('acked');
+    expect(machineById(washers[0])?.assignedOrderId).toBeNull();
+    expect(machineUsage(ctx, oneLoad.id).WASHER).toBe(1);
+  });
+
   it('an override starts a machine that is in use; a test start sets no timer', async () => {
     const { ctx, owner, controller, order, washers, machineById } = await setup();
     await testStart(ctx, controller, owner, washers[1]);
