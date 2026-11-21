@@ -49,7 +49,7 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 - In use: each machine has a run time (`runMinutes`). A start sets `runOrderId` and `runEndsAt`; while `runEndsAt` is in the future the machine shows a countdown and cannot be assigned or started (owner override still can). **Mark as done** ends it early. Test starts set no timer.
 - Dryer top-ups: +5 minutes (`TOP_UP_MINUTES`) for the order of the dryer's latest run, during or after the run, while that order is open and the dryer has not run another order. Sends `topUpPulseCount` pulses, adds an order item and `topUpPrice` to the order total, and logs a `TOP_UP` row with `charge`; all of it is undone if nothing was sent. Price 0 means no top-ups.
 - Daily report (Manage › Reports): `src/domain/dailyReport.ts` builds it from orders, payments, expenses and the machine log. Load n of an order is its nth counted washer (or dryer) start; nothing about loads is stored. Printed via `src/printing/dailyReportText.ts`.
-- The owner keeps **Test start** (no order, logged as TEST) and the owner-PIN **override** (rewash, machine did not start; logged).
+- The owner keeps **Test start** (no order, logged as TEST; shown only after turning on Testing mode on the Machines tab, off by default and at each login) and the owner-PIN **override** (rewash, machine did not start; logged).
 
 ### Current phase: LED prototype
 

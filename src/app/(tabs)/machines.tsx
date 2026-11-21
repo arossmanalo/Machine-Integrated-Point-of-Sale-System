@@ -15,7 +15,7 @@ import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData, useNow } from '@/state/hooks';
 import { useToast } from '@/state/toast';
 import { Button } from '@/ui/Button';
-import { Badge, Dialog } from '@/ui/controls';
+import { Badge, Dialog, Toggle } from '@/ui/controls';
 import { EmptyState, Notice, Panel, Row, Screen, Section } from '@/ui/layout';
 import { OrderPickerDialog, OverrideDialog, useReportStart } from '@/ui/machines/MachineDialogs';
 import { Text } from '@/ui/Text';
@@ -42,6 +42,10 @@ export default function Machines() {
   const report = useReportStart();
   const now = useNow();
   const owner = can.manageMachines(actor.role);
+  // Off by default so the owner sees the same screen as staff. Tied to the user who turned it on,
+  // so it is off again for the next login on this tablet.
+  const [testingBy, setTestingBy] = useState<string | null>(null);
+  const testing = owner && testingBy === actor.id;
   const data = useData((c) => {
     const machines = listMachines(c);
     const summaries = listOrderSummaries(c);
@@ -208,7 +212,7 @@ export default function Machines() {
                           </Text>
                           <Row wrap>
                             {topUp}
-                            {owner && machine.enabled && (
+                            {testing && machine.enabled && (
                               <Button
                                 label="Test start"
                                 kind="quiet"
@@ -231,13 +235,21 @@ export default function Machines() {
       )}
       {action.error && <Notice tone="danger">{action.error}</Notice>}
       {owner && data.machines.length > 0 && (
-        <Section
-          title="Testing"
-          description="Only the owner sees this. Test start sends a machine's pulses without an order and sets no timer. To try the staff flow instead, create a test order and start a machine with it. Test orders are Pay later and take no supplies; void them when you are done."
-        >
-          {testOrderId === null ? (
+        <Section title="Testing">
+          <Toggle
+            label="Testing mode"
+            description={
+              testing
+                ? "Test start sends a machine's pulses without an order and sets no timer. To try the staff flow instead, create a test order and start a machine with it. Test orders are Pay later and take no supplies; void them when you are done."
+                : 'Only the owner sees this. Turn it on to show Test start on each machine and to make test orders.'
+            }
+            value={testing}
+            onChange={(on) => setTestingBy(on ? actor.id : null)}
+          />
+          {testing && testOrderId === null && (
             <Button label="Create test order" kind="secondary" icon="clipboard-plus-outline" onPress={makeTestOrder} busy={action.busy} />
-          ) : (
+          )}
+          {testOrderId !== null && (
             <Notice
               tone="info"
               action={<Button label="Void test order" kind="secondary" onPress={() => void voidTestOrder(testOrderId)} busy={action.busy} />}
