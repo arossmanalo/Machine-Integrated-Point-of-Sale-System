@@ -44,9 +44,11 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 ### How it works
 
 - The machines take a coin-style start signal: a number of pulses on their coin input. The ESP32 sends those pulses only when the POS asks for a start for an order. There are no door locks (lock/unlock was dropped on 2026-11-19 at the user's request).
-- Flow: employee creates the order → on the order page, **Assign to machine** opens a window with the registered dryers on top and washers below (as stacked in the shop) → tapping a free machine assigns the order → on the **Machines** tab that machine shows **Start machine** → Start sends the signed start over Wi-Fi → the ESP32 sends the machine's pulses.
-- One assignment = one start. Starting uses the assignment up; the machine is then free for the next order. Each load allows one washer and one dryer (assigned plus started together). A machine holds one order at a time; **Remove** takes it off before it starts.
-- Assignments are released when the order is voided or completed, or the machine is switched off.
+- Flow (2026-11-21): employee creates the order → on the order page, **Start a machine** opens a window with the registered dryers on top and washers below (as stacked in the shop) → tapping a free machine asks once ("Start Washer 1 for T0012?") → Start sends the signed start over Wi-Fi → the ESP32 sends the machine's pulses. The Machines tab does the same from a machine: tap it, pick the order, confirm. `startOrderOnMachine` assigns and starts in one go.
+- Each load allows one washer start and one dryer start. If a start sends nothing (`rejected`, `busy`, `failed`, `not-connected`), the order stays assigned to the machine ("Did not start") so Start machine retries it; **Remove** takes it off. Such assignments are released when the order is voided or completed, or the machine is switched off.
+- In use: each machine has a run time (`runMinutes`). A start sets `runOrderId` and `runEndsAt`; while `runEndsAt` is in the future the machine shows a countdown and cannot be assigned or started (owner override still can). **Mark as done** ends it early. Test starts set no timer.
+- Dryer top-ups: +5 minutes (`TOP_UP_MINUTES`) for the order of the dryer's latest run, during or after the run, while that order is open and the dryer has not run another order. Sends `topUpPulseCount` pulses, adds an order item and `topUpPrice` to the order total, and logs a `TOP_UP` row with `charge`; all of it is undone if nothing was sent. Price 0 means no top-ups.
+- Daily report (Manage › Reports): `src/domain/dailyReport.ts` builds it from orders, payments, expenses and the machine log. Load n of an order is its nth counted washer (or dryer) start; nothing about loads is stored. Printed via `src/printing/dailyReportText.ts`.
 - The owner keeps **Test start** (no order, logged as TEST) and the owner-PIN **override** (rewash, machine did not start; logged).
 
 ### Current phase: LED prototype

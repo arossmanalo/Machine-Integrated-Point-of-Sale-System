@@ -16,14 +16,21 @@
 
 ### Running a machine
 
-The washers and dryers only start for an order. It takes two steps: assign, then start.
+The washers and dryers only start for an order. Each load allows one washer and one dryer.
 
-1. **Assign.** On the order page, tap **Assign to machine**. A window shows the dryers on top and the washers below, like they stand in the shop. Tap a free machine to put the order on it. Each load allows one washer and one dryer.
+1. Load the laundry and close the door.
+2. On the order page, tap **Start a machine**. A window shows the dryers on top and the washers below, like they stand in the shop. Tap the machine you loaded.
    You can also go to **Machines**, tap a free machine, and pick the order.
-2. **Start.** Load the laundry, then go to **Machines**. The machine shows the order and **Start machine**. Tap it to start the machine. Starting uses up the assignment, and the machine is free for the next order.
+3. The app asks once: **Start Washer 1 for T0012?** Tap **Start**. The machine starts right away.
 
-- Put an order on the wrong machine? Tap **Remove** on that machine before starting it.
+- While a machine runs, the **Machines** tab shows **In use** with a countdown and the order. Nobody can start it again until the countdown ends. If it finished early, tap **Mark as done**.
+- If a start did not go out (offline, busy), the machine shows **Did not start**. Tap **Start machine** to try again, or **Remove** to take the order off.
 - If the app says the order has used all its washers or dryers, it has used all of its loads. Ask the owner for an override.
+- The order page lists each load with the washer and dryer that ran it.
+
+### Dryer top-ups
+
+If the laundry is still damp, tap **Top up 5 min** on the dryer in **Machines**. It works while the dryer runs and after it finished, as long as the dryer has not started another order. The app shows the price and asks first; the top-up adds 5 minutes and the price is added to the order's bill. If the top-up does not reach the dryer, the charge comes off again.
 
 ### Payments later
 
@@ -36,6 +43,7 @@ Open the order (from **Orders** or the customer's history) and tap **Receive pay
 | **Machines offline** at the top | Check that the machine controller box has power and the tablet is on the shop Wi-Fi. Tap the chip to reconnect. |
 | **Did not get the start** | Nothing happened. Tap **Start machine** again. |
 | **Busy** | That machine is still getting the pulses from the last start. Wait a moment and try again. |
+| **Still running** | The machine's countdown has not ended. Wait, or tap **Mark as done** on the Machines tab if it already stopped. |
 | **No answer** after a start | Look at the machine: it may have started anyway. If it did not, ask the owner for an override; the app will not start it twice on its own. |
 | Printer does not print | Make sure the printer is on and charged. Use **Print receipt** on the order page to try again. |
 
@@ -67,13 +75,22 @@ Orders cannot be deleted, only voided with a reason (admin or owner). A voided o
 
 Money is counted on the day it was paid. Orders and loads are counted on the day they were placed. A payment today for an order from last week shows as "paid for orders placed earlier".
 
+**Daily report** (Manage › Reports, first tab) covers one day; use **Previous day** and **Next day** to move between days. It shows:
+
+- **Sales**: orders, loads, money received (cash and GCash), dryer top-ups, expenses, net, and what is still owed.
+- **Checks**: loads sold against washer and dryer starts, loads still missing a start, owner overrides, test starts, starts with no answer, wrong PINs, and starts for voided or unpaid orders. If the counts do not match, this is where it shows.
+- **Loads by order**: for every order, which washer and dryer ran each load, at what time, and its top-ups.
+- **Machines**: everything each machine did that day, with the order, the load number and who started it, including starts that did not go out.
+
+**Print report** prints it on the receipt printer; **Share as text** sends it by Messenger or email.
+
 ### Backups
 
 Everything lives only on this tablet. Go to **Manage › Backup and import › Save a backup** at least once a week and keep the file somewhere else (Google Drive, email to yourself).
 
 ### Setting up machines
 
-**Manage › Machines**: add each machine with its type, its channel (the machine controller terminal it is wired to) and its start pulses. Use **Test** to send a machine's pulses without an order. Switch a machine off while it is broken so nobody gets sent to it; any order waiting on it is taken off. **Simulate machines** is for training; turn it off for real use.
+**Manage › Machines**: add each machine with its type, its channel (the machine controller terminal it is wired to), its start pulses and its **run time** in minutes (what the in-use countdown counts down). For dryers, also set the **top-up pulses** (how many pulses give the dryer 5 more minutes) and the **top-up price**; a price of 0 switches top-ups off. Use **Test** to send a machine's pulses without an order. Switch a machine off while it is broken so nobody can start it. **Simulate machines** is for training; turn it off for real use.
 
 **Start pulses.** A start works like dropping coins in the machine's slot: it sends a number of pulses, each a set length, with a gap between them. Set all three per machine: **Number of pulses** (1 to 50), **Pulse length** and **Gap between** (20 to 5000 milliseconds; 1000 ms is one second). The defaults are 1 pulse of 500 ms with a 500 ms gap.
 
@@ -98,4 +115,4 @@ The machine controller has 14 channels. Wire each machine to the terminal for it
 
 Leave the other terminals free: some of them switch on briefly while the board starts, which could start a machine.
 
-**Testing the machines (owner).** On the **Machines** tab the owner sees **Test start** on each free machine, which sends its pulses without an order and is logged as a test, and a **Testing** section with **Create test order**. A test order is Pay later, takes no supplies, and lets you try the staff flow: assign it to a machine, then **Start machine**. Tap **Void test order** when you are done so it does not stay in the open jobs. With the LED prototype, the LED stays off and blinks once per pulse.
+**Testing the machines (owner).** On the **Machines** tab the owner sees **Test start** on each free machine, which sends its pulses without an order, sets no countdown and is logged as a test, and a **Testing** section with **Create test order**. A test order is Pay later, takes no supplies, and lets you try the staff flow: tap a free machine, pick the test order and start it. Tap **Void test order** when you are done so it does not stay in the open jobs. With the LED prototype, the LED stays off and blinks once per pulse.
