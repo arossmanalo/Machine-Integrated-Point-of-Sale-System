@@ -28,7 +28,7 @@ import { DEVICE_ONLY_SETTINGS } from './settings';
 
 export const BACKUP_FORMAT = 'laundry-pos-backup';
 /** 2: machine run timers, dryer top-ups and the TOP_UP log kind. */
-export const BACKUP_VERSION = 3;
+export const BACKUP_VERSION = 4;
 
 function readAll(db: Db) {
   return {
@@ -135,7 +135,15 @@ const tableSchemas = {
     receivedAt: int,
     receivedByName: text,
   }),
-  expenses: z.object({ id: text, name: text, category: text, cost: int, incurredAt: int }),
+  expenses: z.object({
+    id: text,
+    name: text,
+    category: text,
+    cost: int,
+    incurredAt: int,
+    // Backups from before version 4 did not record who entered an expense.
+    recordedByName: maybeText.default(null),
+  }),
   settings: z.object({ key: text, value: text }),
   sequences: z.object({ name: text, next: int }),
   machines: z.object({

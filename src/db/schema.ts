@@ -115,6 +115,8 @@ export const expenses = sqliteTable('expenses', {
   category: text('category').notNull(),
   cost: integer('cost').notNull(),
   incurredAt: integer('incurred_at').notNull(),
+  /** Who typed it in; null for expenses from before this was kept and from the old app. */
+  recordedByName: text('recorded_by_name'),
 });
 
 /** Key-value settings stored as JSON text. */

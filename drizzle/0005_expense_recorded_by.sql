@@ -1,0 +1,1 @@
+ALTER TABLE `expenses` ADD `recorded_by_name` text;

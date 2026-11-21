@@ -21,6 +21,7 @@ export const can = {
   voidOrder: isManager,
   setAuditedStatus: isManager,
   manageInventoryItems: isManager,
+  manageExpenses: isManager,
   backdateOrder: ownerOnly,
   manageMachines: ownerOnly,
   viewUnlockLog: ownerOnly,

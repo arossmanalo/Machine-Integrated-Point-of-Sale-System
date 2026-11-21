@@ -4,8 +4,9 @@ import { centavosToInput, formatPeso, parsePesoInput } from '@/domain/money';
 import { can } from '@/domain/permissions';
 import { BUILT_IN_STATUSES, normalizeStatus, statusLabel } from '@/domain/statuses';
 import type { PrinterInfo } from '@/printing/ReceiptPrinter';
+import { setEmployeesRecordExpenses } from '@/services/expenses';
 import { getAllSettings, setSetting } from '@/services/settings';
-import { useApp } from '@/state/AppProvider';
+import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData } from '@/state/hooks';
 import { useToast } from '@/state/toast';
 import { Button } from '@/ui/Button';
@@ -23,6 +24,7 @@ export default function Settings() {
       <Screen>
         <PriceSection current={settings.pricePerLoad} />
         <StatusSection custom={settings.customStatuses} hidden={settings.hiddenStatuses} />
+        <ExpenseEntrySection allowed={settings.employeesRecordExpenses} />
         <PrinterSection
           enabled={settings.printingEnabled}
           printerName={settings.printerName}
@@ -32,6 +34,28 @@ export default function Settings() {
         />
       </Screen>
     </ManageScreen>
+  );
+}
+
+/** Owner only. Employees who may record expenses still never see the list or the totals. */
+function ExpenseEntrySection({ allowed }: { allowed: boolean }) {
+  const actor = useActor();
+  const action = useAction();
+  if (actor.role !== 'OWNER') return null;
+  return (
+    <Section title="Expenses">
+      <Toggle
+        label="Employees can record expenses"
+        description={
+          allowed
+            ? 'Employees see Record expense on the Today screen. They can only enter today\'s expenses, which are saved under their name. They cannot see, change or delete expenses.'
+            : 'Off: only you and admins can record expenses, in Reports and expenses.'
+        }
+        value={allowed}
+        onChange={(value) => void action.run((c) => setEmployeesRecordExpenses(c, actor, value))}
+      />
+      {action.error && <Notice tone="danger">{action.error}</Notice>}
+    </Section>
   );
 }
 

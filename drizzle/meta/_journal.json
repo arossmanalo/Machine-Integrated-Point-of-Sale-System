@@ -36,6 +36,13 @@
       "when": 1795266410751,
       "tag": "0004_order_receipt_codes",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1795269709301,
+      "tag": "0005_expense_recorded_by",
+      "breakpoints": true
     }
   ]
 }

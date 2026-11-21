@@ -25,6 +25,8 @@ const settingSchemas = {
   lockControllerKey: z.string(),
   /** When on, running a machine for an order needs that order's receipt QR code scanned. */
   requireReceiptScan: z.boolean(),
+  /** When on, employees can enter expenses (today's only); they still cannot see or delete them. */
+  employeesRecordExpenses: z.boolean(),
 };
 
 export type SettingKey = keyof typeof settingSchemas;
@@ -46,6 +48,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lockControllerAddress: '',
   lockControllerKey: '',
   requireReceiptScan: true,
+  employeesRecordExpenses: false,
 };
 
 function parseStored<K extends SettingKey>(key: K, raw: string | undefined): Settings[K] {

@@ -7,13 +7,15 @@ import { formatPeso } from '@/domain/money';
 import { can } from '@/domain/permissions';
 import { periodFigures } from '@/domain/reports';
 import { isClosedStatus } from '@/domain/statuses';
-import { listExpenses } from '@/services/expenses';
+import { canRecordExpenses, listExpenses } from '@/services/expenses';
 import { listInventory } from '@/services/inventory';
 import { listAllPayments, listOrderSummaries } from '@/services/orders';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useData } from '@/state/hooks';
+import { useToast } from '@/state/toast';
 import { Button } from '@/ui/Button';
 import { Dialog } from '@/ui/controls';
+import { ExpenseDialog } from '@/ui/expenses/ExpenseDialog';
 import { EmptyState, ListRow, Notice, Panel, Row, Screen, Section, Stat } from '@/ui/layout';
 import { BalanceBadge, StatusBadge } from '@/ui/StatusBadge';
 import { Text } from '@/ui/Text';
@@ -22,9 +24,13 @@ export default function Today() {
   const actor = useActor();
   const { ctx, controllerState } = useApp();
   const [lowStockDismissed, setLowStockDismissed] = useState(false);
+  const [recordingExpense, setRecordingExpense] = useState(false);
+  const toast = useToast();
   const data = useData((c) => {
     const summaries = listOrderSummaries(c);
     return {
+      // Managers record expenses in Reports and expenses; this is the employees' way in.
+      employeeExpenses: !can.manageExpenses(actor.role) && canRecordExpenses(c, actor.role),
       summaries,
       payments: listAllPayments(c),
       expenses: listExpenses(c),
@@ -106,6 +112,17 @@ export default function Today() {
           )}
         </Panel>
       </Section>
+
+      {data.employeeExpenses && (
+        <Section title="Expenses" description="Paid for something from the drawer today? Record it here.">
+          <Row>
+            <Button label="Record expense" kind="secondary" icon="cash-minus" onPress={() => setRecordingExpense(true)} />
+          </Row>
+        </Section>
+      )}
+      {recordingExpense && (
+        <ExpenseDialog onClose={() => setRecordingExpense(false)} onSaved={() => toast('Expense recorded', 'success')} />
+      )}
 
       <Dialog
         visible={data.lowStock.length > 0 && !lowStockDismissed}

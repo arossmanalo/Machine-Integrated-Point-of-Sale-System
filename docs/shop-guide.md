@@ -41,6 +41,10 @@ If the laundry is still damp, tap **Top up 5 min** on the dryer in **Machines**.
 
 Open the order (from **Orders** or the customer's history) and tap **Receive payment**. The app never takes more than what is owed.
 
+### Recording an expense
+
+If the owner allows it, the **Today** screen has **Record expense**. Enter what it was for, the category and the cost, then **Save expense**. It is saved for today under your name. You cannot see, change or delete expenses after saving; ask the owner or an admin to fix a mistake.
+
 ### When something goes wrong
 
 | What you see | What to do |
@@ -88,6 +92,10 @@ Money is counted on the day it was paid. Orders and loads are counted on the day
 - **Machines**: everything each machine did that day, with the order, the load number and who started it, including starts that did not go out.
 
 **Print report** prints it on the receipt printer. **Export PDF** makes an A4 PDF of the day (named like `daily-report-2026-11-21.pdf`) and opens the share menu, so you can save it to Drive or send it by Messenger or email. **Share as text** sends it as plain text.
+
+### Letting employees record expenses
+
+In **Manage › Shop settings › Expenses**, turn on **Employees can record expenses**. Employees then get **Record expense** on the Today screen. They can only enter today's expenses, saved under their name, and cannot see or delete any. The expense list in **Reports and expenses** shows who entered each one.
 
 ### Backups
 

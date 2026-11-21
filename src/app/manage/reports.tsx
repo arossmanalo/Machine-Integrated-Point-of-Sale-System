@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ScrollView, Share, StyleSheet, View } from 'react-native';
 
 import { formatShopDate, formatShopDayShort, MONTH_NAMES, toShopDate } from '@/domain/dates';
-import { formatPeso, parsePesoInput } from '@/domain/money';
+import { formatPeso } from '@/domain/money';
 import { can } from '@/domain/permissions';
 import {
   ALL_TIME,
@@ -15,12 +15,13 @@ import {
   type ReportData,
   type ReportPeriod,
 } from '@/domain/reports';
-import { addExpense, deleteExpense, EXPENSE_CATEGORIES, listExpenses } from '@/services/expenses';
+import { deleteExpense, listExpenses } from '@/services/expenses';
 import { listAllPayments, listOrderSummaries } from '@/services/orders';
-import { useApp } from '@/state/AppProvider';
+import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData } from '@/state/hooks';
 import { Button } from '@/ui/Button';
-import { Choice, Dialog, Stepper } from '@/ui/controls';
+import { Choice, Stepper } from '@/ui/controls';
+import { ExpenseDialog } from '@/ui/expenses/ExpenseDialog';
 import { EmptyState, ListRow, Notice, Panel, Row, Screen, Section, Stat } from '@/ui/layout';
 import { ManageScreen } from '@/ui/ManagerGate';
 import { DailyReportView } from '@/ui/reports/DailyReportView';
@@ -175,6 +176,7 @@ function YearTable({ data, now }: { data: ReportData; now: number }) {
 }
 
 function Expenses({ rows }: { rows: ReturnType<typeof listExpenses> }) {
+  const actor = useActor();
   const [adding, setAdding] = useState(false);
   const [query, setQuery] = useState('');
   const action = useAction();
@@ -191,7 +193,9 @@ function Expenses({ rows }: { rows: ReturnType<typeof listExpenses> }) {
             <ListRow
               key={expense.id}
               title={expense.name}
-              subtitle={`${expense.category} · ${formatShopDate(expense.incurredAt)}`}
+              subtitle={`${expense.category} · ${formatShopDate(expense.incurredAt)}${
+                expense.recordedByName ? ` · by ${expense.recordedByName}` : ''
+              }`}
               right={
                 <Row>
                   <Text variant="bodyStrong" tone="danger" numeric>
@@ -200,7 +204,7 @@ function Expenses({ rows }: { rows: ReturnType<typeof listExpenses> }) {
                   <Button
                     label="Delete"
                     kind="quiet"
-                    onPress={() => void action.run((c) => deleteExpense(c, expense.id))}
+                    onPress={() => void action.run((c) => deleteExpense(c, actor, expense.id))}
                   />
                 </Row>
               }
@@ -212,52 +216,6 @@ function Expenses({ rows }: { rows: ReturnType<typeof listExpenses> }) {
       {action.error && <Notice tone="danger">{action.error}</Notice>}
       {adding && <ExpenseDialog onClose={() => setAdding(false)} />}
     </Section>
-  );
-}
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-function ExpenseDialog({ onClose }: { onClose: () => void }) {
-  const { ctx } = useApp();
-  const action = useAction();
-  const [name, setName] = useState('');
-  const [category, setCategory] = useState<string>(EXPENSE_CATEGORIES[0]);
-  const [costText, setCostText] = useState('');
-  const [daysBack, setDaysBack] = useState(0);
-  const cost = parsePesoInput(costText);
-  const incurredAt = ctx.now() - daysBack * DAY_MS;
-  return (
-    <Dialog
-      visible
-      title="Record expense"
-      onClose={onClose}
-      actions={
-        <>
-          <Button label="Cancel" kind="secondary" onPress={onClose} />
-          <Button
-            label="Save expense"
-            busy={action.busy}
-            disabled={cost === null || !name.trim()}
-            onPress={async () => {
-              const result = await action.run((c) => addExpense(c, { name, category, cost: cost ?? 0, incurredAt }));
-              if (result.ok) onClose();
-            }}
-          />
-        </>
-      }
-    >
-      <TextField label="What for" value={name} onChangeText={setName} placeholder="For example: Meralco bill" />
-      <Choice label="Category" value={category} onChange={setCategory} options={EXPENSE_CATEGORIES.map((c) => ({ value: c, label: c }))} />
-      <TextField label="Cost" value={costText} onChangeText={setCostText} keyboardType="decimal-pad" prefix="₱" />
-      <Row>
-        <View style={{ flex: 1 }}>
-          <Text variant="label">Date</Text>
-          <Text tone="muted">{daysBack === 0 ? 'Today' : formatShopDate(incurredAt)}</Text>
-        </View>
-        <Stepper label="days back" value={daysBack} min={0} max={365} onChange={setDaysBack} />
-      </Row>
-      {action.error && <Notice tone="danger">{action.error}</Notice>}
-    </Dialog>
   );
 }
 

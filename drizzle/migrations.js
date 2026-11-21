@@ -6,6 +6,7 @@ import m0001 from './0001_inventory_add_on_flag.sql';
 import m0002 from './0002_machine_pulses_and_assignment.sql';
 import m0003 from './0003_machine_runs_and_top_ups.sql';
 import m0004 from './0004_order_receipt_codes.sql';
+import m0005 from './0005_expense_recorded_by.sql';
 
   export default {
     journal,
@@ -14,7 +15,8 @@ import m0004 from './0004_order_receipt_codes.sql';
 m0001,
 m0002,
 m0003,
-m0004
+m0004,
+m0005
     }
   }
   
