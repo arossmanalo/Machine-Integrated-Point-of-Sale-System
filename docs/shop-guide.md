@@ -76,6 +76,10 @@ For a rewash, a machine that did not start, or maintenance, go to **Machines**, 
 
 An unpaid order that was used to run machines is worth asking about.
 
+### Auditing orders
+
+Admins and the owner can audit a pending order straight from the **Orders** tab: tap its **Pending** badge, then **Mark as audited**. An audited order is closed (no more machine runs, not an open job). Employees cannot audit, and cannot change an audited order's status; only an admin or the owner can.
+
 ### Voiding an order
 
 Orders cannot be deleted, only voided with a reason (admin or owner). A voided order keeps its machine history, frees any machine still waiting on it, gives back the customer's loyalty loads and the add-on stock, and its payments stop counting as money received.

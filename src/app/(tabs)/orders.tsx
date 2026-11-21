@@ -1,21 +1,25 @@
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { router } from 'expo-router';
 import { useState } from 'react';
+import { Pressable, StyleSheet } from 'react-native';
 
 import { formatShopDate, formatShopDayShort, inRange, isSameShopDay } from '@/domain/dates';
 import { formatPeso } from '@/domain/money';
 import { can } from '@/domain/permissions';
 import { periodRange, type ReportPeriod } from '@/domain/reports';
 import { selectableStatuses, statusLabel } from '@/domain/statuses';
-import { listOrderSummaries } from '@/services/orders';
+import { listOrderSummaries, updateOrderStatus } from '@/services/orders';
 import { getAllSettings } from '@/services/settings';
 import { useActor, useApp } from '@/state/AppProvider';
-import { useData } from '@/state/hooks';
+import { useAction, useData } from '@/state/hooks';
+import { useToast } from '@/state/toast';
 import { Button } from '@/ui/Button';
-import { Choice } from '@/ui/controls';
-import { EmptyState, ListRow, Panel, Row, Screen, Section } from '@/ui/layout';
+import { Choice, Dialog } from '@/ui/controls';
+import { EmptyState, ListRow, Notice, Panel, Row, Screen, Section } from '@/ui/layout';
 import { BalanceBadge, StatusBadge } from '@/ui/StatusBadge';
 import { Text } from '@/ui/Text';
 import { TextField } from '@/ui/TextField';
+import { colors, MIN_TOUCH, radius, space } from '@/ui/theme';
 
 type PaymentFilter = 'all' | 'unpaid' | 'paid' | 'voided';
 type DateFilter = 'all' | ReportPeriod;
@@ -29,6 +33,8 @@ export default function Orders() {
   const [payment, setPayment] = useState<PaymentFilter>('all');
   const [dates, setDates] = useState<DateFilter>('all');
   const [shown, setShown] = useState(PAGE);
+  const [auditing, setAuditing] = useState<{ id: string; customerName: string } | null>(null);
+  const canAudit = can.setAuditedStatus(actor.role);
   const { summaries, statuses } = useData((c) => {
     const settings = getAllSettings(c.db);
     return {
@@ -144,7 +150,20 @@ export default function Orders() {
                 right={
                   <Row>
                     {s.order.voidedAt === null && <BalanceBadge balance={s.balance} />}
-                    <StatusBadge status={s.order.status} voided={s.order.voidedAt !== null} />
+                    {canAudit && s.order.voidedAt === null && s.order.status === 'PENDING' ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`${s.order.id} is pending. Mark as audited`}
+                        onPress={() => setAuditing({ id: s.order.id, customerName: s.customerName })}
+                        hitSlop={space.md}
+                        style={({ pressed }) => [styles.statusButton, pressed && styles.pressed]}
+                      >
+                        <StatusBadge status={s.order.status} />
+                        <MaterialCommunityIcons name="chevron-down" size={18} color={colors.textMuted} />
+                      </Pressable>
+                    ) : (
+                      <StatusBadge status={s.order.status} voided={s.order.voidedAt !== null} />
+                    )}
                   </Row>
                 }
                 onPress={() => router.push(`/orders/${s.order.id}`)}
@@ -157,6 +176,55 @@ export default function Orders() {
           <Button label={`Show ${Math.min(PAGE, filtered.length - shown)} more`} kind="secondary" onPress={() => setShown(shown + PAGE)} />
         )}
       </Section>
+      {auditing && <AuditDialog order={auditing} onClose={() => setAuditing(null)} />}
     </Screen>
   );
 }
+
+/** Admins and the owner sign off a pending order straight from the list. */
+function AuditDialog({ order, onClose }: { order: { id: string; customerName: string }; onClose: () => void }) {
+  const actor = useActor();
+  const action = useAction();
+  const toast = useToast();
+
+  async function audit() {
+    const result = await action.run((c) => updateOrderStatus(c, actor, order.id, 'AUDITED'));
+    if (result.ok) {
+      toast(`${order.id} marked as audited`, 'success');
+      onClose();
+    }
+  }
+
+  return (
+    <Dialog
+      visible
+      title={`Mark ${order.id} as audited?`}
+      onClose={onClose}
+      actions={
+        <>
+          <Button label="Cancel" kind="secondary" onPress={onClose} />
+          <Button label="Mark as audited" onPress={() => void audit()} busy={action.busy} />
+        </>
+      }
+    >
+      <Text>{order.customerName}</Text>
+      <Text tone="muted">
+        The order closes: it leaves the open jobs and can no longer run machines. Only an admin or the owner can
+        change it back.
+      </Text>
+      {action.error && <Notice tone="danger">{action.error}</Notice>}
+    </Dialog>
+  );
+}
+
+const styles = StyleSheet.create({
+  statusButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    minHeight: MIN_TOUCH,
+    paddingHorizontal: space.xs,
+    borderRadius: radius.sm,
+  },
+  pressed: { backgroundColor: colors.surfaceSunken },
+});

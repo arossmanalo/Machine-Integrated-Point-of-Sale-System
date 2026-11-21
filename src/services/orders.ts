@@ -371,7 +371,11 @@ export function updateOrderStatus(
     can.setAuditedStatus(actor.role),
   );
   if (!allowed.includes(next)) throw new UserFacingError('You cannot set that status.');
-  requireOpenOrder(ctx.db, orderId);
+  const order = requireOpenOrder(ctx.db, orderId);
+  // An audit is the manager's sign-off, so only a manager can take an order out of it again.
+  if (order.status === 'AUDITED' && !can.setAuditedStatus(actor.role)) {
+    throw new UserFacingError('This order was audited. Only an admin or the owner can change its status.');
+  }
   ctx.db.transaction((tx) => {
     tx.update(orders).set({ status: next }).where(eq(orders.id, orderId)).run();
     if (isClosedStatus(next)) releaseMachines(tx, orderId);

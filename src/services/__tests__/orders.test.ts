@@ -183,6 +183,9 @@ describe('status and void', () => {
     expect(() => updateOrderStatus(ctx, testEmployee, created.id, 'AUDITED')).toThrow();
     updateOrderStatus(ctx, testOwner, created.id, 'audited');
     expect(getOrderDetail(ctx, created.id)?.order.status).toBe('AUDITED');
+    expect(() => updateOrderStatus(ctx, testEmployee, created.id, 'PENDING')).toThrow('was audited');
+    updateOrderStatus(ctx, testOwner, created.id, 'PENDING');
+    expect(getOrderDetail(ctx, created.id)?.order.status).toBe('PENDING');
   });
 
   it('voiding undoes loyalty and returns add-on stock, and needs a reason', () => {
