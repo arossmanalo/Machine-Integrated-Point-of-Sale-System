@@ -3,22 +3,21 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { MachineRow } from '@/db/schema';
-import { MACHINE_TYPE_LABELS, machineAllowance, type MachineType } from '@/domain/machinePolicy';
+import { isRunning, MACHINE_TYPE_LABELS, machineAllowance, minutesLeft, type MachineType } from '@/domain/machinePolicy';
 import { isClosedStatus } from '@/domain/statuses';
 import type { StartResult } from '@/machines/MachineController';
 import {
-  assignOrder,
   listMachines,
   machineUsage,
   OVERRIDE_REASONS,
   overrideStart,
   RESULT_MESSAGES,
-  unassignMachine,
+  startOrderOnMachine,
   type OverrideReason,
 } from '@/services/machines';
 import { getOrderDetail, listOrderSummaries } from '@/services/orders';
 import { useActor, useApp } from '@/state/AppProvider';
-import { useAction, useData } from '@/state/hooks';
+import { useAction, useData, useNow } from '@/state/hooks';
 import { useToast } from '@/state/toast';
 
 import { Button } from '../Button';
@@ -39,14 +38,36 @@ export function useReportStart() {
 /** Dryers sit on top of washers in the shop, so the window shows them in that order. */
 const SHOP_ROWS: readonly MachineType[] = ['DRYER', 'WASHER'];
 
+function machineIcon(type: MachineType) {
+  return type === 'WASHER' ? 'washing-machine' : 'tumble-dryer';
+}
+
+/** The one question before pulses go out, so a stray tap cannot start the wrong machine. */
+function ConfirmStart({ machine, orderId, customerName }: { machine: MachineRow; orderId: string; customerName: string }) {
+  return (
+    <View style={styles.confirm}>
+      <MaterialCommunityIcons name={machineIcon(machine.type)} size={40} color={colors.accent} />
+      <Text variant="heading">{`Start ${machine.name} for ${orderId}?`}</Text>
+      <Text>{customerName}</Text>
+      <Text tone="muted">
+        {`Load the laundry and close the door first. ${machine.name} starts as soon as you tap Start and runs for ` +
+          `${machine.runMinutes} minutes.`}
+      </Text>
+    </View>
+  );
+}
+
 /**
- * From an order: put it on machines. Shows the registered dryers on top and washers below, the
- * way they are stacked in the shop. Starting happens on the Machines tab.
+ * From an order: pick a machine and start it. Shows the registered dryers on top and washers
+ * below, the way they are stacked in the shop.
  */
-export function AssignMachineDialog({ orderId, onClose }: { orderId: string; onClose: () => void }) {
+export function StartMachineDialog({ orderId, onClose }: { orderId: string; onClose: () => void }) {
   const actor = useActor();
+  const { controller } = useApp();
   const action = useAction();
-  const toast = useToast();
+  const report = useReportStart();
+  const now = useNow(15000);
+  const [chosen, setChosen] = useState<MachineRow | null>(null);
   const data = useData(
     (c) => {
       const detail = getOrderDetail(c, orderId);
@@ -54,56 +75,72 @@ export function AssignMachineDialog({ orderId, onClose }: { orderId: string; onC
         machines: listMachines(c),
         usage: machineUsage(c, orderId),
         allowance: detail ? machineAllowance(detail.order) : 0,
+        customerName: detail?.customerName ?? '',
       };
     },
     [orderId],
   );
 
-  async function assign(machine: MachineRow) {
-    const result = await action.run((c) => assignOrder(c, actor, orderId, machine.id));
-    if (result.ok) toast(`${orderId} is on ${machine.name}. Start it from the Machines tab.`);
+  async function start(machine: MachineRow) {
+    const result = await action.run((c) => startOrderOnMachine(c, controller, actor, orderId, machine.id));
+    if (!result.ok) return;
+    report(result.value, machine.name);
+    setChosen(null);
+    if (result.value === 'acked' || result.value === 'timeout') onClose();
   }
 
-  async function remove(machine: MachineRow) {
-    const result = await action.run((c) => unassignMachine(c, machine.id));
-    if (result.ok) toast(`${orderId} taken off ${machine.name}`);
-  }
+  const actions = chosen ? (
+    <>
+      <Button label="Back" kind="secondary" onPress={() => setChosen(null)} />
+      <Button label={`Start ${chosen.name}`} icon="play" onPress={() => void start(chosen)} busy={action.busy} />
+    </>
+  ) : (
+    <Button label="Close" kind="secondary" onPress={onClose} />
+  );
 
   return (
-    <Dialog
-      visible
-      title={`Assign ${orderId} to a machine`}
-      onClose={onClose}
-      actions={<Button label="Done" onPress={onClose} />}
-    >
-      <Text tone="muted">
-        {`Each load allows one washer and one dryer. Used: ${data.usage.WASHER} of ${data.allowance} washers, ` +
-          `${data.usage.DRYER} of ${data.allowance} dryers.`}
-      </Text>
-      {data.machines.length === 0 ? (
-        <EmptyState icon="washing-machine-off" title="No machines set up" body="The owner adds machines in Manage, Machines." />
+    <Dialog visible title={`Start a machine for ${orderId}`} onClose={onClose} actions={actions}>
+      {chosen ? (
+        <ConfirmStart machine={chosen} orderId={orderId} customerName={data.customerName} />
       ) : (
-        SHOP_ROWS.map((type) => {
-          const row = data.machines.filter((m) => m.type === type);
-          if (row.length === 0) return null;
-          return (
-            <View key={type} style={styles.shopRow}>
-              <Text variant="label" tone="muted">{`${MACHINE_TYPE_LABELS[type]}s`}</Text>
-              <View style={styles.tiles}>
-                {row.map((machine) => (
-                  <MachineTile
-                    key={machine.id}
-                    machine={machine}
-                    orderId={orderId}
-                    busy={action.busy}
-                    onAssign={() => void assign(machine)}
-                    onRemove={() => void remove(machine)}
-                  />
-                ))}
-              </View>
-            </View>
-          );
-        })
+        <>
+          <Text tone="muted">
+            {`Each load allows one washer and one dryer. Used: ${data.usage.WASHER} of ${data.allowance} washers, ` +
+              `${data.usage.DRYER} of ${data.allowance} dryers.`}
+          </Text>
+          {data.machines.length === 0 ? (
+            <EmptyState
+              icon="washing-machine-off"
+              title="No machines set up"
+              body="The owner adds machines in Manage, Machines."
+            />
+          ) : (
+            SHOP_ROWS.map((type) => {
+              const row = data.machines.filter((m) => m.type === type);
+              if (row.length === 0) return null;
+              return (
+                <View key={type} style={styles.shopRow}>
+                  <Text variant="label" tone="muted">{`${MACHINE_TYPE_LABELS[type]}s`}</Text>
+                  <View style={styles.tiles}>
+                    {row.map((machine) => (
+                      <MachineTile
+                        key={machine.id}
+                        machine={machine}
+                        orderId={orderId}
+                        now={now}
+                        busy={action.busy}
+                        onChoose={() => {
+                          action.clearError();
+                          setChosen(machine);
+                        }}
+                      />
+                    ))}
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </>
       )}
       {action.error && <Notice tone="danger">{action.error}</Notice>}
     </Dialog>
@@ -113,53 +150,56 @@ export function AssignMachineDialog({ orderId, onClose }: { orderId: string; onC
 function MachineTile({
   machine,
   orderId,
+  now,
   busy,
-  onAssign,
-  onRemove,
+  onChoose,
 }: {
   machine: MachineRow;
   orderId: string;
+  now: number;
   busy: boolean;
-  onAssign: () => void;
-  onRemove: () => void;
+  onChoose: () => void;
 }) {
+  const running = isRunning(machine, now);
+  const waitingOther = machine.assignedOrderId !== null && machine.assignedOrderId !== orderId;
   const mine = machine.assignedOrderId === orderId;
-  const free = machine.enabled && machine.assignedOrderId === null;
+  const free = machine.enabled && !running && !waitingOther;
   const state = !machine.enabled
     ? 'Switched off'
-    : mine
-      ? 'Assigned to this order'
-      : machine.assignedOrderId !== null
-        ? `Has ${machine.assignedOrderId}`
-        : 'Free';
+    : running
+      ? `In use, ${minutesLeft(machine, now)} min left${machine.runOrderId ? ` · ${machine.runOrderId}` : ''}`
+      : waitingOther
+        ? `Waiting to start ${machine.assignedOrderId}`
+        : mine
+          ? 'Did not start yet. Tap to try again.'
+          : 'Free';
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`${machine.name}, ${state}`}
       disabled={!free || busy}
-      onPress={onAssign}
+      onPress={onChoose}
       style={({ pressed }) => [
         styles.tile,
         mine && styles.tileMine,
-        !free && !mine && styles.tileOff,
+        !free && styles.tileOff,
         pressed && { backgroundColor: colors.surfaceSunken },
       ]}
     >
       <MaterialCommunityIcons
-        name={machine.type === 'WASHER' ? 'washing-machine' : 'tumble-dryer'}
+        name={machineIcon(machine.type)}
         size={28}
-        color={mine ? colors.accent : free ? colors.text : colors.textMuted}
+        color={free ? colors.accent : colors.textMuted}
       />
       <Text variant="bodyStrong">{machine.name}</Text>
-      <Text variant="caption" tone={mine ? 'accent' : 'muted'}>
+      <Text variant="caption" tone={running ? 'warning' : mine ? 'accent' : 'muted'}>
         {state}
       </Text>
-      {mine && <Button label="Remove" kind="quiet" onPress={onRemove} busy={busy} />}
     </Pressable>
   );
 }
 
-/** From the machine grid: pick the order this machine will run. */
+/** From the machine grid: pick the order this machine runs, confirm, and start it. */
 export function OrderPickerDialog({
   machine,
   onClose,
@@ -170,8 +210,10 @@ export function OrderPickerDialog({
   onOverride: () => void;
 }) {
   const actor = useActor();
+  const { controller } = useApp();
   const action = useAction();
-  const toast = useToast();
+  const report = useReportStart();
+  const [chosen, setChosen] = useState<{ orderId: string; customerName: string } | null>(null);
   const candidates = useData(
     (c) =>
       listOrderSummaries(c)
@@ -185,53 +227,63 @@ export function OrderPickerDialog({
     [machine.type],
   );
 
-  async function assign(orderId: string) {
-    const result = await action.run((c) => assignOrder(c, actor, orderId, machine.id));
-    if (result.ok) {
-      toast(`${orderId} is on ${machine.name}. Tap Start machine when it is loaded.`);
-      onClose();
-    }
+  async function start(orderId: string) {
+    const result = await action.run((c) => startOrderOnMachine(c, controller, actor, orderId, machine.id));
+    if (!result.ok) return;
+    report(result.value, machine.name);
+    if (result.value === 'acked' || result.value === 'timeout') onClose();
+    else setChosen(null);
   }
 
   const label = MACHINE_TYPE_LABELS[machine.type].toLowerCase();
+  const actions = chosen ? (
+    <>
+      <Button label="Back" kind="secondary" onPress={() => setChosen(null)} />
+      <Button label={`Start ${machine.name}`} icon="play" onPress={() => void start(chosen.orderId)} busy={action.busy} />
+    </>
+  ) : (
+    <>
+      <Button label="Owner override" kind="secondary" icon="shield-key-outline" onPress={onOverride} />
+      <Button label="Close" kind="secondary" onPress={onClose} />
+    </>
+  );
   return (
-    <Dialog
-      visible
-      title={`Assign an order to ${machine.name}`}
-      onClose={onClose}
-      actions={
-        <>
-          <Button label="Owner override" kind="secondary" icon="shield-key-outline" onPress={onOverride} />
-          <Button label="Close" kind="secondary" onPress={onClose} />
-        </>
-      }
-    >
-      <Text tone="muted">Pick the order this load belongs to. No order, no start.</Text>
-      {candidates.length === 0 ? (
-        <EmptyState
-          icon="receipt-text-outline"
-          title={`No open orders need a ${label}`}
-          body="Take the order first with New order. For a rewash or a machine that did not start, use the owner override."
-        />
+    <Dialog visible title={`Start ${machine.name}`} onClose={onClose} actions={actions}>
+      {chosen ? (
+        <ConfirmStart machine={machine} orderId={chosen.orderId} customerName={chosen.customerName} />
       ) : (
-        <Panel>
-          {candidates.slice(0, 12).map(({ summary, allowance, used }, index, list) => (
-            <ListRow
-              key={summary.order.id}
-              title={summary.customerName}
-              subtitle={`${summary.order.id} · ${used} of ${allowance} ${label}s used`}
-              meta={
-                summary.balance > 0 ? (
-                  <Text variant="caption" tone="warning">
-                    Not fully paid
-                  </Text>
-                ) : undefined
-              }
-              onPress={() => void assign(summary.order.id)}
-              last={index === list.length - 1}
+        <>
+          <Text tone="muted">Pick the order this load belongs to. No order, no start.</Text>
+          {candidates.length === 0 ? (
+            <EmptyState
+              icon="receipt-text-outline"
+              title={`No open orders need a ${label}`}
+              body="Take the order first with New order. For a rewash or a machine that did not start, use the owner override."
             />
-          ))}
-        </Panel>
+          ) : (
+            <Panel>
+              {candidates.slice(0, 12).map(({ summary, allowance, used }, index, list) => (
+                <ListRow
+                  key={summary.order.id}
+                  title={summary.customerName}
+                  subtitle={`${summary.order.id} · ${used} of ${allowance} ${label}s used`}
+                  meta={
+                    summary.balance > 0 ? (
+                      <Text variant="caption" tone="warning">
+                        Not fully paid
+                      </Text>
+                    ) : undefined
+                  }
+                  onPress={() => {
+                    action.clearError();
+                    setChosen({ orderId: summary.order.id, customerName: summary.customerName });
+                  }}
+                  last={index === list.length - 1}
+                />
+              ))}
+            </Panel>
+          )}
+        </>
       )}
       {action.error && <Notice tone="danger">{action.error}</Notice>}
     </Dialog>
@@ -280,8 +332,8 @@ export function OverrideDialog({
       }
     >
       <Text tone="muted">
-        Starts the machine without an order. The owner enters the PIN. This start and any wrong PIN are recorded with
-        your name.
+        Starts the machine without an order, even while it is in use. The owner enters the PIN. This start and any
+        wrong PIN are recorded with your name.
       </Text>
       <Choice
         label="Reason"
@@ -325,4 +377,5 @@ const styles = StyleSheet.create({
   },
   tileMine: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
   tileOff: { opacity: 0.55 },
+  confirm: { gap: space.sm, paddingVertical: space.sm },
 });

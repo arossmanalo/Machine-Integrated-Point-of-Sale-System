@@ -34,6 +34,7 @@ const KIND_LABELS: Record<MachineUnlockRow['kind'], string> = {
   OVERRIDE: 'Override',
   OVERRIDE_DENIED: 'Override refused',
   TEST: 'Test start',
+  TOP_UP: 'Dryer top-up',
 };
 
 export default function MachineLog() {

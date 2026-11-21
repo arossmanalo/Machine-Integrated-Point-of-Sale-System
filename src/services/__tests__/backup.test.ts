@@ -6,7 +6,7 @@ import { createCustomer, listCustomers } from '../customers';
 import { detectBackupKind, exportBackup, importLegacyExport, restoreBackup } from '../backup';
 import { listExpenses } from '../expenses';
 import { listInventory } from '../inventory';
-import { addMachine, assignOrder, listMachineLog, listMachines, startMachine } from '../machines';
+import { addMachine, listMachineLog, listMachines, startOrderOnMachine, topUpDryer } from '../machines';
 import { createOrder, getOrderDetail, listOrderSummaries } from '../orders';
 import { getSetting, setSetting } from '../settings';
 
@@ -139,7 +139,7 @@ describe('full backup', () => {
     const { ctx, owner } = await setup();
     importLegacyExport(ctx, owner, legacyExport);
     setSetting(ctx.db, 'pricePerLoad', 25000);
-    const pulses = { pulseCount: 2, pulseOnMs: 300, pulseOffMs: 400 };
+    const pulses = { pulseCount: 2, pulseOnMs: 300, pulseOffMs: 400, runMinutes: 35, topUpPulseCount: 2, topUpPrice: 2000 };
     const machineId = addMachine(ctx, owner, { name: 'Washer 1', type: 'WASHER', hardwareChannel: 1, enabled: true, ...pulses });
     const dryerId = addMachine(ctx, owner, { name: 'Dryer 1', type: 'DRYER', hardwareChannel: 2, enabled: true, ...pulses });
     const order = createOrder(ctx, testEmployee, {
@@ -156,22 +156,28 @@ describe('full backup', () => {
     });
     const controller = new MockMachineController(0);
     await controller.connect();
-    assignOrder(ctx, testEmployee, order.id, machineId);
-    await startMachine(ctx, controller, testEmployee, machineId);
-    assignOrder(ctx, testEmployee, order.id, dryerId);
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, machineId);
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryerId);
+    await topUpDryer(ctx, controller, testEmployee, dryerId);
 
     const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
     expect(detectBackupKind(backup)).toBe('backup');
 
     const fresh = createTestContext();
     const summary = restoreBackup(fresh, owner, backup);
-    expect(summary).toEqual({ orders: 3, customers: 3, unlocks: 1 });
+    expect(summary).toEqual({ orders: 3, customers: 3, unlocks: 3 });
     expect(listOrderSummaries(fresh)).toEqual(listOrderSummaries(ctx));
-    expect(listMachineLog(fresh, { start: 0, end: Number.MAX_SAFE_INTEGER })).toHaveLength(1);
+    expect(listMachineLog(fresh, { start: 0, end: Number.MAX_SAFE_INTEGER })).toEqual(
+      listMachineLog(ctx, { start: 0, end: Number.MAX_SAFE_INTEGER }),
+    );
     expect(listMachines(fresh)).toEqual(listMachines(ctx));
-    expect(listMachines(fresh).find((m) => m.id === dryerId)).toMatchObject({ assignedOrderId: order.id, pulseCount: 2 });
+    expect(listMachines(fresh).find((m) => m.id === dryerId)).toMatchObject({
+      runOrderId: order.id,
+      runMinutes: 35,
+      topUpPrice: 2000,
+    });
 
-    // Restoring over data that has a machine waiting on an order must also work.
+    // Restoring over data whose machines point at orders must also work.
     expect(() => restoreBackup(fresh, owner, backup)).not.toThrow();
     expect(getSetting(fresh.db, 'pricePerLoad')).toBe(25000);
     await expect(logIn(fresh, 'Aryl', 'secret123')).resolves.toMatchObject({ role: 'OWNER' });
@@ -179,16 +185,47 @@ describe('full backup', () => {
 
   it('gives machines from a backup made before pulse starts the default pulses', async () => {
     const { ctx, owner } = await setup();
-    addMachine(ctx, owner, { name: 'Washer 1', type: 'WASHER', hardwareChannel: 1, enabled: true, pulseCount: 4, pulseOnMs: 100, pulseOffMs: 100 });
+    addMachine(ctx, owner, {
+      name: 'Washer 1',
+      type: 'WASHER',
+      hardwareChannel: 1,
+      enabled: true,
+      pulseCount: 4,
+      pulseOnMs: 100,
+      pulseOffMs: 100,
+      runMinutes: 30,
+      topUpPulseCount: 1,
+      topUpPrice: 0,
+    });
     const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
     for (const row of backup.tables.machines) {
-      for (const key of ['pulseCount', 'pulseOnMs', 'pulseOffMs', 'assignedOrderId', 'assignedAt', 'assignedByName']) {
+      for (const key of [
+        'pulseCount',
+        'pulseOnMs',
+        'pulseOffMs',
+        'assignedOrderId',
+        'assignedAt',
+        'assignedByName',
+        'runMinutes',
+        'topUpPulseCount',
+        'topUpPrice',
+        'runOrderId',
+        'runEndsAt',
+      ]) {
         delete row[key];
       }
     }
     const fresh = createTestContext();
     restoreBackup(fresh, owner, backup);
-    expect(listMachines(fresh)[0]).toMatchObject({ pulseCount: 1, pulseOnMs: 500, pulseOffMs: 500, assignedOrderId: null });
+    expect(listMachines(fresh)[0]).toMatchObject({
+      pulseCount: 1,
+      pulseOnMs: 500,
+      pulseOffMs: 500,
+      assignedOrderId: null,
+      runMinutes: 40,
+      topUpPrice: 0,
+      runEndsAt: null,
+    });
   });
 
   it('treats priced items in a backup from before the add-on switch as add-ons', async () => {

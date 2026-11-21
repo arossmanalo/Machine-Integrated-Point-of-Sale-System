@@ -1,18 +1,25 @@
-import { and, asc, desc, eq, gte, inArray, lt, ne, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lt, ne, or, sql } from 'drizzle-orm';
 
 import { can } from '@/domain/permissions';
 import {
   decideAssignment,
   decideStart,
+  decideTopUp,
+  endAfterTopUp,
+  isRunning,
   MACHINE_TYPES,
+  RUN_MINUTES_LIMITS,
+  TOP_UP_MINUTES,
   type MachineType,
   type PolicyOrder,
 } from '@/domain/machinePolicy';
+import { formatPeso } from '@/domain/money';
 import { isValidChannel, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress, pulsesProblem } from '@/machines/protocol';
 import type { MachineController, PulseSettings, StartResult } from '@/machines/MachineController';
 import {
   machines,
   machineUnlocks,
+  orderItems,
   orders,
   type MachineRow,
   type MachineUnlockRow,
@@ -58,6 +65,14 @@ export function pulsesOf(machine: MachineRow): PulseSettings {
   return { count: machine.pulseCount, onMs: machine.pulseOnMs, offMs: machine.pulseOffMs };
 }
 
+/** A top-up uses the dryer's own pulse length and gap, with its own count. */
+export function topUpPulsesOf(machine: MachineRow): PulseSettings {
+  return { count: machine.topUpPulseCount, onMs: machine.pulseOnMs, offMs: machine.pulseOffMs };
+}
+
+/** Top-ups cost at most this much, to catch a price typed in centavos by mistake. */
+const MAX_TOP_UP_PRICE = 100000;
+
 // ---------- Machine list ----------
 
 export interface MachineInput {
@@ -68,6 +83,10 @@ export interface MachineInput {
   pulseCount: number;
   pulseOnMs: number;
   pulseOffMs: number;
+  runMinutes: number;
+  /** Checked for dryers only; washers keep whatever is stored. */
+  topUpPulseCount: number;
+  topUpPrice: number;
 }
 
 export function listMachines(ctx: ServiceContext): MachineRow[] {
@@ -87,6 +106,23 @@ function checkMachine(db: Db, input: MachineInput, editingId: number | null): Ma
   }
   const problem = pulsesProblem({ count: input.pulseCount, onMs: input.pulseOnMs, offMs: input.pulseOffMs });
   if (problem) throw new UserFacingError(problem);
+  const { min, max } = RUN_MINUTES_LIMITS;
+  if (!Number.isInteger(input.runMinutes) || input.runMinutes < min || input.runMinutes > max) {
+    throw new UserFacingError(`Run time must be a whole number of minutes from ${min} to ${max}.`);
+  }
+  if (input.type === 'DRYER') {
+    const topUpProblem = pulsesProblem({
+      count: input.topUpPulseCount,
+      onMs: input.pulseOnMs,
+      offMs: input.pulseOffMs,
+    });
+    if (topUpProblem) throw new UserFacingError(`Top-up: ${topUpProblem}`);
+    if (!Number.isInteger(input.topUpPrice) || input.topUpPrice < 0 || input.topUpPrice > MAX_TOP_UP_PRICE) {
+      throw new UserFacingError(
+        `The top-up price must be from ${formatPeso(0)} to ${formatPeso(MAX_TOP_UP_PRICE)}.`,
+      );
+    }
+  }
   const clash = db
     .select()
     .from(machines)
@@ -215,6 +251,7 @@ export function assignOrder(ctx: ServiceContext, actor: Actor, orderId: string, 
       order: policyOrder(order),
       machine,
       usedOfType: machineUsage(txCtx, orderId)[machine.type],
+      now: ctx.now(),
     });
     if (!decision.allowed) throw new UserFacingError(decision.message);
     tx.update(machines)
@@ -244,6 +281,7 @@ interface LogEntry {
   result: UnlockResultCode;
   overrideReason?: string | null;
   overrideNote?: string | null;
+  charge?: number | null;
 }
 
 function writeLog(ctx: ServiceContext, entry: LogEntry): number {
@@ -263,6 +301,7 @@ function writeLog(ctx: ServiceContext, entry: LogEntry): number {
       overrideNote: entry.overrideNote ?? null,
       result: entry.result,
       resolvedAt: entry.result === 'PENDING' ? null : ctx.now(),
+      charge: entry.charge ?? null,
     })
     .returning({ id: machineUnlocks.id })
     .get();
@@ -275,10 +314,11 @@ async function sendAndRecord(
   controller: MachineController,
   logId: number,
   machine: MachineRow,
+  pulses: PulseSettings = pulsesOf(machine),
 ): Promise<StartResult> {
   let result: StartResult;
   try {
-    result = await controller.start(machine.hardwareChannel, pulsesOf(machine));
+    result = await controller.start(machine.hardwareChannel, pulses);
   } catch {
     // Controllers report failures as results; an exception here means the link broke mid-send.
     result = 'timeout';
@@ -293,6 +333,19 @@ async function sendAndRecord(
 
 function isReady(controller: MachineController): boolean {
   return controller.state().status === 'ready';
+}
+
+/** In use from now for the machine's run time, for this order (null for an override without one). */
+function runFields(machine: MachineRow, orderId: string | null, now: number) {
+  return { runOrderId: orderId, runEndsAt: now + machine.runMinutes * 60000 };
+}
+
+/** Puts back the run that a start replaced, when the start sent nothing. */
+function restoreRun(db: Db, machine: MachineRow): void {
+  db.update(machines)
+    .set({ runOrderId: machine.runOrderId, runEndsAt: machine.runEndsAt })
+    .where(eq(machines.id, machine.id))
+    .run();
 }
 
 /**
@@ -313,12 +366,17 @@ export async function startMachine(
       machine.assignedOrderId === null
         ? undefined
         : tx.select().from(orders).where(eq(orders.id, machine.assignedOrderId)).get();
-    const decision = decideStart(machine, policyOrder(order));
+    const decision = decideStart(machine, policyOrder(order), ctx.now());
     if (!decision.allowed || machine.assignedOrderId === null) {
       throw new UserFacingError(decision.allowed ? 'Assign an order first.' : decision.message);
     }
     tx.update(machines)
-      .set({ assignedOrderId: null, assignedAt: null, assignedByName: null })
+      .set({
+        assignedOrderId: null,
+        assignedAt: null,
+        assignedByName: null,
+        ...runFields(machine, machine.assignedOrderId, ctx.now()),
+      })
       .where(eq(machines.id, machineId))
       .run();
     const logId = writeLog(
@@ -330,6 +388,7 @@ export async function startMachine(
   const result = await sendAndRecord(ctx, controller, claimed.logId, claimed.machine);
   if (NOTHING_SENT.includes(result)) {
     // Nothing started, so the order goes back on the machine, unless someone reassigned it since.
+    restoreRun(ctx.db, claimed.machine);
     ctx.db
       .update(machines)
       .set({
@@ -341,6 +400,97 @@ export async function startMachine(
       .run();
   }
   return result;
+}
+
+/**
+ * Assigning an order to a machine starts it straight away. If the start sends nothing (offline,
+ * busy, refused), the order stays on the machine so Start machine on the Machines tab can retry.
+ */
+export async function startOrderOnMachine(
+  ctx: ServiceContext,
+  controller: MachineController,
+  actor: Actor,
+  orderId: string,
+  machineId: number,
+): Promise<StartResult> {
+  const machine = requireMachine(ctx.db, machineId);
+  if (machine.assignedOrderId !== orderId) assignOrder(ctx, actor, orderId, machineId);
+  return startMachine(ctx, controller, actor, machineId);
+}
+
+/**
+ * Adds TOP_UP_MINUTES to a dryer for the order of its latest run, sends the dryer's top-up
+ * pulses and puts the charge on that order's bill. The charge comes off again if nothing was sent.
+ */
+export async function topUpDryer(
+  ctx: ServiceContext,
+  controller: MachineController,
+  actor: Actor,
+  machineId: number,
+): Promise<StartResult> {
+  if (!isReady(controller)) return 'not-connected';
+  const claimed = ctx.db.transaction((tx) => {
+    const machine = requireMachine(tx, machineId);
+    const order =
+      machine.runOrderId === null
+        ? undefined
+        : tx.select().from(orders).where(eq(orders.id, machine.runOrderId)).get();
+    const decision = decideTopUp(machine, policyOrder(order), machine.topUpPrice);
+    if (!decision.allowed || !order) {
+      throw new UserFacingError(decision.allowed ? 'There is no order to top up.' : decision.message);
+    }
+    const price = machine.topUpPrice;
+    const item = tx
+      .insert(orderItems)
+      .values({
+        orderId: order.id,
+        inventoryItemId: null,
+        name: `Dryer top-up ${TOP_UP_MINUTES} min (${machine.name})`,
+        quantity: 1,
+        unitPrice: price,
+      })
+      .returning({ id: orderItems.id })
+      .get();
+    tx.update(orders)
+      .set({ total: sql`${orders.total} + ${price}` })
+      .where(eq(orders.id, order.id))
+      .run();
+    tx.update(machines)
+      .set({ runEndsAt: endAfterTopUp(machine, ctx.now()) })
+      .where(eq(machines.id, machineId))
+      .run();
+    const logId = writeLog(
+      { ...ctx, db: tx },
+      { machine, actor, kind: 'TOP_UP', orderId: order.id, result: 'PENDING', charge: price },
+    );
+    return { machine, logId, itemId: item.id, orderId: order.id, price };
+  });
+  const result = await sendAndRecord(
+    ctx,
+    controller,
+    claimed.logId,
+    claimed.machine,
+    topUpPulsesOf(claimed.machine),
+  );
+  if (NOTHING_SENT.includes(result)) {
+    ctx.db.transaction((tx) => {
+      tx.delete(orderItems).where(eq(orderItems.id, claimed.itemId)).run();
+      tx.update(orders)
+        .set({ total: sql`${orders.total} - ${claimed.price}` })
+        .where(eq(orders.id, claimed.orderId))
+        .run();
+      tx.update(machineUnlocks).set({ charge: null }).where(eq(machineUnlocks.id, claimed.logId)).run();
+      restoreRun(tx, claimed.machine);
+    });
+  }
+  return result;
+}
+
+/** Ends the timer early, for a machine that finished before its set run time. */
+export function markRunDone(ctx: ServiceContext, machineId: number): void {
+  const machine = requireMachine(ctx.db, machineId);
+  if (!isRunning(machine, ctx.now())) return;
+  ctx.db.update(machines).set({ runEndsAt: ctx.now() }).where(eq(machines.id, machineId)).run();
 }
 
 export interface OverrideInput {
@@ -378,7 +528,14 @@ export async function overrideStart(
   const ready = isReady(controller);
   const logId = writeLog(ctx, { ...base, kind: 'OVERRIDE', result: ready ? 'PENDING' : 'NOT_CONNECTED' });
   if (!ready) return 'not-connected';
-  return sendAndRecord(ctx, controller, logId, machine);
+  ctx.db
+    .update(machines)
+    .set(runFields(machine, input.orderId, ctx.now()))
+    .where(eq(machines.id, machine.id))
+    .run();
+  const result = await sendAndRecord(ctx, controller, logId, machine);
+  if (NOTHING_SENT.includes(result)) restoreRun(ctx.db, machine);
+  return result;
 }
 
 /** Owner test start from the machine settings or the Machines tab, logged as TEST. */

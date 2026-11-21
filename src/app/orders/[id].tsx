@@ -2,6 +2,7 @@ import { Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
+import { describeRun, orderHistory } from '@/domain/dailyReport';
 import { formatShopDateTime, isSameShopDay } from '@/domain/dates';
 import { formatPeso, parsePesoInput } from '@/domain/money';
 import {
@@ -26,7 +27,7 @@ import { usePrintReceipt } from '@/state/usePrintReceipt';
 import { Button } from '@/ui/Button';
 import { Choice, Dialog } from '@/ui/controls';
 import { Divider, EmptyState, ListRow, Notice, Panel, Row, Screen, Section } from '@/ui/layout';
-import { AssignMachineDialog } from '@/ui/machines/MachineDialogs';
+import { StartMachineDialog } from '@/ui/machines/MachineDialogs';
 import { StartResultBadge } from '@/ui/machines/StartResultBadge';
 import { BalanceBadge, StatusBadge } from '@/ui/StatusBadge';
 import { Text } from '@/ui/Text';
@@ -42,7 +43,7 @@ export default function OrderDetails() {
   const actor = useActor();
   const { print, printing } = usePrintReceipt();
   const [dialog, setDialog] = useState<'pay' | 'status' | 'void' | null>(null);
-  const [assigning, setAssigning] = useState(false);
+  const [starting, setStarting] = useState(false);
   const data = useData(
     (c) => {
       const detail = getOrderDetail(c, id);
@@ -73,6 +74,7 @@ export default function OrderDetails() {
   const voided = order.voidedAt !== null;
   const allowance = machineAllowance(order);
   const machinesOpen = !voided && allowance > 0 && order.status !== 'COMPLETED' && order.status !== 'AUDITED';
+  const loads = orderHistory(order, detail.unlocks).loads;
 
   return (
     <>
@@ -84,7 +86,7 @@ export default function OrderDetails() {
           </Notice>
         )}
         {fresh === '1' && !voided && (
-          <Notice tone="success">Order saved. Next, assign it to a washer, then start the washer from Machines.</Notice>
+          <Notice tone="success">Order saved. Next, load a washer and tap Start a machine.</Notice>
         )}
 
         <View style={styles.head}>
@@ -108,11 +110,11 @@ export default function OrderDetails() {
           <Button label="Print receipt" kind="secondary" icon="printer-outline" busy={printing} onPress={() => void print(order.id)} />
           {allowance > 0 && (
             <Button
-              label="Assign to machine"
+              label="Start a machine"
               icon="washing-machine"
               kind={data.usage.WASHER === 0 && machinesOpen ? 'primary' : 'secondary'}
               disabled={!machinesOpen}
-              onPress={() => setAssigning(true)}
+              onPress={() => setStarting(true)}
             />
           )}
           {!voided && can.voidOrder(actor.role) && (
@@ -129,13 +131,21 @@ export default function OrderDetails() {
               {`This ${serviceLabel(order.service).toLowerCase()} order came from the old app and does not use the machines.`}
             </Text>
           )}
-          {data.assigned.length > 0 && (
+          {allowance > 0 && (
             <Panel>
+              {loads.map((load, index) => (
+                <ListRow
+                  key={load.number}
+                  title={`Load ${load.number}`}
+                  subtitle={`Washer: ${describeRun(load.washer)} · Dryer: ${describeRun(load.dryer)}`}
+                  last={index === loads.length - 1 && data.assigned.length === 0}
+                />
+              ))}
               {data.assigned.map((machine, index) => (
                 <ListRow
                   key={machine.id}
                   title={machine.name}
-                  subtitle={`${MACHINE_TYPE_LABELS[machine.type]} · waiting to start · assigned by ${machine.assignedByName ?? 'someone'}`}
+                  subtitle={`${MACHINE_TYPE_LABELS[machine.type]} · did not start yet · try again from Machines or Start a machine`}
                   last={index === data.assigned.length - 1}
                 />
               ))}
@@ -147,7 +157,13 @@ export default function OrderDetails() {
                 <ListRow
                   key={start.id}
                   title={start.machineName}
-                  subtitle={`${formatShopDateTime(start.at)} · ${start.employeeName}${start.kind === 'OVERRIDE' ? ` · override: ${start.overrideReason ?? ''}` : ''}`}
+                  subtitle={`${formatShopDateTime(start.at)} · ${start.employeeName}${
+                    start.kind === 'OVERRIDE'
+                      ? ` · override: ${start.overrideReason ?? ''}`
+                      : start.kind === 'TOP_UP'
+                        ? ` · top-up ${formatPeso(start.charge ?? 0)}`
+                        : ''
+                  }`}
                   right={<StartResultBadge result={start.result} />}
                   last={index === detail.unlocks.length - 1}
                 />
@@ -216,7 +232,7 @@ export default function OrderDetails() {
         <StatusDialog orderId={order.id} current={order.status} statuses={data.statuses} onClose={() => setDialog(null)} />
       )}
       {dialog === 'void' && <VoidDialog orderId={order.id} paid={detail.paid} onClose={() => setDialog(null)} />}
-      {assigning && <AssignMachineDialog orderId={order.id} onClose={() => setAssigning(false)} />}
+      {starting && <StartMachineDialog orderId={order.id} onClose={() => setStarting(false)} />}
     </>
   );
 }

@@ -26,7 +26,8 @@ import { DEVICE_ONLY_SETTINGS } from './settings';
 // ---------- Full backup (this app's own format) ----------
 
 export const BACKUP_FORMAT = 'laundry-pos-backup';
-export const BACKUP_VERSION = 1;
+/** 2: machine run timers, dryer top-ups and the TOP_UP log kind. */
+export const BACKUP_VERSION = 2;
 
 function readAll(db: Db) {
   return {
@@ -148,6 +149,12 @@ const tableSchemas = {
     assignedOrderId: z.string().nullable().default(null),
     assignedAt: int.nullable().default(null),
     assignedByName: z.string().nullable().default(null),
+    // Backups made before run timers and top-ups get the defaults of migration 0003.
+    runMinutes: int.default(40),
+    topUpPulseCount: int.default(1),
+    topUpPrice: int.default(0),
+    runOrderId: z.string().nullable().default(null),
+    runEndsAt: int.nullable().default(null),
   }),
   machineUnlocks: z.object({
     id: int,
@@ -159,11 +166,12 @@ const tableSchemas = {
     orderId: maybeText,
     employeeUserId: maybeText,
     employeeName: text,
-    kind: z.enum(['ORDER', 'OVERRIDE', 'OVERRIDE_DENIED', 'TEST']),
+    kind: z.enum(['ORDER', 'OVERRIDE', 'OVERRIDE_DENIED', 'TEST', 'TOP_UP']),
     overrideReason: maybeText,
     overrideNote: maybeText,
     result: z.enum(['PENDING', 'ACKED', 'REJECTED', 'BUSY', 'FAILED', 'TIMEOUT', 'NOT_CONNECTED', 'DENIED']),
     resolvedAt: maybeInt,
+    charge: int.nullable().default(null),
   }),
 };
 

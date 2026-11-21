@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type DependencyList } from 'react';
+import { useCallback, useEffect, useRef, useState, type DependencyList } from 'react';
 
 import { errorMessage, type ServiceContext } from '@/db/types';
 
@@ -60,4 +60,15 @@ export function useAction(): Action {
 
   const clearError = useCallback(() => setError(null), []);
   return { busy, error, clearError, run };
+}
+
+/** The current time from the app's clock, re-read every `intervalMs`, for countdowns. */
+export function useNow(intervalMs = 1000): number {
+  const { ctx } = useApp();
+  const [now, setNow] = useState(() => ctx.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(ctx.now()), intervalMs);
+    return () => clearInterval(timer);
+  }, [ctx, intervalMs]);
+  return now;
 }

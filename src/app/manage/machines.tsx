@@ -2,7 +2,8 @@ import { useState } from 'react';
 
 import type { MachineRow } from '@/db/schema';
 import { can } from '@/domain/permissions';
-import { MACHINE_TYPE_LABELS, MACHINE_TYPES, type MachineType } from '@/domain/machinePolicy';
+import { MACHINE_TYPE_LABELS, MACHINE_TYPES, RUN_MINUTES_LIMITS, TOP_UP_MINUTES, type MachineType } from '@/domain/machinePolicy';
+import { centavosToInput, formatPeso, parsePesoInput } from '@/domain/money';
 import { STATUS_LABELS } from '@/machines/MachineController';
 import { channelTerminal, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress, pulsesProblem } from '@/machines/protocol';
 import { changeOwnerPin } from '@/services/auth';
@@ -27,6 +28,16 @@ import { TextField } from '@/ui/TextField';
 
 function pulseSummary(machine: MachineRow): string {
   return `${machine.pulseCount} × ${machine.pulseOnMs} ms on, ${machine.pulseOffMs} ms off`;
+}
+
+function machineSummary(machine: MachineRow): string {
+  const topUp =
+    machine.type !== 'DRYER'
+      ? ''
+      : machine.topUpPrice > 0
+        ? ` · top-up ${formatPeso(machine.topUpPrice)}`
+        : ' · no top-ups';
+  return `${machine.runMinutes} min run · ${pulseSummary(machine)}${topUp}`;
 }
 
 export default function MachineSettings() {
@@ -127,7 +138,7 @@ export default function MachineSettings() {
                   title={machine.name}
                   subtitle={`${MACHINE_TYPE_LABELS[machine.type]} · channel ${machine.hardwareChannel} (${
                     channelTerminal(machine.hardwareChannel) ?? 'not on the board'
-                  }) · ${pulseSummary(machine)}`}
+                  }) · ${machineSummary(machine)}`}
                   right={
                     <Row>
                       {!machine.enabled && <Badge label="Off" tone="warning" />}
@@ -169,8 +180,21 @@ function MachineDialog({ machine, nextChannel, onClose }: { machine: MachineRow 
   const [countText, setCountText] = useState(String(machine?.pulseCount ?? 1));
   const [onText, setOnText] = useState(String(machine?.pulseOnMs ?? 500));
   const [offText, setOffText] = useState(String(machine?.pulseOffMs ?? 500));
+  const [runText, setRunText] = useState(String(machine?.runMinutes ?? 40));
+  const [topUpCountText, setTopUpCountText] = useState(String(machine?.topUpPulseCount ?? 1));
+  const [topUpPriceText, setTopUpPriceText] = useState(centavosToInput(machine?.topUpPrice ?? 0));
   const pulses = { count: Number(countText), onMs: Number(onText), offMs: Number(offText) };
   const pulseError = pulsesProblem(pulses);
+  const runMinutes = Number(runText);
+  const runError =
+    Number.isInteger(runMinutes) && runMinutes >= RUN_MINUTES_LIMITS.min && runMinutes <= RUN_MINUTES_LIMITS.max
+      ? null
+      : `Enter ${RUN_MINUTES_LIMITS.min} to ${RUN_MINUTES_LIMITS.max} minutes.`;
+  const topUpPrice = topUpPriceText.trim() === '' ? 0 : parsePesoInput(topUpPriceText);
+  const dryer = type === 'DRYER';
+  const topUpPulseError = dryer ? pulsesProblem({ ...pulses, count: Number(topUpCountText) }) : null;
+  const topUpPriceError = dryer && topUpPrice === null ? 'Enter a price like 20 or 20.50.' : null;
+  const invalid = pulseError !== null || runError !== null || topUpPulseError !== null || topUpPriceError !== null;
   const digits = (set: (value: string) => void) => (text: string) => set(text.replace(/\D/g, ''));
 
   async function save() {
@@ -182,6 +206,9 @@ function MachineDialog({ machine, nextChannel, onClose }: { machine: MachineRow 
       pulseCount: pulses.count,
       pulseOnMs: pulses.onMs,
       pulseOffMs: pulses.offMs,
+      runMinutes,
+      topUpPulseCount: Number(topUpCountText),
+      topUpPrice: topUpPrice ?? 0,
     };
     const result = await action.run((c) => {
       if (machine) updateMachine(c, actor, machine.id, input);
@@ -198,7 +225,7 @@ function MachineDialog({ machine, nextChannel, onClose }: { machine: MachineRow 
       actions={
         <>
           <Button label="Cancel" kind="secondary" onPress={onClose} />
-          <Button label={machine ? 'Save changes' : 'Add machine'} onPress={save} busy={action.busy} disabled={pulseError !== null} />
+          <Button label={machine ? 'Save changes' : 'Add machine'} onPress={save} busy={action.busy} disabled={invalid} />
         </>
       }
     >
@@ -225,9 +252,44 @@ function MachineDialog({ machine, nextChannel, onClose }: { machine: MachineRow 
         <TextField label="Gap (ms)" value={offText} onChangeText={digits(setOffText)} keyboardType="number-pad" style={{ flex: 1 }} />
       </Row>
       {pulseError && <Text tone="danger">{pulseError}</Text>}
+      <TextField
+        label="Run time (minutes)"
+        value={runText}
+        onChangeText={digits(setRunText)}
+        keyboardType="number-pad"
+        hint="How long one start runs. The Machines tab counts it down and keeps the machine in use until then."
+        error={runText !== '' ? runError : null}
+      />
+      {dryer && (
+        <>
+          <Text variant="label">{`Top-up (${TOP_UP_MINUTES} minutes)`}</Text>
+          <Text tone="muted">
+            {`For damp laundry: each top-up adds ${TOP_UP_MINUTES} minutes, sends these pulses (same length and gap as a start) and adds the price to the order's bill. Leave the price at 0 to switch top-ups off.`}
+          </Text>
+          <Row wrap style={{ alignItems: 'flex-start' }}>
+            <TextField
+              label="Top-up pulses"
+              value={topUpCountText}
+              onChangeText={digits(setTopUpCountText)}
+              keyboardType="number-pad"
+              style={{ flex: 1 }}
+            />
+            <TextField
+              label="Top-up price"
+              value={topUpPriceText}
+              onChangeText={setTopUpPriceText}
+              keyboardType="decimal-pad"
+              prefix="₱"
+              style={{ flex: 1 }}
+            />
+          </Row>
+          {topUpPulseError && <Text tone="danger">{`Top-up: ${topUpPulseError}`}</Text>}
+          {topUpPriceError && <Text tone="danger">{topUpPriceError}</Text>}
+        </>
+      )}
       <Toggle
         label="In use"
-        description="Switch off while a machine is broken so nobody can be sent to it. Any order waiting on it is taken off."
+        description="Switch off while a machine is broken so nobody can start it. An order whose start did not go out is taken off it."
         value={enabled}
         onChange={setEnabled}
       />

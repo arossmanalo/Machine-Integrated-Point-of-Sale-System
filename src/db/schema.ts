@@ -135,10 +135,23 @@ export const machines = sqliteTable('machines', {
   pulseCount: integer('pulse_count').notNull().default(1),
   pulseOnMs: integer('pulse_on_ms').notNull().default(500),
   pulseOffMs: integer('pulse_off_ms').notNull().default(500),
-  /** The order this machine will run next; a start uses it up. Null when the machine is free. */
+  /**
+   * The order picked for this machine whose start has not gone out yet. Assigning starts the
+   * machine at once, so this only stays set when that start sent nothing and can be retried.
+   */
   assignedOrderId: text('assigned_order_id').references(() => orders.id),
   assignedAt: integer('assigned_at'),
   assignedByName: text('assigned_by_name'),
+  /** How long one start runs, for the in-use timer. */
+  runMinutes: integer('run_minutes').notNull().default(40),
+  /** Dryers: pulses sent for one 5-minute top-up (same pulse length and gap as a start). */
+  topUpPulseCount: integer('top_up_pulse_count').notNull().default(1),
+  /** Dryers: centavos added to the order's bill for each top-up. 0 means top-ups are not offered. */
+  topUpPrice: integer('top_up_price').notNull().default(0),
+  /** Order of the latest run, kept after the run ends so a dryer top-up can follow it. */
+  runOrderId: text('run_order_id').references(() => orders.id),
+  /** When the latest run ends. The machine is in use while this is in the future. */
+  runEndsAt: integer('run_ends_at'),
 });
 
 /** Append-only. Nothing in the app edits or deletes these rows except the result update. */
@@ -154,13 +167,15 @@ export const machineUnlocks = sqliteTable(
     orderId: text('order_id'),
     employeeUserId: text('employee_user_id'),
     employeeName: text('employee_name').notNull(),
-    kind: text('kind', { enum: ['ORDER', 'OVERRIDE', 'OVERRIDE_DENIED', 'TEST'] }).notNull(),
+    kind: text('kind', { enum: ['ORDER', 'OVERRIDE', 'OVERRIDE_DENIED', 'TEST', 'TOP_UP'] }).notNull(),
     overrideReason: text('override_reason'),
     overrideNote: text('override_note'),
     result: text('result', {
       enum: ['PENDING', 'ACKED', 'REJECTED', 'BUSY', 'FAILED', 'TIMEOUT', 'NOT_CONNECTED', 'DENIED'],
     }).notNull(),
     resolvedAt: integer('resolved_at'),
+    /** Top-ups: centavos added to the order's bill, kept here so the daily report can tally them. */
+    charge: integer('charge'),
   },
   (t) => [index('unlocks_order').on(t.orderId), index('unlocks_at').on(t.at)],
 );
