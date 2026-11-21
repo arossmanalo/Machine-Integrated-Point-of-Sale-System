@@ -66,6 +66,10 @@ For a rewash, a machine that did not start, or maintenance, go to **Machines**, 
 - Every override, and every wrong PIN, is written in the log.
 - Admins cannot override; only the owner PIN can.
 
+### Machine earnings
+
+On the **Machines** tab, tap a machine to see what it has earned today, this month and in all. If the machine is free, the figures show at the top of the window where you pick the order. If it is in use, waiting or switched off, tapping it shows only the figures. Each wash or dry it ran for an order counts as half that order's price per load (₱80 of a ₱160 load); an odd centavo is dropped. It is a rough figure: top-ups, overrides, tests and voided orders are not counted, and a free promo load still counts. Only admins and the owner see it.
+
 ### Reading the machine log
 
 **Manage › Machine log** lists every start with the time, machine, order and employee. **Needs a look** shows:

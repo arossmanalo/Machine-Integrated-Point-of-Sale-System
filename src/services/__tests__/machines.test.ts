@@ -11,6 +11,7 @@ import {
   listMachineLog,
   listMachines,
   machineUsage,
+  machineEarningsFor,
   markRunDone,
   overrideStart,
   readReceiptCode,
@@ -29,6 +30,7 @@ import { getSetting } from '../settings';
 
 const PULSES = { pulseCount: 1, pulseOnMs: 500, pulseOffMs: 500, runMinutes: 30, topUpPulseCount: 1, topUpPrice: 0 };
 const MIN = 60 * 1000;
+const DAY = 24 * 60 * MIN;
 
 function machine(name: string, type: 'WASHER' | 'DRYER', hardwareChannel: number): MachineInput {
   return { name, type, hardwareChannel, enabled: true, ...PULSES };
@@ -457,5 +459,37 @@ describe('receipt QR codes', () => {
     const other = newOrder();
     expect(order.qrToken).toMatch(/^[0-9a-f]{32}$/);
     expect(other.qrToken).not.toBe(order.qrToken);
+  });
+});
+
+describe('machine earnings', () => {
+  it('counts half the price per load for each wash or dry the machine ran', async () => {
+    const { ctx, owner, controller, order, newOrder, washers, dryers } = await setup();
+    const half = Math.floor(order.pricePerLoad / 2);
+    const run = (o: typeof order, machineId: number) =>
+      startOrderOnMachine(ctx, controller, testEmployee, o.id, machineId, receiptOf(o));
+
+    await run(order, washers[0]);
+    ctx.advance(DAY);
+    markRunDone(ctx, washers[0]);
+    await run(order, washers[0]);
+    await run(order, dryers[0]);
+
+    const voided = newOrder();
+    markRunDone(ctx, washers[0]);
+    await run(voided, washers[0]);
+    voidOrder(ctx, owner, voided.id, 'Test');
+
+    controller.failNextStart('failed');
+    markRunDone(ctx, washers[1]);
+    await run(newOrder(), washers[1]);
+
+    expect(machineEarningsFor(ctx, washers[0])).toEqual({
+      today: { loads: 1, amount: half },
+      month: { loads: 2, amount: 2 * half },
+      allTime: { loads: 2, amount: 2 * half },
+    });
+    expect(machineEarningsFor(ctx, dryers[0]).today).toEqual({ loads: 1, amount: half });
+    expect(machineEarningsFor(ctx, washers[1]).allTime).toEqual({ loads: 0, amount: 0 });
   });
 });

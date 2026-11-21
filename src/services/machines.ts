@@ -14,7 +14,9 @@ import {
   type PolicyOrder,
 } from '@/domain/machinePolicy';
 import { formatPeso } from '@/domain/money';
+import { machineEarnings, type MachineEarnings } from '@/domain/machineEarnings';
 import { parseReceiptCode, tokensMatch } from '@/domain/receiptCode';
+import { periodRange } from '@/domain/reports';
 import { isValidChannel, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress, pulsesProblem } from '@/machines/protocol';
 import type { MachineController, PulseSettings, StartResult } from '@/machines/MachineController';
 import {
@@ -650,4 +652,23 @@ export function lastStarts(ctx: ServiceContext, machineIds: number[]): Map<numbe
     if (row.machineId !== null && !result.has(row.machineId)) result.set(row.machineId, row);
   }
   return result;
+}
+
+/** What one machine has earned today, this month and in all: half the load price per order run. */
+export function machineEarningsFor(ctx: ServiceContext, machineId: number): MachineEarnings {
+  const starts = ctx.db
+    .select({
+      at: machineUnlocks.at,
+      kind: machineUnlocks.kind,
+      result: machineUnlocks.result,
+      pricePerLoad: orders.pricePerLoad,
+      voidedAt: orders.voidedAt,
+    })
+    .from(machineUnlocks)
+    .leftJoin(orders, eq(orders.id, machineUnlocks.orderId))
+    .where(and(eq(machineUnlocks.machineId, machineId), eq(machineUnlocks.kind, 'ORDER')))
+    .all()
+    .map((row) => ({ ...row, orderVoided: row.voidedAt !== null }));
+  const now = ctx.now();
+  return machineEarnings(starts, { today: periodRange('Today', now), month: periodRange('This month', now) });
 }

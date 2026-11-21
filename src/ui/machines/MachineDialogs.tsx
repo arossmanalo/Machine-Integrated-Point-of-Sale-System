@@ -5,11 +5,15 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import type { MachineRow } from '@/db/schema';
 import { UserFacingError, type ServiceContext } from '@/db/types';
 import { isRunning, MACHINE_TYPE_LABELS, machineAllowance, minutesLeft, type MachineType } from '@/domain/machinePolicy';
+import type { Earned } from '@/domain/machineEarnings';
+import { formatPeso } from '@/domain/money';
+import { can } from '@/domain/permissions';
 import { isClosedStatus } from '@/domain/statuses';
 import type { StartResult } from '@/machines/MachineController';
 import {
   checkReceiptFor,
   listMachines,
+  machineEarningsFor,
   machineUsage,
   OVERRIDE_REASONS,
   overrideStart,
@@ -26,7 +30,7 @@ import { useToast } from '@/state/toast';
 
 import { Button } from '../Button';
 import { Choice, Dialog } from '../controls';
-import { EmptyState, ListRow, Notice, Panel } from '../layout';
+import { EmptyState, ListRow, Notice, Panel, Row, Stat } from '../layout';
 import { Text } from '../Text';
 import { TextField } from '../TextField';
 import { colors, MIN_TOUCH, radius, space } from '../theme';
@@ -39,6 +43,45 @@ export function useReportStart() {
     if (result === 'acked') toast(`${machineName} started`);
     else toast(`${machineName}: ${RESULT_MESSAGES[result]}`, 'danger');
   };
+}
+
+function loadsNote(earned: Earned): string {
+  return `${earned.loads} load${earned.loads === 1 ? '' : 's'}`;
+}
+
+/**
+ * What a machine has earned: half the price per load for each wash or dry it ran for an order.
+ * Managers only, like every other money figure.
+ */
+export function MachineEarningsStats({ machine }: { machine: MachineRow }) {
+  const actor = useActor();
+  const earnings = useData((c) => machineEarningsFor(c, machine.id), [machine.id]);
+  if (!can.seeRevenue(actor.role)) return null;
+  return (
+    <Row wrap style={{ alignItems: 'flex-start' }}>
+      <Stat label="Earned today" value={formatPeso(earnings.today.amount)} note={loadsNote(earnings.today)} />
+      <Stat label="This month" value={formatPeso(earnings.month.amount)} note={loadsNote(earnings.month)} />
+      <Stat label="All time" value={formatPeso(earnings.allTime.amount)} note={loadsNote(earnings.allTime)} />
+    </Row>
+  );
+}
+
+/** For a machine that cannot take an order right now (in use, waiting, switched off). */
+export function MachineEarningsDialog({ machine, onClose }: { machine: MachineRow; onClose: () => void }) {
+  return (
+    <Dialog
+      visible
+      title={`${machine.name} earnings`}
+      onClose={onClose}
+      actions={<Button label="Close" kind="secondary" onPress={onClose} />}
+    >
+      <MachineEarningsStats machine={machine} />
+      <Text tone="muted">
+        A rough figure: half the price per load for each order this machine ran. Top-ups, overrides, tests and voided
+        orders are not counted.
+      </Text>
+    </Dialog>
+  );
 }
 
 /** Dryers sit on top of washers in the shop, so the window shows them in that order. */
@@ -307,6 +350,7 @@ export function OrderPickerDialog({
   );
   return (
     <Dialog visible title={`Assign an order to ${machine.name}`} onClose={onClose} actions={actions}>
+      {!chosen && <MachineEarningsStats machine={machine} />}
       {chosen ? (
         <ConfirmStart machine={machine} orderId={chosen.orderId} customerName={chosen.customerName} />
       ) : scanOn && receiptCode === null ? (

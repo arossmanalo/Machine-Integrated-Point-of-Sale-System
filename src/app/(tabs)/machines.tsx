@@ -17,7 +17,7 @@ import { useToast } from '@/state/toast';
 import { Button } from '@/ui/Button';
 import { Badge, Dialog, Toggle } from '@/ui/controls';
 import { EmptyState, Notice, Panel, Row, Screen, Section } from '@/ui/layout';
-import { OrderPickerDialog, OverrideDialog, useReportStart } from '@/ui/machines/MachineDialogs';
+import { MachineEarningsDialog, OrderPickerDialog, OverrideDialog, useReportStart } from '@/ui/machines/MachineDialogs';
 import { Text } from '@/ui/Text';
 import { colors, MIN_TOUCH, radius, space } from '@/ui/theme';
 
@@ -36,12 +36,14 @@ export default function Machines() {
   const [picking, setPicking] = useState<MachineRow | null>(null);
   const [overriding, setOverriding] = useState<MachineRow | null>(null);
   const [toppingUp, setToppingUp] = useState<MachineRow | null>(null);
+  const [viewingEarnings, setViewingEarnings] = useState<MachineRow | null>(null);
   const [testOrderId, setTestOrderId] = useState<string | null>(null);
   const action = useAction();
   const toast = useToast();
   const report = useReportStart();
   const now = useNow();
   const owner = can.manageMachines(actor.role);
+  const seesEarnings = can.seeRevenue(actor.role);
   // Off by default so the owner sees the same screen as staff. Tied to the user who turned it on,
   // so it is off again for the next login on this tablet.
   const [testingBy, setTestingBy] = useState<string | null>(null);
@@ -148,9 +150,15 @@ export default function Machines() {
                       accessibilityLabel={`${machine.name}${machine.enabled ? '' : ', switched off'}${
                         running ? `, in use, ${countdown(machine.runEndsAt ?? now, now)} left` : ''
                       }`}
-                      accessibilityHint={tappable ? 'Picks an order and starts this machine.' : undefined}
-                      disabled={!tappable}
-                      onPress={() => setPicking(machine)}
+                      accessibilityHint={
+                        tappable
+                          ? 'Picks an order and starts this machine.'
+                          : seesEarnings
+                            ? "Shows this machine's earnings."
+                            : undefined
+                      }
+                      disabled={!tappable && !seesEarnings}
+                      onPress={() => (tappable ? setPicking(machine) : setViewingEarnings(machine))}
                       style={({ pressed }) => [
                         styles.tile,
                         running && styles.tileRunning,
@@ -273,6 +281,7 @@ export default function Machines() {
           }}
         />
       )}
+      {viewingEarnings && <MachineEarningsDialog machine={viewingEarnings} onClose={() => setViewingEarnings(null)} />}
       {overriding && <OverrideDialog machine={overriding} onClose={() => setOverriding(null)} />}
       {toppingUp && (
         <TopUpDialog
