@@ -1,19 +1,31 @@
+import { File, Paths } from 'expo-file-system';
+import { printToFileAsync } from 'expo-print';
+import { shareAsync } from 'expo-sharing';
 import { useState } from 'react';
 import { Share, StyleSheet, View } from 'react-native';
 
 import { describeRun, type DayCheck, type MachineEntry } from '@/domain/dailyReport';
-import { addShopDays, formatShopDate, formatShopTime, shopDayRange, startOfShopDay } from '@/domain/dates';
+import {
+  addShopDays,
+  formatShopDate,
+  formatShopDateStamp,
+  formatShopTime,
+  shopDayRange,
+  startOfShopDay,
+} from '@/domain/dates';
 import { formatPeso } from '@/domain/money';
+import { dailyReportHtml, PDF_PAGE } from '@/printing/dailyReportHtml';
 import { dailyReportLines } from '@/printing/dailyReportText';
 import { buildTextDocument } from '@/printing/escpos';
 import { dailyReport } from '@/services/dailyReport';
 import { getAllSettings } from '@/services/settings';
-import { useData } from '@/state/hooks';
+import { useApp } from '@/state/AppProvider';
+import { useAction, useData } from '@/state/hooks';
 import { usePrinter } from '@/state/usePrintReceipt';
 
 import { Button } from '../Button';
 import { Badge, type BadgeTone } from '../controls';
-import { EmptyState, ListRow, Panel, Row, Section, Stat } from '../layout';
+import { EmptyState, ListRow, Notice, Panel, Row, Section, Stat } from '../layout';
 import { Text } from '../Text';
 import { space } from '../theme';
 
@@ -56,7 +68,7 @@ function entryLabel(entry: MachineEntry): string {
 
 /**
  * One shop day: the money, which machines ran each load, what each machine did, and the checks
- * that show whether the counts agree. Printable on the receipt printer.
+ * that show whether the counts agree. Printable on the receipt printer or exportable as a PDF.
  */
 export function DailyReportView({ now }: { now: number }) {
   const today = startOfShopDay(now);
@@ -65,10 +77,23 @@ export function DailyReportView({ now }: { now: number }) {
   const report = useData((c) => dailyReport(c, range), [range.start]);
   const header = useData((c) => getAllSettings(c.db).receiptHeader);
   const { printBytes, printing } = usePrinter();
+  const { ctx } = useApp();
+  const pdf = useAction();
   const dayLabel = formatShopDate(day);
   const f = report.figures;
 
   const lines = () => dailyReportLines(report, dayLabel);
+
+  /** Renders the report to an A4 PDF named after the day, then opens Android's share sheet. */
+  async function exportPdf() {
+    await pdf.run(async () => {
+      const html = dailyReportHtml(report, dayLabel, header, ctx.now());
+      const printed = await printToFileAsync({ html, ...PDF_PAGE });
+      const named = new File(Paths.cache, `daily-report-${formatShopDateStamp(day)}.pdf`);
+      await new File(printed.uri).move(named, { overwrite: true });
+      await shareAsync(named.uri, { mimeType: 'application/pdf', dialogTitle: `Daily report ${dayLabel}` });
+    });
+  }
 
   return (
     <>
@@ -195,6 +220,7 @@ export function DailyReportView({ now }: { now: number }) {
           busy={printing}
           onPress={() => void printBytes(() => buildTextDocument(header, lines()), `Report for ${dayLabel} printed`)}
         />
+        <Button label="Export PDF" kind="secondary" icon="file-pdf-box" busy={pdf.busy} onPress={() => void exportPdf()} />
         <Button
           label="Share as text"
           kind="secondary"
@@ -202,6 +228,7 @@ export function DailyReportView({ now }: { now: number }) {
           onPress={() => void Share.share({ title: `Daily report ${dayLabel}`, message: [header, ...lines()].join('\n') })}
         />
       </Row>
+      {pdf.error && <Notice tone="danger">{`Could not make the PDF. ${pdf.error}`}</Notice>}
     </>
   );
 }

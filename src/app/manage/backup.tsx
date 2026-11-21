@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { shareAsync } from 'expo-sharing';
 import { useState } from 'react';
 
-import { toShopDate } from '@/domain/dates';
+import { formatShopDateStamp } from '@/domain/dates';
 import { can } from '@/domain/permissions';
 import { logOut } from '@/services/auth';
 import { detectBackupKind, exportBackup, importLegacyExport, restoreBackup } from '@/services/backup';
@@ -19,11 +19,6 @@ import { Text } from '@/ui/Text';
 
 type Picked = { kind: 'backup' | 'legacy'; data: unknown; name: string };
 
-function fileStamp(ms: number): string {
-  const { year, month, day } = toShopDate(ms);
-  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
-
 export default function Backup() {
   const { ctx, setUser } = useApp();
   const actor = useActor();
@@ -34,7 +29,7 @@ export default function Backup() {
 
   async function exportData() {
     const result = await action.run(async (c) => {
-      const file = new File(Paths.cache, `laundry-pos-backup-${fileStamp(c.now())}.json`);
+      const file = new File(Paths.cache, `laundry-pos-backup-${formatShopDateStamp(c.now())}.json`);
       if (file.exists) file.delete();
       file.create();
       await file.write(JSON.stringify(exportBackup(c, actor)));

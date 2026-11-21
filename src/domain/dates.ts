@@ -91,6 +91,12 @@ export function formatShopDate(ms: number): string {
   return `${SHORT_MONTHS[month]} ${day}, ${year}`;
 }
 
+/** "2026-11-17", for file names that sort by date. */
+export function formatShopDateStamp(ms: number): string {
+  const { year, month, day } = toShopDate(ms);
+  return `${year}-${pad2(month + 1)}-${pad2(day)}`;
+}
+
 /** "Nov 17" */
 export function formatShopDayShort(ms: number): string {
   const { month, day } = toShopDate(ms);

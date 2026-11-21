@@ -82,7 +82,7 @@ Money is counted on the day it was paid. Orders and loads are counted on the day
 - **Loads by order**: for every order, which washer and dryer ran each load, at what time, and its top-ups.
 - **Machines**: everything each machine did that day, with the order, the load number and who started it, including starts that did not go out.
 
-**Print report** prints it on the receipt printer; **Share as text** sends it by Messenger or email.
+**Print report** prints it on the receipt printer. **Export PDF** makes an A4 PDF of the day (named like `daily-report-2026-11-21.pdf`) and opens the share menu, so you can save it to Drive or send it by Messenger or email. **Share as text** sends it as plain text.
 
 ### Backups
 
