@@ -14,7 +14,7 @@ import {
 
 import type { IconName } from './Button';
 import { Text } from './Text';
-import { colors, CONTENT_MAX_WIDTH, MIN_TOUCH, radius, space } from './theme';
+import { colors, MIN_TOUCH, radius, space } from './theme';
 
 /** Scrollable page with a readable maximum width on wide tablets. */
 export function Screen({
@@ -202,7 +202,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   screen: { flex: 1, backgroundColor: colors.background },
   screenContent: { padding: space.lg, paddingBottom: space.xxl * 2 },
-  column: { width: '100%', maxWidth: CONTENT_MAX_WIDTH, alignSelf: 'center', gap: space.xl },
+  column: { width: '100%', gap: space.xl },
   section: { gap: space.md },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   panel: {

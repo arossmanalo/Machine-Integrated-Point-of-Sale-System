@@ -63,4 +63,3 @@ export const elevation = {
 } as const;
 
 export const MIN_TOUCH = 48;
-export const CONTENT_MAX_WIDTH = 920;
