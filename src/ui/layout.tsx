@@ -94,6 +94,7 @@ export function ListRow({
   subtitle,
   meta,
   right,
+  trailing,
   onPress,
   last = false,
   accessibilityLabel,
@@ -102,6 +103,11 @@ export function ListRow({
   subtitle?: ReactNode;
   meta?: ReactNode;
   right?: ReactNode;
+  /**
+   * Buttons of their own at the end of the row. They sit outside the row's tap area, because on
+   * Android a button nested inside the pressable row does not get the tap.
+   */
+  trailing?: ReactNode;
   onPress?: () => void;
   last?: boolean;
   accessibilityLabel?: string;
@@ -118,16 +124,33 @@ export function ListRow({
     </>
   );
   const rowStyle = [styles.listRow, !last && styles.divider];
-  if (!onPress) return <View style={rowStyle}>{body}</View>;
-  return (
+  if (!onPress) {
+    return (
+      <View style={rowStyle}>
+        {body}
+        {trailing}
+      </View>
+    );
+  }
+  const row = (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       onPress={onPress}
-      style={({ pressed }) => [rowStyle, pressed && { backgroundColor: colors.surfaceSunken }]}
+      style={({ pressed }) => [
+        trailing ? styles.listRowMain : rowStyle,
+        pressed && { backgroundColor: colors.surfaceSunken },
+      ]}
     >
       {body}
     </Pressable>
+  );
+  if (!trailing) return row;
+  return (
+    <View style={[styles.listRowOuter, !last && styles.divider]}>
+      {row}
+      {trailing}
+    </View>
   );
 }
 
@@ -222,6 +245,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg,
     paddingVertical: space.md,
   },
+  listRowMain: {
+    flex: 1,
+    minHeight: MIN_TOUCH + space.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    paddingLeft: space.lg,
+    paddingRight: space.sm,
+    paddingVertical: space.md,
+  },
+  listRowOuter: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingRight: space.lg },
   divider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   dividerLine: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
   empty: { alignItems: 'flex-start', gap: space.sm, padding: space.xl },

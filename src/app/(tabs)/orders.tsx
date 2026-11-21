@@ -149,7 +149,7 @@ export default function Orders() {
                     </Text>
                   ) : undefined
                 }
-                right={
+                trailing={
                   <Row>
                     {s.order.voidedAt === null && s.balance > 0 ? (
                       <Pressable
