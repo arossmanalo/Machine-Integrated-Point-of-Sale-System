@@ -16,15 +16,19 @@
 
 ### Running a machine
 
-The washers and dryers only start for an order. Each load allows one washer and one dryer.
+The washers and dryers only start for an order, and only with that order's receipt. Each receipt has a QR code under **Scan at the machines**. It is good for as many washer and dryer runs as the order has loads: a 4-load order can run 4 washers and 4 dryers, then the code stops working.
 
 1. Load the laundry and close the door.
 2. On the order page, tap **Assign machine**. A window shows the dryers on top and the washers below, like they stand in the shop. Tap the machine you loaded.
-   You can also go to **Machines**, tap a free machine, and pick the order.
-3. The app asks once: **Run Washer 1 for T0012?** Tap **Run machine**. The machine starts right away.
+   You can also go to **Machines** and tap a free machine. Scanning the receipt there picks the order for you.
+3. The camera opens. Hold the receipt's QR code in front of it. If the picture is from the wrong side, tap **Switch camera**. The first time, allow the app to use the camera.
+4. The app asks once: **Run Washer 1 for T0012?** Tap **Run machine**. The machine starts right away.
+
+- A receipt for another order, or any other QR code, is refused. Tap **Scan again** and use the right receipt.
+- **For testing only:** until the receipt printer arrives, one test QR code (`docs/test-receipt-qr.png`) works for every open order. On the Machines tab you then pick the order from the list. Anyone holding a copy of it can start machines for any order, so it is removed before the shop relies on receipts.
 
 - While a machine runs, the **Machines** tab shows **In use** with a countdown and the order. Nobody can start it again until the countdown ends. If it finished early, tap **Mark as done**.
-- If a start did not go out (offline, busy), the machine shows **Did not start**. Tap **Run machine** to try again, or **Remove** to take the order off.
+- If a start did not go out (offline, busy), the machine shows **Did not start**. Tap **Run machine** to try again (no new scan needed), or **Remove** to take the order off.
 - If the app says the order has used all its washers or dryers, it has used all of its loads. Ask the owner for an override.
 - The order page lists each load with the washer and dryer that ran it.
 

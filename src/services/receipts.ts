@@ -1,4 +1,5 @@
 import { formatAmount } from '@/domain/money';
+import { receiptCodeFor } from '@/domain/receiptCode';
 import type { ReceiptData } from '@/printing/escpos';
 import type { ServiceContext } from '@/db/types';
 
@@ -36,5 +37,6 @@ export function receiptForOrder(ctx: ServiceContext, orderId: string): ReceiptDa
     balance: detail.balance,
     lastPayment: last ? { channel: last.channel, amount: last.amount, cashReceived: last.cashReceived } : null,
     voided: order.voidedAt !== null,
+    machineCode: receiptCodeFor(order.id, order.qrToken),
   };
 }

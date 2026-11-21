@@ -3,14 +3,17 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { MachineRow } from '@/db/schema';
+import { UserFacingError, type ServiceContext } from '@/db/types';
 import { isRunning, MACHINE_TYPE_LABELS, machineAllowance, minutesLeft, type MachineType } from '@/domain/machinePolicy';
 import { isClosedStatus } from '@/domain/statuses';
 import type { StartResult } from '@/machines/MachineController';
 import {
+  checkReceiptFor,
   listMachines,
   machineUsage,
   OVERRIDE_REASONS,
   overrideStart,
+  readReceiptCode,
   RESULT_MESSAGES,
   startOrderOnMachine,
   type OverrideReason,
@@ -27,6 +30,8 @@ import { Text } from '../Text';
 import { TextField } from '../TextField';
 import { colors, MIN_TOUCH, radius, space } from '../theme';
 
+import { ReceiptScanner } from './ReceiptScanner';
+
 export function useReportStart() {
   const toast = useToast();
   return (result: StartResult, machineName: string) => {
@@ -42,7 +47,7 @@ function machineIcon(type: MachineType) {
   return type === 'WASHER' ? 'washing-machine' : 'tumble-dryer';
 }
 
-/** The one question before pulses go out, so a stray tap cannot start the wrong machine. */
+/** The one question before pulses go out (after the receipt scan), so a stray tap cannot start the wrong machine. */
 function ConfirmStart({ machine, orderId, customerName }: { machine: MachineRow; orderId: string; customerName: string }) {
   return (
     <View style={styles.confirm}>
@@ -68,6 +73,7 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
   const report = useReportStart();
   const now = useNow(15000);
   const [chosen, setChosen] = useState<MachineRow | null>(null);
+  const [receiptCode, setReceiptCode] = useState<string | null>(null);
   const data = useData(
     (c) => {
       const detail = getOrderDetail(c, orderId);
@@ -81,18 +87,26 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
     [orderId],
   );
 
-  async function start(machine: MachineRow) {
-    const result = await action.run((c) => startOrderOnMachine(c, controller, actor, orderId, machine.id));
+  function back() {
+    action.clearError();
+    setChosen(null);
+    setReceiptCode(null);
+  }
+
+  async function start(machine: MachineRow, code: string) {
+    const result = await action.run((c) => startOrderOnMachine(c, controller, actor, orderId, machine.id, code));
     if (!result.ok) return;
     report(result.value, machine.name);
-    setChosen(null);
+    back();
     if (result.value === 'acked' || result.value === 'timeout') onClose();
   }
 
   const actions = chosen ? (
     <>
-      <Button label="Back" kind="secondary" onPress={() => setChosen(null)} />
-      <Button label="Run machine" icon="play" onPress={() => void start(chosen)} busy={action.busy} />
+      <Button label="Back" kind="secondary" onPress={back} />
+      {receiptCode !== null && (
+        <Button label="Run machine" icon="play" onPress={() => void start(chosen, receiptCode)} busy={action.busy} />
+      )}
     </>
   ) : (
     <Button label="Close" kind="secondary" onPress={onClose} />
@@ -100,7 +114,13 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
 
   return (
     <Dialog visible title={`Assign a machine to ${orderId}`} onClose={onClose} actions={actions}>
-      {chosen ? (
+      {chosen && receiptCode === null ? (
+        <ReceiptScanner
+          prompt={`Scan the receipt for ${orderId} to run ${chosen.name}.`}
+          check={(c, scanned) => checkReceiptFor(c, scanned, orderId)}
+          onAccepted={setReceiptCode}
+        />
+      ) : chosen && receiptCode !== null ? (
         <ConfirmStart machine={chosen} orderId={orderId} customerName={data.customerName} />
       ) : (
         <>
@@ -199,7 +219,10 @@ function MachineTile({
   );
 }
 
-/** From the machine grid: pick the order this machine runs, confirm, and start it. */
+/**
+ * From the machine grid: scan the order's receipt, which picks the order, confirm, and start.
+ * The temporary test code names no order, so after it staff pick the order from the list.
+ */
 export function OrderPickerDialog({
   machine,
   onClose,
@@ -210,10 +233,11 @@ export function OrderPickerDialog({
   onOverride: () => void;
 }) {
   const actor = useActor();
-  const { controller } = useApp();
+  const { controller, ctx } = useApp();
   const action = useAction();
   const report = useReportStart();
   const [chosen, setChosen] = useState<{ orderId: string; customerName: string } | null>(null);
+  const [receiptCode, setReceiptCode] = useState<string | null>(null);
   const candidates = useData(
     (c) =>
       listOrderSummaries(c)
@@ -227,19 +251,47 @@ export function OrderPickerDialog({
     [machine.type],
   );
 
-  async function start(orderId: string) {
-    const result = await action.run((c) => startOrderOnMachine(c, controller, actor, orderId, machine.id));
+  const label = MACHINE_TYPE_LABELS[machine.type].toLowerCase();
+
+  function back() {
+    action.clearError();
+    setChosen(null);
+    setReceiptCode(null);
+  }
+
+  /** A receipt picks its order straight away; it must be an open order with this machine type left. */
+  function checkScan(c: ServiceContext, scanned: string) {
+    const receipt = readReceiptCode(c, scanned);
+    if (receipt.kind === 'test') return;
+    const row = candidates.find((r) => r.summary.order.id === receipt.orderId);
+    if (!row) {
+      throw new UserFacingError(
+        `${receipt.orderId} cannot use a ${label}: it is voided or closed, or it has used all its ${label}s.`,
+      );
+    }
+  }
+
+  function accepted(scanned: string) {
+    setReceiptCode(scanned);
+    const receipt = readReceiptCode(ctx, scanned);
+    if (receipt.kind === 'order') {
+      const row = candidates.find((r) => r.summary.order.id === receipt.orderId);
+      setChosen({ orderId: receipt.orderId, customerName: row?.summary.customerName ?? '' });
+    }
+  }
+
+  async function start(orderId: string, code: string) {
+    const result = await action.run((c) => startOrderOnMachine(c, controller, actor, orderId, machine.id, code));
     if (!result.ok) return;
     report(result.value, machine.name);
     if (result.value === 'acked' || result.value === 'timeout') onClose();
-    else setChosen(null);
+    else back();
   }
 
-  const label = MACHINE_TYPE_LABELS[machine.type].toLowerCase();
-  const actions = chosen ? (
+  const actions = chosen && receiptCode !== null ? (
     <>
-      <Button label="Back" kind="secondary" onPress={() => setChosen(null)} />
-      <Button label="Run machine" icon="play" onPress={() => void start(chosen.orderId)} busy={action.busy} />
+      <Button label="Back" kind="secondary" onPress={back} />
+      <Button label="Run machine" icon="play" onPress={() => void start(chosen.orderId, receiptCode)} busy={action.busy} />
     </>
   ) : (
     <>
@@ -249,11 +301,17 @@ export function OrderPickerDialog({
   );
   return (
     <Dialog visible title={`Assign an order to ${machine.name}`} onClose={onClose} actions={actions}>
-      {chosen ? (
+      {chosen && receiptCode !== null ? (
         <ConfirmStart machine={machine} orderId={chosen.orderId} customerName={chosen.customerName} />
+      ) : receiptCode === null ? (
+        <ReceiptScanner
+          prompt={`Scan the order receipt to run ${machine.name}. No receipt, no start.`}
+          check={checkScan}
+          onAccepted={accepted}
+        />
       ) : (
         <>
-          <Text tone="muted">Pick the order this load belongs to. No order, no start.</Text>
+          <Text tone="muted">Test code scanned. Pick the order this load belongs to.</Text>
           {candidates.length === 0 ? (
             <EmptyState
               icon="receipt-text-outline"

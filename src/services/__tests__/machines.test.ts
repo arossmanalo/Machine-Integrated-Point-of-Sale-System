@@ -1,4 +1,5 @@
-import { createTestContext, testEmployee } from '@/db/testing';
+import { createTestContext, receiptOf, testEmployee } from '@/db/testing';
+import { receiptCodeFor, TEST_RECEIPT_CODE } from '@/domain/receiptCode';
 import { MockMachineController } from '@/machines/MockMachineController';
 
 import { completeFirstRunSetup } from '../auth';
@@ -12,6 +13,7 @@ import {
   machineUsage,
   markRunDone,
   overrideStart,
+  readReceiptCode,
   saveLockController,
   startMachine,
   startOrderOnMachine,
@@ -274,7 +276,7 @@ describe('machine settings', () => {
 describe('assigning starts the machine', () => {
   it('sends the pulses at once and keeps the machine in use for its run time', async () => {
     const { ctx, controller, order, newOrder, washers, machineById } = await setup();
-    await expect(startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0])).resolves.toBe('acked');
+    await expect(startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order))).resolves.toBe('acked');
     expect(controller.starts).toEqual([{ channel: 1, pulses: { count: 3, onMs: 500, offMs: 500 } }]);
     expect(machineById(washers[0])).toMatchObject({
       assignedOrderId: null,
@@ -283,27 +285,28 @@ describe('assigning starts the machine', () => {
     });
 
     const other = newOrder();
-    await expect(startOrderOnMachine(ctx, controller, testEmployee, other.id, washers[0])).rejects.toThrow(
+    await expect(startOrderOnMachine(ctx, controller, testEmployee, other.id, washers[0], receiptOf(other))).rejects.toThrow(
       'still running',
     );
     ctx.advance(30 * MIN);
-    await expect(startOrderOnMachine(ctx, controller, testEmployee, other.id, washers[0])).resolves.toBe('acked');
+    await expect(startOrderOnMachine(ctx, controller, testEmployee, other.id, washers[0], receiptOf(other))).resolves.toBe('acked');
   });
 
   it('Mark as done frees a machine that finished early', async () => {
     const { ctx, controller, order, newOrder, washers } = await setup();
-    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0]);
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
     ctx.advance(10 * MIN);
     markRunDone(ctx, washers[0]);
-    await expect(startOrderOnMachine(ctx, controller, testEmployee, newOrder().id, washers[0])).resolves.toBe('acked');
+    const fresh = newOrder();
+    await expect(startOrderOnMachine(ctx, controller, testEmployee, fresh.id, washers[0], receiptOf(fresh))).resolves.toBe('acked');
   });
 
   it('keeps the order on the machine for a retry when nothing was sent, without a timer', async () => {
     const { ctx, controller, order, washers, machineById } = await setup();
     controller.failNextStart('failed');
-    await expect(startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0])).resolves.toBe('failed');
+    await expect(startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order))).resolves.toBe('failed');
     expect(machineById(washers[0])).toMatchObject({ assignedOrderId: order.id, runEndsAt: null });
-    await expect(startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0])).resolves.toBe('acked');
+    await expect(startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order))).resolves.toBe('acked');
     expect(machineUsage(ctx, order.id).WASHER).toBe(1);
   });
 
@@ -311,8 +314,8 @@ describe('assigning starts the machine', () => {
     const { ctx, controller, newOrder, washers, machineById } = await setup();
     const oneLoad = newOrder();
     controller.failNextStart('busy');
-    await expect(startOrderOnMachine(ctx, controller, testEmployee, oneLoad.id, washers[0])).resolves.toBe('busy');
-    await expect(startOrderOnMachine(ctx, controller, testEmployee, oneLoad.id, washers[1])).resolves.toBe('acked');
+    await expect(startOrderOnMachine(ctx, controller, testEmployee, oneLoad.id, washers[0], receiptOf(oneLoad))).resolves.toBe('busy');
+    await expect(startOrderOnMachine(ctx, controller, testEmployee, oneLoad.id, washers[1], receiptOf(oneLoad))).resolves.toBe('acked');
     expect(machineById(washers[0])?.assignedOrderId).toBeNull();
     expect(machineUsage(ctx, oneLoad.id).WASHER).toBe(1);
   });
@@ -321,7 +324,7 @@ describe('assigning starts the machine', () => {
     const { ctx, owner, controller, order, washers, machineById } = await setup();
     await testStart(ctx, controller, owner, washers[1]);
     expect(machineById(washers[1])?.runEndsAt).toBeNull();
-    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0]);
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
     const endsAt = machineById(washers[0])?.runEndsAt;
     const rewash = { machineId: washers[0], reason: 'Rewash' as const, note: '', orderId: order.id, pin: '2468' };
     ctx.advance(MIN);
@@ -336,7 +339,7 @@ describe('assigning starts the machine', () => {
 describe('dryer top-ups', () => {
   it('adds 5 minutes, sends the top-up pulses and charges the order, during or after the run', async () => {
     const { ctx, controller, order, dryers, machineById, log } = await setup();
-    await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0]);
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     const endsAt = machineById(dryers[0])?.runEndsAt ?? 0;
     await expect(topUpDryer(ctx, controller, testEmployee, dryers[0])).resolves.toBe('acked');
     expect(controller.starts[1]).toEqual({ channel: 4, pulses: { count: 2, onMs: 500, offMs: 500 } });
@@ -359,7 +362,7 @@ describe('dryer top-ups', () => {
 
   it('takes the charge off again when nothing was sent', async () => {
     const { ctx, controller, order, dryers, machineById, log } = await setup();
-    await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0]);
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     const endsAt = machineById(dryers[0])?.runEndsAt;
     controller.failNextStart('busy');
     await expect(topUpDryer(ctx, controller, testEmployee, dryers[0])).resolves.toBe('busy');
@@ -371,13 +374,73 @@ describe('dryer top-ups', () => {
 
   it('refuses washers, dryers without a price, and closed orders', async () => {
     const { ctx, owner, controller, order, washers, dryers } = await setup();
-    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0]);
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
     await expect(topUpDryer(ctx, controller, testEmployee, washers[0])).rejects.toThrow('Only dryers');
-    await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[1]);
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[1], receiptOf(order));
     await expect(topUpDryer(ctx, controller, testEmployee, dryers[1])).rejects.toThrow('no price');
     await expect(topUpDryer(ctx, controller, testEmployee, dryers[0])).rejects.toThrow('not dried an order');
-    await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0]);
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     updateOrderStatus(ctx, owner, order.id, 'COMPLETED');
     await expect(topUpDryer(ctx, controller, testEmployee, dryers[0])).rejects.toThrow('completed');
+  });
+});
+
+describe('receipt QR codes', () => {
+  it('runs a machine only with the receipt of that order', async () => {
+    const { ctx, controller, order, newOrder, washers, machineById, log } = await setup();
+    const other = newOrder();
+    const run = (code: string) => startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], code);
+
+    await expect(run('hello')).rejects.toThrow('not a Laundry POS receipt');
+    await expect(run(receiptCodeFor(order.id, 'f'.repeat(32)))).rejects.toThrow(`does not match order ${order.id}`);
+    await expect(run(receiptOf(other))).rejects.toThrow(`This receipt is for ${other.id}, not ${order.id}`);
+    expect(controller.starts).toEqual([]);
+    expect(log()).toEqual([]);
+    expect(machineById(washers[0])?.assignedOrderId).toBeNull();
+
+    await expect(run(` ${receiptOf(order)}\n`)).resolves.toBe('acked');
+  });
+
+  it('allows as many washer and dryer runs as the order has loads, and no more', async () => {
+    const { ctx, controller, order, washers, dryers } = await setup();
+    const code = receiptOf(order);
+    for (const id of [washers[0], washers[1], dryers[0], dryers[1]]) {
+      await expect(startOrderOnMachine(ctx, controller, testEmployee, order.id, id, code)).resolves.toBe('acked');
+    }
+    await expect(startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[2], code)).rejects.toThrow(
+      'used all its washers',
+    );
+    await expect(startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[2], code)).rejects.toThrow(
+      'used all its dryers',
+    );
+  });
+
+  it("a voided order's receipt no longer runs a machine", async () => {
+    const { ctx, owner, controller, order, washers } = await setup();
+    voidOrder(ctx, owner, order.id, 'Test');
+    await expect(
+      startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order)),
+    ).rejects.toThrow('voided');
+  });
+
+  it('the temporary test code works for any open order', async () => {
+    const { ctx, controller, order, washers } = await setup();
+    expect(readReceiptCode(ctx, TEST_RECEIPT_CODE)).toEqual({ kind: 'test' });
+    await expect(
+      startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], TEST_RECEIPT_CODE),
+    ).resolves.toBe('acked');
+  });
+
+  it('identifies the order from its receipt', async () => {
+    const { ctx, order } = await setup();
+    expect(readReceiptCode(ctx, receiptOf(order))).toEqual({ kind: 'order', orderId: order.id });
+    expect(() => readReceiptCode(ctx, receiptCodeFor('T9999', 'a'.repeat(32)))).toThrow('does not match order T9999');
+  });
+
+  it('gives every order its own code', async () => {
+    const { order, newOrder } = await setup();
+    const other = newOrder();
+    expect(order.qrToken).toMatch(/^[0-9a-f]{32}$/);
+    expect(other.qrToken).not.toBe(order.qrToken);
   });
 });

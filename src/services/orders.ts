@@ -12,6 +12,7 @@ import {
 } from '@/domain/payments';
 import { can } from '@/domain/permissions';
 import { computeOrderTotal, CURRENT_SERVICE, loadRangeForWeight, type OrderTotal } from '@/domain/pricing';
+import { newReceiptToken } from '@/domain/receiptCode';
 import { INITIAL_STATUS, isClosedStatus, normalizeStatus, selectableStatuses } from '@/domain/statuses';
 import {
   customers,
@@ -213,6 +214,7 @@ export function createOrder(
       voidedByName: null,
       voidReason: null,
       legacyNote: null,
+      qrToken: newReceiptToken(ctx.randomBytes),
     };
     tx.insert(orders).values(order).run();
 

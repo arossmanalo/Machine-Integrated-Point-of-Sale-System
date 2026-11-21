@@ -71,8 +71,14 @@ export const orders = sqliteTable(
     voidReason: text('void_reason'),
     /** Free text carried over from the old app (its add-on list). */
     legacyNote: text('legacy_note'),
+    /** Random token in the receipt's QR code; scanning it is what lets a machine run for this order. */
+    qrToken: text('qr_token').notNull().default(''),
   },
-  (t) => [index('orders_placed_at').on(t.placedAt), index('orders_customer').on(t.customerId)],
+  (t) => [
+    index('orders_placed_at').on(t.placedAt),
+    index('orders_customer').on(t.customerId),
+    uniqueIndex('orders_qr_token').on(t.qrToken),
+  ],
 );
 
 export const orderItems = sqliteTable('order_items', {

@@ -13,6 +13,27 @@ const ALIGN_CENTER = [ESC, 0x61, 0x01];
 const BOLD_ON = [ESC, 0x45, 0x01];
 const BOLD_OFF = [ESC, 0x45, 0x00];
 const FEED_3 = [ESC, 0x64, 0x03];
+const GS = 0x1d;
+
+/** QR module size in dots; 6 makes a symbol about 2.5 cm wide on a 58 mm printer. */
+const QR_MODULE_SIZE = 6;
+
+/** One GS ( k packet for a QR code (cn = 0x31): function byte, then its parameters. */
+function qrPacket(fn: number, params: readonly number[]): number[] {
+  const length = params.length + 2;
+  return [GS, 0x28, 0x6b, length & 0xff, length >> 8, 0x31, fn, ...params];
+}
+
+/** Native ESC/POS QR code: model 2, module size, error correction M, store the data, print it. */
+export function qrCodeBytes(text: string): number[] {
+  return [
+    ...qrPacket(0x41, [0x32, 0x00]),
+    ...qrPacket(0x43, [QR_MODULE_SIZE]),
+    ...qrPacket(0x45, [0x31]),
+    ...qrPacket(0x50, [0x30, ...bytes(text)]),
+    ...qrPacket(0x51, [0x30]),
+  ];
+}
 
 export interface ReceiptData {
   header: string;
@@ -31,6 +52,8 @@ export interface ReceiptData {
   /** The latest payment, if any, to show cash and change. */
   lastPayment: { channel: PaymentChannel; amount: number; cashReceived: number | null } | null;
   voided: boolean;
+  /** What the receipt's QR code holds; staff scan it to run a machine for this order. */
+  machineCode: string;
 }
 
 /** Thermal printers only know plain ASCII; replace anything else so the line still prints. */
@@ -91,7 +114,11 @@ export function buildReceipt(data: ReceiptData): Uint8Array {
     out.push(...bytes(`${line}\n`));
     if (isBalance) out.push(...BOLD_OFF);
   }
-  out.push(...ALIGN_CENTER, ...bytes(`\n${data.footer}\n`), ...FEED_3);
+  out.push(...ALIGN_CENTER);
+  if (!data.voided) {
+    out.push(...bytes('\nScan at the machines\n'), ...qrCodeBytes(data.machineCode), ...bytes('\n'));
+  }
+  out.push(...bytes(`\n${data.footer}\n`), ...FEED_3);
   return Uint8Array.from(out);
 }
 

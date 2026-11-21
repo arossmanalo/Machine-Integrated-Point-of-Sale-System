@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { parseIdNumber, type IdKind } from '@/domain/ids';
 import { pesosToCentavos } from '@/domain/money';
+import { newReceiptToken } from '@/domain/receiptCode';
 import { normalizeStatus } from '@/domain/statuses';
 import {
   customers,
@@ -27,7 +28,7 @@ import { DEVICE_ONLY_SETTINGS } from './settings';
 
 export const BACKUP_FORMAT = 'laundry-pos-backup';
 /** 2: machine run timers, dryer top-ups and the TOP_UP log kind. */
-export const BACKUP_VERSION = 2;
+export const BACKUP_VERSION = 3;
 
 function readAll(db: Db) {
   return {
@@ -113,6 +114,8 @@ const tableSchemas = {
     voidedByName: maybeText,
     voidReason: maybeText,
     legacyNote: maybeText,
+    // Backups before version 3 had no receipt codes; restore gives those orders new ones.
+    qrToken: z.string().optional(),
   }),
   orderItems: z.object({
     id: int,
@@ -225,7 +228,10 @@ export function restoreBackup(ctx: ServiceContext, actor: Actor, parsed: unknown
     for (const values of tables.users) tx.insert(users).values(values).run();
     for (const values of tables.customers) tx.insert(customers).values(values).run();
     for (const values of tables.inventoryItems) tx.insert(inventoryItems).values(values).run();
-    for (const values of tables.orders) tx.insert(orders).values(values).run();
+    for (const values of tables.orders) {
+      const qrToken = values.qrToken || newReceiptToken(ctx.randomBytes);
+      tx.insert(orders).values({ ...values, qrToken }).run();
+    }
     for (const values of tables.orderItems) tx.insert(orderItems).values(values).run();
     for (const values of tables.payments) tx.insert(payments).values(values).run();
     for (const values of tables.expenses) tx.insert(expenses).values(values).run();
@@ -448,6 +454,7 @@ export function importLegacyExport(
           voidedByName: null,
           voidReason: null,
           legacyNote: t.addOns ?? null,
+          qrToken: newReceiptToken(ctx.randomBytes),
         })
         .run();
       summary.orders += 1;

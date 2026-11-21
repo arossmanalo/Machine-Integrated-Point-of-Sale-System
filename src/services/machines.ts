@@ -14,6 +14,7 @@ import {
   type PolicyOrder,
 } from '@/domain/machinePolicy';
 import { formatPeso } from '@/domain/money';
+import { parseReceiptCode, tokensMatch } from '@/domain/receiptCode';
 import { isValidChannel, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress, pulsesProblem } from '@/machines/protocol';
 import type { MachineController, PulseSettings, StartResult } from '@/machines/MachineController';
 import {
@@ -257,6 +258,33 @@ export function machinesAssignedTo(ctx: ServiceContext, orderId: string): Machin
     .all();
 }
 
+// ---------- Receipt codes ----------
+
+/** What a scanned receipt QR code stands for: one order, or the temporary test code. */
+export type ScannedReceipt = { kind: 'test' } | { kind: 'order'; orderId: string };
+
+/** Checks a scanned QR code against the orders. Throws with a message staff can act on. */
+export function readReceiptCode(ctx: ServiceContext, scanned: string): ScannedReceipt {
+  const code = parseReceiptCode(scanned);
+  if (code.kind === 'test') return code;
+  if (code.kind === 'invalid') {
+    throw new UserFacingError('That is not a Laundry POS receipt. Scan the QR code printed on the order receipt.');
+  }
+  const order = ctx.db.select().from(orders).where(eq(orders.id, code.orderId)).get();
+  if (!order || !tokensMatch(code.token, order.qrToken)) {
+    throw new UserFacingError(`This QR code does not match order ${code.orderId}. Reprint the receipt and scan again.`);
+  }
+  return { kind: 'order', orderId: order.id };
+}
+
+/** Throws unless the scanned code may run a machine for this order (its own receipt, or the test code). */
+export function checkReceiptFor(ctx: ServiceContext, scanned: string, orderId: string): void {
+  const receipt = readReceiptCode(ctx, scanned);
+  if (receipt.kind === 'order' && receipt.orderId !== orderId) {
+    throw new UserFacingError(`This receipt is for ${receipt.orderId}, not ${orderId}. Scan the receipt for ${orderId}.`);
+  }
+}
+
 // ---------- Assigning ----------
 
 /** Puts an order on a machine, if the order still has that machine type left. */
@@ -421,8 +449,9 @@ export async function startMachine(
 }
 
 /**
- * Assigning an order to a machine starts it straight away. If the start sends nothing (offline,
- * busy, refused), the order stays on the machine so Start machine on the Machines tab can retry.
+ * Assigning an order to a machine starts it straight away, once the order's receipt QR code has
+ * been scanned. If the start sends nothing (offline, busy, refused), the order stays on the
+ * machine so Run machine on the Machines tab can retry without scanning again.
  */
 export async function startOrderOnMachine(
   ctx: ServiceContext,
@@ -430,7 +459,9 @@ export async function startOrderOnMachine(
   actor: Actor,
   orderId: string,
   machineId: number,
+  receiptCode: string,
 ): Promise<StartResult> {
+  checkReceiptFor(ctx, receiptCode, orderId);
   const machine = requireMachine(ctx.db, machineId);
   if (machine.assignedOrderId !== orderId) {
     ctx.db.transaction((tx) => {

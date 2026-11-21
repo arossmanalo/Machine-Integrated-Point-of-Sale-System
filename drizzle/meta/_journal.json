@@ -29,6 +29,13 @@
       "when": 1795245793611,
       "tag": "0003_machine_runs_and_top_ups",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1795266410751,
+      "tag": "0004_order_receipt_codes",
+      "breakpoints": true
     }
   ]
 }

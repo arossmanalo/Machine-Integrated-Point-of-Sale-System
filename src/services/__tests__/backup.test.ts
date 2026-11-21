@@ -1,4 +1,4 @@
-import { createTestContext, testEmployee } from '@/db/testing';
+import { createTestContext, receiptOf, testEmployee } from '@/db/testing';
 import { MockMachineController } from '@/machines/MockMachineController';
 
 import { completeFirstRunSetup, listStaff, logIn } from '../auth';
@@ -156,8 +156,8 @@ describe('full backup', () => {
     });
     const controller = new MockMachineController(0);
     await controller.connect();
-    await startOrderOnMachine(ctx, controller, testEmployee, order.id, machineId);
-    await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryerId);
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, machineId, receiptOf(order));
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryerId, receiptOf(order));
     await topUpDryer(ctx, controller, testEmployee, dryerId);
 
     const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
@@ -238,6 +238,21 @@ describe('full backup', () => {
     restoreBackup(fresh, owner, backup);
     const flags = Object.fromEntries(listInventory(fresh).map((i) => [i.name, i.isAddOn]));
     expect(flags).toEqual({ Detergent: false, Fabcon: true });
+  });
+
+  it('gives orders from a backup made before receipt codes a code of their own', async () => {
+    const { ctx, owner } = await setup();
+    importLegacyExport(ctx, owner, legacyExport);
+    const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
+    backup.version = 2;
+    for (const order of backup.tables.orders) delete order.qrToken;
+
+    const fresh = createTestContext();
+    restoreBackup(fresh, owner, backup);
+    const tokens = listOrderSummaries(fresh).map((s) => s.order.qrToken);
+    expect(tokens.length).toBeGreaterThan(1);
+    for (const token of tokens) expect(token).toMatch(/^[0-9a-f]{32}$/);
+    expect(new Set(tokens).size).toBe(tokens.length);
   });
 
   it('rejects a file with a bad row and leaves data alone', async () => {

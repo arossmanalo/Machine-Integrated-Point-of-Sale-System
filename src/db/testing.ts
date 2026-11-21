@@ -5,6 +5,8 @@ import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 
+import { receiptCodeFor } from '@/domain/receiptCode';
+
 import * as schema from './schema';
 import type { Actor, ServiceContext } from './types';
 
@@ -29,3 +31,8 @@ export function createTestContext(start = Date.UTC(2026, 10, 17, 2, 0)): Service
 
 export const testOwner: Actor = { id: 'U0001', username: 'owner', role: 'OWNER' };
 export const testEmployee: Actor = { id: 'U0002', username: 'ana', role: 'EMPLOYEE' };
+
+/** The QR code printed on an order's receipt, as staff would scan it. */
+export function receiptOf(order: { id: string; qrToken: string }): string {
+  return receiptCodeFor(order.id, order.qrToken);
+}
