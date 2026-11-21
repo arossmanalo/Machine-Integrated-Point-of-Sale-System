@@ -19,7 +19,6 @@ import { loadRangeForWeight } from '@/domain/pricing';
 import { getCustomer, listCustomers, matchesCustomer } from '@/services/customers';
 import { listInventory } from '@/services/inventory';
 import { createOrder, quoteOrder } from '@/services/orders';
-import { getSetting } from '@/services/settings';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData } from '@/state/hooks';
 import { useToast } from '@/state/toast';
@@ -64,7 +63,6 @@ export default function NewOrder() {
   const customers = useData(listCustomers);
   const customer = useData((c) => (customerId ? (getCustomer(c, customerId) ?? null) : null), [customerId]);
   const addOnItems = useData((c) => listInventory(c).filter((item) => item.isAddOn));
-  const printingEnabled = useData((c) => getSetting(c.db, 'printingEnabled'));
   const selections = Object.entries(addOns).map(([itemId, quantity]) => ({ itemId, quantity }));
   const quote = useData(
     (c) => quoteOrder(c, customer, loads, selections),
@@ -106,7 +104,8 @@ export default function NewOrder() {
     );
     if (!result.ok) return;
     toast(`Order ${result.value.id} saved`);
-    if (printingEnabled) void print(result.value.id);
+    // Every order gets its receipt: it carries the QR code staff scan to run the machines.
+    void print(result.value.id);
     router.replace({ pathname: '/orders/[id]', params: { id: result.value.id, fresh: '1' } });
   }
 
@@ -349,8 +348,8 @@ export default function NewOrder() {
         <Row wrap>
           <Button label="Cancel" kind="secondary" onPress={() => router.back()} />
           <Button
-            label={paying ? `Save order and take ${formatPeso(payingNow)}` : 'Save order'}
-            icon="check"
+            label="Save and print"
+            icon="printer"
             onPress={save}
             busy={action.busy}
             disabled={!canSave}

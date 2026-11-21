@@ -26,7 +26,6 @@ export default function Settings() {
         <StatusSection custom={settings.customStatuses} hidden={settings.hiddenStatuses} />
         <ExpenseEntrySection allowed={settings.employeesRecordExpenses} />
         <PrinterSection
-          enabled={settings.printingEnabled}
           printerName={settings.printerName}
           printerAddress={settings.printerAddress}
           header={settings.receiptHeader}
@@ -142,13 +141,11 @@ function StatusSection({ custom, hidden }: { custom: string[]; hidden: string[] 
 }
 
 function PrinterSection({
-  enabled,
   printerName,
   printerAddress,
   header,
   footer,
 }: {
-  enabled: boolean;
   printerName: string | null;
   printerAddress: string | null;
   header: string;
@@ -170,12 +167,10 @@ function PrinterSection({
   }
 
   return (
-    <Section title="Receipts" description="Prints on a Bluetooth thermal printer paired in Android settings.">
-      <Toggle
-        label="Print a receipt for every new order"
-        value={enabled}
-        onChange={(value) => void action.run((c) => setSetting(c.db, 'printingEnabled', value))}
-      />
+    <Section
+      title="Receipts"
+      description="Every new order prints its receipt when it is saved, on a Bluetooth thermal printer paired in Android settings."
+    >
       <Row wrap>
         <Text style={{ flex: 1 }}>{printerName ? `Printer: ${printerName}` : 'No printer chosen yet.'}</Text>
         <Button label="Find paired printers" kind="secondary" icon="printer-search" onPress={findPrinters} busy={action.busy} />

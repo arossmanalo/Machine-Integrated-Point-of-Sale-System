@@ -12,7 +12,7 @@
 4. For add-ons (fabric softener and so on), tap **Add-ons** to open the list and set how many. Only items an admin marked "Sell as an add-on" in Stock, with a price, are listed.
 5. If the customer has 10 or more loads saved up, one load is free. The app does this by itself and shows it.
 6. Choose how they pay: **Full payment**, **Down payment** or **Pay later**. For GCash, type the reference number.
-7. Tap **Save order**. The receipt prints if printing is on.
+7. Tap **Save and print**. The order is saved and its receipt prints right away; give it to the customer, since staff scan its QR code to run the machines. If it did not print, open the order and tap **Print receipt**.
 
 ### Running a machine
 
