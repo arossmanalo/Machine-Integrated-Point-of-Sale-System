@@ -39,7 +39,7 @@ If the laundry is still damp, tap **Top up 5 min** on the dryer in **Machines**.
 
 ### Payments later
 
-Open the order (from **Orders** or the customer's history) and tap **Receive payment**. The app never takes more than what is owed.
+Open the order (from **Orders** or the customer's history) and tap **Receive payment**. Faster: on the **Orders** tab, tap the order's **Unpaid** badge. The full balance is filled in; pick Cash or GCash and tap **Record**. The app never takes more than what is owed.
 
 ### Updating the app
 

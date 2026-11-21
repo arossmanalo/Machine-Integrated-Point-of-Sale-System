@@ -16,6 +16,7 @@ import { useToast } from '@/state/toast';
 import { Button } from '@/ui/Button';
 import { Choice, Dialog } from '@/ui/controls';
 import { EmptyState, ListRow, Notice, Panel, Row, Screen, Section } from '@/ui/layout';
+import { PaymentDialog } from '@/ui/orders/PaymentDialog';
 import { BalanceBadge, StatusBadge } from '@/ui/StatusBadge';
 import { Text } from '@/ui/Text';
 import { TextField } from '@/ui/TextField';
@@ -34,6 +35,7 @@ export default function Orders() {
   const [dates, setDates] = useState<DateFilter>('all');
   const [shown, setShown] = useState(PAGE);
   const [auditing, setAuditing] = useState<{ id: string; customerName: string } | null>(null);
+  const [paying, setPaying] = useState<{ id: string; balance: number } | null>(null);
   const canAudit = can.setAuditedStatus(actor.role);
   const { summaries, statuses } = useData((c) => {
     const settings = getAllSettings(c.db);
@@ -149,7 +151,20 @@ export default function Orders() {
                 }
                 right={
                   <Row>
-                    {s.order.voidedAt === null && <BalanceBadge balance={s.balance} />}
+                    {s.order.voidedAt === null && s.balance > 0 ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`${s.order.id} is unpaid, ${formatPeso(s.balance)} due. Receive payment`}
+                        onPress={() => setPaying({ id: s.order.id, balance: s.balance })}
+                        hitSlop={space.md}
+                        style={({ pressed }) => [styles.statusButton, pressed && styles.pressed]}
+                      >
+                        <BalanceBadge balance={s.balance} />
+                        <MaterialCommunityIcons name="chevron-down" size={18} color={colors.textMuted} />
+                      </Pressable>
+                    ) : (
+                      s.order.voidedAt === null && <BalanceBadge balance={s.balance} />
+                    )}
                     {canAudit && s.order.voidedAt === null && s.order.status === 'PENDING' ? (
                       <Pressable
                         accessibilityRole="button"
@@ -177,11 +192,12 @@ export default function Orders() {
         )}
       </Section>
       {auditing && <AuditDialog order={auditing} onClose={() => setAuditing(null)} />}
+      {paying && <PaymentDialog orderId={paying.id} balance={paying.balance} onClose={() => setPaying(null)} />}
     </Screen>
   );
 }
 
-/** Admins and the owner sign off a pending order straight from the list. */
+/** Admins and the owner sign off a pending order straight from the list. Unpaid opens Receive payment. */
 function AuditDialog({ order, onClose }: { order: { id: string; customerName: string }; onClose: () => void }) {
   const actor = useActor();
   const action = useAction();
