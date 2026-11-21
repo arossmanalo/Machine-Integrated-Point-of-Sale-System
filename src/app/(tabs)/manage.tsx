@@ -30,20 +30,22 @@ export default function Manage() {
   const links = LINKS.filter((link) => link.allowed(actor.role));
   return (
     <Screen>
-      <Section title="Manage the shop">
-        <Panel>
-          {links.map((link, index) => (
-            <ListRow
-              key={link.title}
-              title={link.title}
-              subtitle={link.subtitle}
-              right={<MaterialCommunityIcons name={link.icon} size={24} color={colors.textMuted} />}
-              onPress={() => router.push(link.href)}
-              last={index === links.length - 1}
-            />
-          ))}
-        </Panel>
-      </Section>
+      {links.length > 0 && (
+        <Section title="Manage the shop">
+          <Panel>
+            {links.map((link, index) => (
+              <ListRow
+                key={link.title}
+                title={link.title}
+                subtitle={link.subtitle}
+                right={<MaterialCommunityIcons name={link.icon} size={24} color={colors.textMuted} />}
+                onPress={() => router.push(link.href)}
+                last={index === links.length - 1}
+              />
+            ))}
+          </Panel>
+        </Section>
+      )}
       <AppUpdatesSection />
     </Screen>
   );

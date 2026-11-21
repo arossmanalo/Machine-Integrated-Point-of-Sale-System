@@ -88,9 +88,9 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="manage"
         options={{
-          title: 'Manage',
+          // Employees get the tab too, for app updates; the shop management links stay hidden.
+          title: isManager(user.role) ? 'Manage' : 'Settings',
           tabBarIcon: tabIcon('cog-outline'),
-          href: isManager(user.role) ? undefined : null,
         }}
       />
     </Tabs>

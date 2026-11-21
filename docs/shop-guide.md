@@ -41,6 +41,10 @@ If the laundry is still damp, tap **Top up 5 min** on the dryer in **Machines**.
 
 Open the order (from **Orders** or the customer's history) and tap **Receive payment**. The app never takes more than what is owed.
 
+### Updating the app
+
+The app downloads updates by itself when it opens and uses them from the next start. To get one right away, open **Settings** (or **Manage** for admins and the owner) › **About this app** and tap **Check for updates**.
+
 ### Recording an expense
 
 If the owner allows it, the **Today** screen has **Record expense**. Enter what it was for, the category and the cost, then **Save expense**. It is saved for today under your name. You cannot see, change or delete expenses after saving; ask the owner or an admin to fix a mistake.
