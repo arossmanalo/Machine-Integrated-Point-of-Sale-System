@@ -83,6 +83,9 @@ export function ReceiptScanner({
           <CameraView
             style={StyleSheet.absoluteFill}
             facing={facing}
+            // A set ratio makes Android fit the preview inside the box; the default fill draws past
+            // the dialog's edges, because the camera surface ignores overflow clipping.
+            ratio="4:3"
             barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
             onBarcodeScanned={scanned}
           />
@@ -101,7 +104,7 @@ export function ReceiptScanner({
 const styles = StyleSheet.create({
   wrap: { gap: space.sm },
   viewfinder: {
-    height: 280,
+    height: 300,
     overflow: 'hidden',
     borderRadius: radius.md,
     backgroundColor: colors.surfaceSunken,
