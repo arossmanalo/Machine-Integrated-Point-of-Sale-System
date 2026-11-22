@@ -9,6 +9,7 @@ import {
   isRunning,
   MACHINE_TYPES,
   RUN_MINUTES_LIMITS,
+  isTopUpMinutes,
   TOP_UP_CHOICES,
   topUpPriceFor,
   topUpPulseCountFor,
@@ -82,6 +83,12 @@ export function topUpPulsesOf(
     onMs: machine.pulseOnMs,
     offMs: machine.pulseOffMs,
   };
+}
+
+/** A dryer start that also carries a top-up paid for with the order. */
+function withPrepaidTopUp(machine: MachineRow, minutes: TopUpMinutes): PulseSettings {
+  const start = pulsesOf(machine);
+  return { ...start, count: start.count + topUpPulsesOf(machine, minutes).count };
 }
 
 /** Problems with a dryer's top-up prices, or with the pulses each priced length would send. */
@@ -258,21 +265,7 @@ export interface MachineUsage {
  * is assigned to right now.
  */
 export function machineUsage(ctx: ServiceContext, orderId: string): MachineUsage {
-  const starts = ctx.db
-    .select({ type: machineUnlocks.machineType })
-    .from(machineUnlocks)
-    .where(
-      and(
-        eq(machineUnlocks.orderId, orderId),
-        eq(machineUnlocks.kind, 'ORDER'),
-        or(
-          eq(machineUnlocks.result, 'ACKED'),
-          eq(machineUnlocks.result, 'TIMEOUT'),
-          and(eq(machineUnlocks.result, 'PENDING'), gte(machineUnlocks.at, ctx.now() - PENDING_HOLD_MS)),
-        ),
-      ),
-    )
-    .all();
+  const starts = countedStarts(ctx.db, ctx.now(), orderId);
   const assigned = ctx.db
     .select({ type: machines.type })
     .from(machines)
@@ -283,6 +276,36 @@ export function machineUsage(ctx: ServiceContext, orderId: string): MachineUsage
     WASHER: all.filter((r) => r.type === 'WASHER').length,
     DRYER: all.filter((r) => r.type === 'DRYER').length,
   };
+}
+
+/** Order starts that may have run: went through, still waiting for an answer, or never answered. */
+function countedStarts(db: Db, now: number, orderId: string): { type: MachineType }[] {
+  return db
+    .select({ type: machineUnlocks.machineType })
+    .from(machineUnlocks)
+    .where(
+      and(
+        eq(machineUnlocks.orderId, orderId),
+        eq(machineUnlocks.kind, 'ORDER'),
+        or(
+          eq(machineUnlocks.result, 'ACKED'),
+          eq(machineUnlocks.result, 'TIMEOUT'),
+          and(eq(machineUnlocks.result, 'PENDING'), gte(machineUnlocks.at, now - PENDING_HOLD_MS)),
+        ),
+      ),
+    )
+    .all();
+}
+
+/**
+ * The top-up paid for when the order was taken, if this dryer start is one of the loads it
+ * covers: the first `prepaidTopUpLoads` dryer starts of the order get it.
+ */
+function prepaidTopUpFor(db: Db, now: number, machine: MachineRow, order: OrderRow): TopUpMinutes | null {
+  const minutes = order.prepaidTopUpMinutes;
+  if (machine.type !== 'DRYER' || minutes === null || !isTopUpMinutes(minutes)) return null;
+  const dryerStarts = countedStarts(db, now, order.id).filter((start) => start.type === 'DRYER').length;
+  return dryerStarts < order.prepaidTopUpLoads ? minutes : null;
 }
 
 /** Machines waiting to run this order. */
@@ -450,15 +473,24 @@ export async function startMachine(
         ? undefined
         : tx.select().from(orders).where(eq(orders.id, machine.assignedOrderId)).get();
     const decision = decideStart(machine, policyOrder(order), ctx.now());
-    if (!decision.allowed || machine.assignedOrderId === null) {
+    if (!decision.allowed || machine.assignedOrderId === null || !order) {
       throw new UserFacingError(decision.allowed ? 'Assign an order first.' : decision.message);
     }
+    // A top-up paid with the order goes out with the start: its pulses follow the start's.
+    const topUp = prepaidTopUpFor(tx, ctx.now(), machine, order);
+    const pulses = topUp === null ? pulsesOf(machine) : withPrepaidTopUp(machine, topUp);
+    const problem = pulsesProblem(pulses);
+    if (problem) {
+      throw new UserFacingError(`${machine.name} cannot send the start and the paid top-up together: ${problem}`);
+    }
+    const run = runFields(machine, machine.assignedOrderId, ctx.now());
     tx.update(machines)
       .set({
         assignedOrderId: null,
         assignedAt: null,
         assignedByName: null,
-        ...runFields(machine, machine.assignedOrderId, ctx.now()),
+        ...run,
+        runEndsAt: run.runEndsAt + (topUp ?? 0) * 60000,
       })
       .where(eq(machines.id, machineId))
       .run();
@@ -466,9 +498,9 @@ export async function startMachine(
       { ...ctx, db: tx },
       { machine, actor, kind: 'ORDER', orderId: machine.assignedOrderId, result: 'PENDING' },
     );
-    return { machine, logId };
+    return { machine, logId, pulses };
   });
-  const result = await sendAndRecord(ctx, controller, claimed.logId, claimed.machine);
+  const result = await sendAndRecord(ctx, controller, claimed.logId, claimed.machine, claimed.pulses);
   if (NOTHING_SENT.includes(result)) {
     // Nothing started, so the order goes back on the machine, unless someone reassigned it since.
     restoreRun(ctx.db, claimed.machine);

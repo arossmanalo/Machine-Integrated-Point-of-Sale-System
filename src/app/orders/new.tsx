@@ -4,6 +4,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { formatShopDate } from '@/domain/dates';
 import { LOADS_PER_FREE_LOAD } from '@/domain/loyalty';
+import { isTopUpMinutes, topUpOptions } from '@/domain/machinePolicy';
 import { centavosToInput, formatPeso, parsePesoInput } from '@/domain/money';
 import {
   changeDue,
@@ -19,6 +20,7 @@ import { loadRangeForWeight } from '@/domain/pricing';
 import { getCustomer, listCustomers, matchesCustomer } from '@/services/customers';
 import { listInventory } from '@/services/inventory';
 import { createOrder, quoteOrder } from '@/services/orders';
+import { getSetting } from '@/services/settings';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData } from '@/state/hooks';
 import { useToast } from '@/state/toast';
@@ -60,14 +62,22 @@ export default function NewOrder() {
   const [cashText, setCashText] = useState('');
   const [gcashRef, setGcashRef] = useState('');
   const [daysBack, setDaysBack] = useState(0);
+  const [topUpChoice, setTopUpChoice] = useState('none');
+  const [topUpLoadsWanted, setTopUpLoadsWanted] = useState(1);
 
   const customers = useData(listCustomers);
   const customer = useData((c) => (customerId ? (getCustomer(c, customerId) ?? null) : null), [customerId]);
   const addOnItems = useData((c) => listInventory(c).filter((item) => item.isAddOn));
   const selections = Object.entries(addOns).map(([itemId, quantity]) => ({ itemId, quantity }));
+  const topUpChoices = useData((c) => topUpOptions(getSetting(c.db, 'orderTopUpPrices')));
+  const topUpMinutes = Number(topUpChoice);
+  const topUp =
+    isTopUpMinutes(topUpMinutes) && topUpChoices.some((option) => option.minutes === topUpMinutes)
+      ? { minutes: topUpMinutes, loads: Math.min(Math.max(topUpLoadsWanted, 1), loads) }
+      : null;
   const quote = useData(
-    (c) => quoteOrder(c, customer, loads, selections),
-    [customer, loads, JSON.stringify(addOns)],
+    (c) => quoteOrder(c, customer, loads, selections, topUp),
+    [customer, loads, JSON.stringify(addOns), topUp?.minutes, topUp?.loads],
   );
 
   const addOnCount = quote.addOnLines.reduce((sum, line) => sum + line.quantity, 0);
@@ -101,6 +111,7 @@ export default function NewOrder() {
         gcashReference: gcashRef,
         cashReceived: channel === 'CASH' ? cashReceived : null,
         placedAt,
+        topUp,
       }),
     );
     if (!result.ok) return;
@@ -244,6 +255,41 @@ export default function NewOrder() {
               ))}
             </Panel>
           )}
+          {topUpChoices.length > 0 && (
+            <>
+              <Choice
+                label="Dryer top-up"
+                value={topUpChoice}
+                onChange={(value) => {
+                  setTopUpChoice(value);
+                  setTopUpLoadsWanted(loads);
+                }}
+                options={[
+                  { value: 'none', label: 'None' },
+                  ...topUpChoices.map((option) => ({
+                    value: String(option.minutes),
+                    label: `${option.minutes} min · ${formatPeso(option.price)}`,
+                  })),
+                ]}
+              />
+              {topUp && loads > 1 && (
+                <Row wrap>
+                  <View style={styles.flex}>
+                    <Text variant="label">Loads with the top-up</Text>
+                    <Text tone="muted">{`${topUp.loads} of ${loads} loads`}</Text>
+                  </View>
+                  <Stepper label="loads with the top-up" value={topUp.loads} min={1} max={loads} onChange={setTopUpLoadsWanted} />
+                </Row>
+              )}
+              {topUp && (
+                <Text tone="muted">
+                  {`For laundry that will need longer in the dryer: ${topUp.minutes} extra minutes are added automatically when ${
+                    topUp.loads === 1 ? 'the load starts' : `each of ${topUp.loads} loads starts`
+                  } in a dryer.`}
+                </Text>
+              )}
+            </>
+          )}
           {can.backdateOrder(actor.role) && (
             <Row wrap>
               <View style={styles.flex}>
@@ -271,6 +317,12 @@ export default function NewOrder() {
               <Row>
                 <Text style={styles.flex}>Add-ons</Text>
                 <Text numeric>{formatPeso(quote.addOnsTotal)}</Text>
+              </Row>
+            )}
+            {quote.topUp && (
+              <Row>
+                <Text style={styles.flex}>{`Dryer top-up ${quote.topUp.minutes} min × ${quote.topUp.loads}`}</Text>
+                <Text numeric>{formatPeso(quote.topUp.total)}</Text>
               </Row>
             )}
             <Divider />

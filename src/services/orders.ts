@@ -10,6 +10,7 @@ import {
   type PaymentChannel,
   type PaymentMethod,
 } from '@/domain/payments';
+import { isTopUpMinutes, topUpPriceFor, type TopUpMinutes } from '@/domain/machinePolicy';
 import { can } from '@/domain/permissions';
 import { computeOrderTotal, CURRENT_SERVICE, loadRangeForWeight, type OrderTotal } from '@/domain/pricing';
 import { newReceiptToken } from '@/domain/receiptCode';
@@ -64,12 +65,35 @@ export interface NewOrderInput {
   cashReceived: number | null;
   /** Owner only: when the order was really placed. */
   placedAt: number | null;
+  /** A dryer top-up paid for now and added when the order's dryers start. */
+  topUp?: PrepaidTopUpSelection | null;
+}
+
+/** Extra drying time for some of the order's loads, chosen when the order is taken. */
+export interface PrepaidTopUpSelection {
+  minutes: TopUpMinutes;
+  loads: number;
 }
 
 export interface OrderQuote extends OrderTotal {
   promoApplied: boolean;
   pricePerLoad: number;
   addOnLines: { item: InventoryItemRow; quantity: number }[];
+  /** The top-up's price per load and its total, already in `total`. */
+  topUp: (PrepaidTopUpSelection & { unitPrice: number; total: number }) | null;
+}
+
+function resolveTopUp(db: Db, loads: number, topUp: PrepaidTopUpSelection | null): OrderQuote['topUp'] {
+  if (topUp === null || topUp.loads === 0) return null;
+  if (!isTopUpMinutes(topUp.minutes)) throw new UserFacingError('Pick a top-up of 5, 10, 15 or 20 minutes.');
+  if (!Number.isInteger(topUp.loads) || topUp.loads < 1 || topUp.loads > loads) {
+    throw new UserFacingError(`The top-up can cover 1 to ${loads} load${loads === 1 ? '' : 's'}.`);
+  }
+  const unitPrice = topUpPriceFor(getSetting(db, 'orderTopUpPrices'), topUp.minutes);
+  if (unitPrice <= 0) {
+    throw new UserFacingError(`A ${topUp.minutes}-minute top-up has no price. Set it in Manage, Shop settings.`);
+  }
+  return { ...topUp, unitPrice, total: unitPrice * topUp.loads };
 }
 
 function requireCustomer(db: Db, id: string): CustomerRow {
@@ -103,17 +127,19 @@ export function quoteOrder(
   customer: Pick<CustomerRow, 'loyaltyLoads'> | null,
   loads: number,
   addOns: AddOnSelection[],
+  topUpSelection: PrepaidTopUpSelection | null = null,
 ): OrderQuote {
   const pricePerLoad = getSetting(ctx.db, 'pricePerLoad');
   const promoApplied = customer !== null && isPromoEligible(customer.loyaltyLoads);
   const addOnLines = resolveAddOns(ctx.db, addOns);
+  const topUp = resolveTopUp(ctx.db, loads, topUpSelection);
   const total = computeOrderTotal({
     loads,
     pricePerLoad,
     promoApplied,
     addOns: addOnLines.map((line) => ({ unitPrice: line.item.addOnPrice, quantity: line.quantity })),
   });
-  return { ...total, promoApplied, pricePerLoad, addOnLines };
+  return { ...total, total: total.total + (topUp?.total ?? 0), promoApplied, pricePerLoad, addOnLines, topUp };
 }
 
 function checkPayment(payment: PaymentInput): void {
@@ -185,7 +211,7 @@ export function createOrder(
   return ctx.db.transaction((tx) => {
     const txCtx = { ...ctx, db: tx };
     const customer = requireCustomer(tx, input.customerId);
-    const quote = quoteOrder(txCtx, customer, input.loads, input.addOns);
+    const quote = quoteOrder(txCtx, customer, input.loads, input.addOns, input.topUp ?? null);
     const payment = initialPayment(input, quote.total);
     for (const line of quote.addOnLines) {
       if (line.item.currentStock < line.quantity) {
@@ -215,6 +241,8 @@ export function createOrder(
       voidReason: null,
       legacyNote: null,
       qrToken: newReceiptToken(ctx.randomBytes),
+      prepaidTopUpMinutes: quote.topUp?.minutes ?? null,
+      prepaidTopUpLoads: quote.topUp?.loads ?? 0,
     };
     tx.insert(orders).values(order).run();
 
@@ -231,6 +259,18 @@ export function createOrder(
       tx.update(inventoryItems)
         .set({ currentStock: sql`${inventoryItems.currentStock} - ${line.quantity}` })
         .where(eq(inventoryItems.id, line.item.id))
+        .run();
+    }
+
+    if (quote.topUp) {
+      tx.insert(orderItems)
+        .values({
+          orderId: order.id,
+          inventoryItemId: null,
+          name: `Dryer top-up ${quote.topUp.minutes} min, paid ahead`,
+          quantity: quote.topUp.loads,
+          unitPrice: quote.topUp.unitPrice,
+        })
         .run();
     }
 

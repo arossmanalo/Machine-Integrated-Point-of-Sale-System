@@ -28,7 +28,7 @@ import { DEVICE_ONLY_SETTINGS } from './settings';
 
 export const BACKUP_FORMAT = 'laundry-pos-backup';
 /** 2: machine run timers, dryer top-ups and the TOP_UP log kind. */
-export const BACKUP_VERSION = 5;
+export const BACKUP_VERSION = 6;
 
 function readAll(db: Db) {
   return {
@@ -116,6 +116,9 @@ const tableSchemas = {
     legacyNote: maybeText,
     // Backups before version 3 had no receipt codes; restore gives those orders new ones.
     qrToken: z.string().optional(),
+    // Backups before version 6 had no top-ups added at order time.
+    prepaidTopUpMinutes: maybeInt.default(null),
+    prepaidTopUpLoads: int.default(0),
   }),
   orderItems: z.object({
     id: int,

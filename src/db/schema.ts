@@ -73,6 +73,12 @@ export const orders = sqliteTable(
     legacyNote: text('legacy_note'),
     /** Random token in the receipt's QR code; scanning it is what lets a machine run for this order. */
     qrToken: text('qr_token').notNull().default(''),
+    /**
+     * Dryer top-up paid for when the order was taken: this many minutes on each of the first
+     * `prepaidTopUpLoads` dryer starts. The charge itself is an order item.
+     */
+    prepaidTopUpMinutes: integer('prepaid_top_up_minutes'),
+    prepaidTopUpLoads: integer('prepaid_top_up_loads').notNull().default(0),
   },
   (t) => [
     index('orders_placed_at').on(t.placedAt),

@@ -28,7 +28,7 @@ import {
   type MachineInput,
 } from '../machines';
 import { createOrder, getOrderDetail, updateOrderStatus, voidOrder } from '../orders';
-import { getSetting } from '../settings';
+import { getSetting, setSetting } from '../settings';
 
 const PULSES = { pulseCount: 1, pulseOnMs: 500, pulseOffMs: 500, runMinutes: 30, topUpPulseCount: 1, ...NO_TOP_UP_PRICES };
 const MIN = 60 * 1000;
@@ -85,6 +85,7 @@ async function setup() {
     ctx,
     owner,
     controller,
+    customer,
     order,
     newOrder,
     washers: [washer1, washer2, washer3],
@@ -527,5 +528,92 @@ describe('machine earnings', () => {
     });
     expect(machineEarningsFor(ctx, dryers[0]).today).toEqual({ loads: 1, amount: half });
     expect(machineEarningsFor(ctx, washers[1]).allTime).toEqual({ loads: 0, amount: 0 });
+  });
+});
+
+describe('top-ups paid with the order', () => {
+  const prices = { topUpPrice: 2000, topUpPrice10: 3500, topUpPrice15: 0, topUpPrice20: 6000 };
+
+  async function setupPrepaid(topUp: { minutes: 5 | 10 | 15 | 20; loads: number } | null) {
+    const env = await setup();
+    setSetting(env.ctx.db, 'orderTopUpPrices', prices);
+    const order = createOrder(env.ctx, testEmployee, {
+      customerId: env.customer.id,
+      weightKg: 24,
+      loads: 3,
+      addOns: [],
+      paymentMethod: 'PAY_LATER',
+      downPayment: 0,
+      channel: 'CASH',
+      gcashReference: '',
+      cashReceived: null,
+      placedAt: null,
+      topUp,
+    });
+    const run = (machineId: number) =>
+      startOrderOnMachine(env.ctx, env.controller, testEmployee, order.id, machineId, receiptOf(order));
+    return { ...env, order, run };
+  }
+
+  it('charges the shop top-up price per load and puts it on the bill', async () => {
+    const { ctx, order } = await setupPrepaid({ minutes: 10, loads: 2 });
+    const plain = createOrder(ctx, testEmployee, {
+      customerId: order.customerId,
+      weightKg: 24,
+      loads: 3,
+      addOns: [],
+      paymentMethod: 'PAY_LATER',
+      downPayment: 0,
+      channel: 'CASH',
+      gcashReference: '',
+      cashReceived: null,
+      placedAt: null,
+    });
+    expect(order.total).toBe(plain.total + 2 * 3500);
+    expect(getOrderDetail(ctx, order.id)?.items.map((i) => [i.name, i.quantity, i.unitPrice])).toEqual([
+      ['Dryer top-up 10 min, paid ahead', 2, 3500],
+    ]);
+  });
+
+  it('refuses a length without a shop price, or more loads than the order has', async () => {
+    const { ctx, customer } = await setup();
+    setSetting(ctx.db, 'orderTopUpPrices', prices);
+    const base = {
+      customerId: customer.id,
+      weightKg: 8,
+      loads: 1,
+      addOns: [],
+      paymentMethod: 'PAY_LATER' as const,
+      downPayment: 0,
+      channel: 'CASH' as const,
+      gcashReference: '',
+      cashReceived: null,
+      placedAt: null,
+    };
+    expect(() => createOrder(ctx, testEmployee, { ...base, topUp: { minutes: 15, loads: 1 } })).toThrow('no price');
+    expect(() => createOrder(ctx, testEmployee, { ...base, topUp: { minutes: 10, loads: 2 } })).toThrow('1 to 1 load');
+  });
+
+  it('adds the minutes and pulses to the first dryer starts it covers, and not to washers', async () => {
+    const { ctx, controller, run, washers, dryers, machineById } = await setupPrepaid({ minutes: 10, loads: 2 });
+    await run(washers[0]);
+    expect(controller.starts[0].pulses.count).toBe(3);
+
+    // Dryer 1: 1 start pulse + 2 top-up pulses per 5 minutes x 2.
+    await run(dryers[0]);
+    expect(controller.starts[1]).toEqual({ channel: 4, pulses: { count: 5, onMs: 500, offMs: 500 } });
+    expect(machineById(dryers[0])?.runEndsAt).toBe(ctx.now() + 40 * MIN);
+
+    // A start that sent nothing does not use the top-up up.
+    controller.failNextStart('failed');
+    await expect(run(dryers[1])).resolves.toBe('failed');
+    await expect(startMachine(ctx, controller, testEmployee, dryers[1])).resolves.toBe('acked');
+    expect(controller.starts[2].pulses.count).toBe(3);
+    expect(machineById(dryers[1])?.runEndsAt).toBe(ctx.now() + 40 * MIN);
+
+    // The third load was not paid ahead.
+    await run(dryers[2]);
+    expect(controller.starts[3].pulses.count).toBe(1);
+    expect(machineById(dryers[2])?.runEndsAt).toBe(ctx.now() + 30 * MIN);
   });
 });

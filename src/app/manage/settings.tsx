@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import { centavosToInput, formatPeso, parsePesoInput } from '@/domain/money';
+import { TOP_UP_CHOICES, topUpPriceFor, type TopUpMinutes, type TopUpPrices } from '@/domain/machinePolicy';
 import { can } from '@/domain/permissions';
 import { BUILT_IN_STATUSES, normalizeStatus, statusLabel } from '@/domain/statuses';
 import type { PrinterInfo } from '@/printing/ReceiptPrinter';
@@ -24,6 +25,7 @@ export default function Settings() {
     <ManageScreen title="Shop settings" allowed={can.changeSettings}>
       <Screen>
         <PriceSection current={settings.pricePerLoad} />
+        <OrderTopUpSection current={settings.orderTopUpPrices} />
         <StatusSection custom={settings.customStatuses} hidden={settings.hiddenStatuses} />
         <ExpenseEntrySection allowed={settings.employeesRecordExpenses} />
         <GcashSection />
@@ -66,6 +68,60 @@ function ExpenseEntrySection({ allowed }: { allowed: boolean }) {
         value={allowed}
         onChange={(value) => void action.run((c) => setEmployeesRecordExpenses(c, actor, value))}
       />
+      {action.error && <Notice tone="danger">{action.error}</Notice>}
+    </Section>
+  );
+}
+
+/** Prices for a dryer top-up added when the order is taken; each dryer's own prices apply later. */
+function OrderTopUpSection({ current }: { current: TopUpPrices }) {
+  const action = useAction();
+  const toast = useToast();
+  const [texts, setTexts] = useState<Record<TopUpMinutes, string>>(() => ({
+    5: centavosToInput(current.topUpPrice),
+    10: centavosToInput(current.topUpPrice10),
+    15: centavosToInput(current.topUpPrice15),
+    20: centavosToInput(current.topUpPrice20),
+  }));
+  const parsed = TOP_UP_CHOICES.map((minutes) => (texts[minutes].trim() === '' ? 0 : parsePesoInput(texts[minutes])));
+  const invalid = parsed.some((price) => price === null);
+  const prices: TopUpPrices = {
+    topUpPrice: parsed[0] ?? 0,
+    topUpPrice10: parsed[1] ?? 0,
+    topUpPrice15: parsed[2] ?? 0,
+    topUpPrice20: parsed[3] ?? 0,
+  };
+  const changed = TOP_UP_CHOICES.some((minutes) => topUpPriceFor(prices, minutes) !== topUpPriceFor(current, minutes));
+  return (
+    <Section
+      title="Dryer top-ups on new orders"
+      description="Staff can add extra drying time when taking an order; it is added when the load starts in a dryer. Leave a length blank to not offer it."
+    >
+      <Row wrap style={{ alignItems: 'flex-start' }}>
+        {TOP_UP_CHOICES.map((minutes) => (
+          <TextField
+            key={minutes}
+            label={`${minutes} min price`}
+            value={texts[minutes]}
+            onChangeText={(text) => setTexts({ ...texts, [minutes]: text })}
+            keyboardType="decimal-pad"
+            prefix="₱"
+            style={{ flex: 1, minWidth: 120 }}
+          />
+        ))}
+      </Row>
+      {invalid && <Text tone="danger">Enter prices like 20 or 20.50, or leave blank.</Text>}
+      <Row>
+        <Button
+          label="Save top-up prices"
+          disabled={invalid || !changed}
+          busy={action.busy}
+          onPress={async () => {
+            const result = await action.run((c) => setSetting(c.db, 'orderTopUpPrices', prices));
+            if (result.ok) toast('Top-up prices for new orders saved');
+          }}
+        />
+      </Row>
       {action.error && <Notice tone="danger">{action.error}</Notice>}
     </Section>
   );

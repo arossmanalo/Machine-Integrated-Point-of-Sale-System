@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { PIN_UNLOCKED } from '@/domain/secrets';
+import { NO_TOP_UP_PRICES } from '@/domain/machinePolicy';
 import { DEFAULT_PRICE_PER_LOAD } from '@/domain/pricing';
 import { settings } from '@/db/schema';
 import type { Db } from '@/db/types';
@@ -28,6 +29,13 @@ const settingSchemas = {
   employeesRecordExpenses: z.boolean(),
   /** File in the app's document folder with the shop's GCash QR, shown when a customer pays by GCash. */
   gcashQrFile: z.string().nullable(),
+  /** Prices for a dryer top-up added when the order is taken, before the dryer is known. */
+  orderTopUpPrices: z.object({
+    topUpPrice: z.number().int().nonnegative(),
+    topUpPrice10: z.number().int().nonnegative(),
+    topUpPrice15: z.number().int().nonnegative(),
+    topUpPrice20: z.number().int().nonnegative(),
+  }),
 };
 
 export type SettingKey = keyof typeof settingSchemas;
@@ -50,6 +58,7 @@ export const DEFAULT_SETTINGS: Settings = {
   requireReceiptScan: true,
   employeesRecordExpenses: false,
   gcashQrFile: null,
+  orderTopUpPrices: NO_TOP_UP_PRICES,
 };
 
 function parseStored<K extends SettingKey>(key: K, raw: string | undefined): Settings[K] {
