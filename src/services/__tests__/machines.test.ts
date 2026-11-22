@@ -681,10 +681,13 @@ describe('multi-cycle', () => {
     expect(controller.starts[0].pulses.count).toBe(2);
   });
 
-  it('owner overrides and test starts run the Medium cycle', async () => {
-    const { ctx, owner, controller, washers } = await setupCycles();
+  it('owner overrides and test starts run the Medium cycle unless a test picks another', async () => {
+    const { ctx, owner, controller, washers, log } = await setupCycles();
     await testStart(ctx, controller, owner, washers[0]);
     expect(controller.starts[0].pulses.count).toBe(4);
+    for (const cycle of ['DELICATES', 'LIGHT', 'HEAVY'] as const) await testStart(ctx, controller, owner, washers[0], cycle);
+    expect(controller.starts.map((start) => start.pulses.count)).toEqual([4, 2, 3, 6]);
+    expect(log().map((row) => row.cycle)).toEqual(['HEAVY', 'LIGHT', 'DELICATES', 'MEDIUM']);
   });
 
   it("checks each cycle's pulses and minutes, and copies cycle pulses to other machines", async () => {

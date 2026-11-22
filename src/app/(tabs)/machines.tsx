@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { MachineRow } from '@/db/schema';
+import { CYCLE_LABELS, CYCLES, cyclePulses, DEFAULT_CYCLE, isCycle, type Cycle } from '@/domain/cycles';
 import { formatShopTime } from '@/domain/dates';
 import {
   isRunning,
@@ -18,6 +19,7 @@ import { can } from '@/domain/permissions';
 import { isClosedStatus } from '@/domain/statuses';
 import { lastStarts, listMachines, markRunDone, startMachine, testStart, topUpDryer, unassignMachine } from '@/services/machines';
 import { createTestOrder, listOrderSummaries, voidOrder } from '@/services/orders';
+import { getSetting } from '@/services/settings';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData, useNow } from '@/state/hooks';
 import { useToast } from '@/state/toast';
@@ -43,6 +45,8 @@ export default function Machines() {
   const [picking, setPicking] = useState<MachineRow | null>(null);
   const [overriding, setOverriding] = useState<MachineRow | null>(null);
   const [toppingUp, setToppingUp] = useState<MachineRow | null>(null);
+  const [testingCycles, setTestingCycles] = useState<MachineRow | null>(null);
+  const multiCycle = useData((c) => getSetting(c.db, 'multiCycle'));
   const [viewingEarnings, setViewingEarnings] = useState<MachineRow | null>(null);
   const [testOrderId, setTestOrderId] = useState<string | null>(null);
   const action = useAction();
@@ -71,6 +75,11 @@ export default function Machines() {
   }
 
   async function test(machine: MachineRow) {
+    // With Multi-cycle on, the owner picks which cycle's pulses to send first.
+    if (multiCycle) {
+      setTestingCycles(machine);
+      return;
+    }
     const result = await action.run((c) => testStart(c, controller, actor, machine.id));
     if (result.ok) report(result.value, `${machine.name} (test)`);
   }
@@ -292,6 +301,7 @@ export default function Machines() {
       )}
       {viewingEarnings && <MachineEarningsDialog machine={viewingEarnings} onClose={() => setViewingEarnings(null)} />}
       {overriding && <OverrideDialog machine={overriding} onClose={() => setOverriding(null)} />}
+      {testingCycles && <TestCycleDialog machine={testingCycles} onClose={() => setTestingCycles(null)} />}
       {toppingUp && (
         <TopUpDialog
           machine={toppingUp}
@@ -304,6 +314,55 @@ export default function Machines() {
 }
 
 /** Top-ups cost money, so the charge is shown and confirmed before the pulses go out. */
+/** Testing mode with Multi-cycle: send any one cycle's pulses, as often as needed. */
+function TestCycleDialog({ machine, onClose }: { machine: MachineRow; onClose: () => void }) {
+  const actor = useActor();
+  const { controller } = useApp();
+  const action = useAction();
+  const report = useReportStart();
+  const [cycle, setCycle] = useState<Cycle>(DEFAULT_CYCLE);
+
+  async function send() {
+    const result = await action.run((c) => testStart(c, controller, actor, machine.id, cycle));
+    if (result.ok) report(result.value, `${machine.name} ${CYCLE_LABELS[cycle]} (test)`);
+  }
+
+  return (
+    <Dialog
+      visible
+      title={`Test ${machine.name}`}
+      onClose={onClose}
+      actions={
+        <>
+          <Button label="Close" kind="secondary" onPress={onClose} />
+          <Button
+            label={`Test ${CYCLE_LABELS[cycle]}`}
+            icon="play-outline"
+            onPress={() => void send()}
+            busy={action.busy}
+          />
+        </>
+      }
+    >
+      <Choice
+        label="Cycle"
+        value={cycle}
+        onChange={(value) => {
+          if (isCycle(value)) setCycle(value);
+        }}
+        options={CYCLES.map((option) => ({
+          value: option,
+          label: `${CYCLE_LABELS[option]} · ${cyclePulses(machine, option)} pulse${cyclePulses(machine, option) === 1 ? '' : 's'}`,
+        }))}
+      />
+      <Text tone="muted">
+        {"Sends the cycle's pulses without an order and logs it as a test. No countdown is set, so you can test the next cycle straight away."}
+      </Text>
+      {action.error && <Notice tone="danger">{action.error}</Notice>}
+    </Dialog>
+  );
+}
+
 function TopUpDialog({ machine, customerName, onClose }: { machine: MachineRow; customerName: string; onClose: () => void }) {
   const actor = useActor();
   const { controller } = useApp();

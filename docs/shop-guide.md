@@ -127,7 +127,7 @@ Everything lives only on this tablet. Go to **Manage › Backup and import › S
 
 ### Multi-cycle
 
-In **Manage › Machines**, turn on **Multi-cycle** to make staff pick Delicates, Light, Medium or Heavy before a machine runs. Each machine's settings then show a table with the pulses and minutes of each cycle in place of the single pulse count and run time; pulse length and gap stay the same for all cycles. **Use these pulses on** also copies the cycle pulses. Owner overrides and test starts run the Medium cycle. When you first turn it on, every cycle has the machine's current pulses and run time, so set each one.
+In **Manage › Machines**, turn on **Multi-cycle** to make staff pick Delicates, Light, Medium or Heavy before a machine runs. Each machine's settings then show a table with the pulses and minutes of each cycle in place of the single pulse count and run time; pulse length and gap stay the same for all cycles. **Use these pulses on** also copies the cycle pulses. Owner overrides run the Medium cycle. In Testing mode, **Test start** asks which cycle to send, so you can test each one in turn. When you first turn it on, every cycle has the machine's current pulses and run time, so set each one.
 
 ### Setting up machines
 

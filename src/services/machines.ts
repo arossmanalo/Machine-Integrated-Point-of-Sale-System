@@ -812,16 +812,21 @@ export async function overrideStart(
 }
 
 /** Owner test start from the machine settings or the Machines tab, logged as TEST. */
+/**
+ * Owner only: sends a machine's pulses without an order and logs it as a test. With Multi-cycle
+ * on, the owner picks which cycle to test (Medium when none is given).
+ */
 export async function testStart(
   ctx: ServiceContext,
   controller: MachineController,
   actor: Actor,
   machineId: number,
+  testCycle: Cycle | null = null,
 ): Promise<StartResult> {
   requireOwner(actor);
   const machine = requireMachine(ctx.db, machineId);
   const ready = isReady(controller);
-  const cycle = plainCycle(ctx.db);
+  const cycle = getSetting(ctx.db, 'multiCycle') ? (testCycle ?? DEFAULT_CYCLE) : null;
   const logId = writeLog(ctx, {
     machine,
     actor,
