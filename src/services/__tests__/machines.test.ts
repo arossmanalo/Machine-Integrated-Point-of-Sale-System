@@ -18,6 +18,7 @@ import {
   overrideStart,
   readReceiptCode,
   saveLockController,
+  saveShopTopUpPrices,
   setReceiptScanRequired,
   startMachine,
   startOrderOnMachine,
@@ -592,6 +593,15 @@ describe('top-ups paid with the order', () => {
     };
     expect(() => createOrder(ctx, testEmployee, { ...base, topUp: { minutes: 15, loads: 1 } })).toThrow('no price');
     expect(() => createOrder(ctx, testEmployee, { ...base, topUp: { minutes: 10, loads: 2 } })).toThrow('1 to 1 load');
+  });
+
+  it('saving the shop prices gives every dryer the same prices (owner only)', async () => {
+    const { ctx, owner, washers, dryers, machineById } = await setup();
+    expect(() => saveShopTopUpPrices(ctx, testEmployee, prices)).toThrow('Only the owner');
+    saveShopTopUpPrices(ctx, owner, prices);
+    expect(getSetting(ctx.db, 'orderTopUpPrices')).toEqual(prices);
+    for (const dryer of dryers) expect(machineById(dryer)).toMatchObject(prices);
+    expect(machineById(washers[0])).toMatchObject(NO_TOP_UP_PRICES);
   });
 
   it('adds the minutes and pulses to the first dryer starts it covers, and not to washers', async () => {

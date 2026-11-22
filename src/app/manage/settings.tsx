@@ -6,6 +6,7 @@ import { can } from '@/domain/permissions';
 import { BUILT_IN_STATUSES, normalizeStatus, statusLabel } from '@/domain/statuses';
 import type { PrinterInfo } from '@/printing/ReceiptPrinter';
 import { setEmployeesRecordExpenses } from '@/services/expenses';
+import { saveShopTopUpPrices } from '@/services/machines';
 import { getAllSettings, setSetting } from '@/services/settings';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData } from '@/state/hooks';
@@ -20,12 +21,13 @@ import { TextField } from '@/ui/TextField';
 import { space } from '@/ui/theme';
 
 export default function Settings() {
+  const actor = useActor();
   const settings = useData((c) => getAllSettings(c.db));
   return (
     <ManageScreen title="Shop settings" allowed={can.changeSettings}>
       <Screen>
         <PriceSection current={settings.pricePerLoad} />
-        <OrderTopUpSection current={settings.orderTopUpPrices} />
+        {actor.role === 'OWNER' && <OrderTopUpSection current={settings.orderTopUpPrices} />}
         <StatusSection custom={settings.customStatuses} hidden={settings.hiddenStatuses} />
         <ExpenseEntrySection allowed={settings.employeesRecordExpenses} />
         <GcashSection />
@@ -75,6 +77,7 @@ function ExpenseEntrySection({ allowed }: { allowed: boolean }) {
 
 /** Prices for a dryer top-up added when the order is taken; each dryer's own prices apply later. */
 function OrderTopUpSection({ current }: { current: TopUpPrices }) {
+  const actor = useActor();
   const action = useAction();
   const toast = useToast();
   const [texts, setTexts] = useState<Record<TopUpMinutes, string>>(() => ({
@@ -95,7 +98,7 @@ function OrderTopUpSection({ current }: { current: TopUpPrices }) {
   return (
     <Section
       title="Dryer top-ups on new orders"
-      description="Staff can add extra drying time when taking an order; it is added when the load starts in a dryer. Leave a length blank to not offer it."
+      description="Staff can add extra drying time when taking an order; it is added when the load starts in a dryer. Saving also gives every dryer these prices for top-ups while drying. Leave a length blank to not offer it."
     >
       <Row wrap style={{ alignItems: 'flex-start' }}>
         {TOP_UP_CHOICES.map((minutes) => (
@@ -117,8 +120,8 @@ function OrderTopUpSection({ current }: { current: TopUpPrices }) {
           disabled={invalid || !changed}
           busy={action.busy}
           onPress={async () => {
-            const result = await action.run((c) => setSetting(c.db, 'orderTopUpPrices', prices));
-            if (result.ok) toast('Top-up prices for new orders saved');
+            const result = await action.run((c) => saveShopTopUpPrices(c, actor, prices));
+            if (result.ok) toast('Top-up prices saved for new orders and every dryer');
           }}
         />
       </Row>

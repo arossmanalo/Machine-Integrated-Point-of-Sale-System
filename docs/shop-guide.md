@@ -39,7 +39,7 @@ If the laundry is still damp, tap **Top up** on the dryer in **Machines** while 
 
 **Adding a top-up when taking the order:** if you can already tell the laundry will need longer, pick a length under **Dryer top-up** (below the add-ons) on the new order and how many loads get it. It is charged with the order and shows on the receipt. When each of those loads starts in a dryer, the extra minutes and pulses go out with the start; there is nothing more to tap.
 
-**Owner:** prices for top-ups added on new orders are in **Manage › Shop settings › Dryer top-ups on new orders** (one list for the shop, since the dryer is not known yet). Set the prices for top-ups added while drying in **Manage › Machines** on each dryer: pulses per 5 minutes (10 minutes sends them twice, 20 minutes four times) and a price for each length. Leave a length blank to not offer it. **Use these top-up prices on** copies the four prices to all dryers or to the dryers you pick.
+**Owner:** prices for top-ups added on new orders are in **Manage › Shop settings › Dryer top-ups on new orders** (one list for the shop, since the dryer is not known yet). Saving them also gives every dryer the same prices for top-ups while drying; you can still change a single dryer afterwards. Set the prices for top-ups added while drying in **Manage › Machines** on each dryer: pulses per 5 minutes (10 minutes sends them twice, 20 minutes four times) and a price for each length. Leave a length blank to not offer it. **Use these top-up prices on** copies the four prices to all dryers or to the dryers you pick.
 
 ### Payments later
 

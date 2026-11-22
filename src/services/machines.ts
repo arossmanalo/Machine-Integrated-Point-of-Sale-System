@@ -652,6 +652,25 @@ export function applyTopUpPricesToDryers(
   });
 }
 
+/**
+ * Owner only: the shop's top-up prices for new orders, copied to every dryer in the same step so
+ * each dryer's own prices match. A dryer can still be given different prices afterwards.
+ */
+export function saveShopTopUpPrices(ctx: ServiceContext, actor: Actor, prices: TopUpPrices): void {
+  requireOwner(actor);
+  ctx.db.transaction((tx) => {
+    const txCtx = { ...ctx, db: tx };
+    const dryerIds = tx
+      .select({ id: machines.id })
+      .from(machines)
+      .where(eq(machines.type, 'DRYER'))
+      .all()
+      .map((row) => row.id);
+    applyTopUpPricesToDryers(txCtx, actor, prices, dryerIds);
+    setSetting(tx, 'orderTopUpPrices', prices);
+  });
+}
+
 /** Ends the timer early, for a machine that finished before its set run time. */
 export function markRunDone(ctx: ServiceContext, machineId: number): void {
   const machine = requireMachine(ctx.db, machineId);
