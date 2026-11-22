@@ -3,7 +3,8 @@ import { Buffer } from 'node:buffer';
 import {
   buildReceipt,
   LINE_WIDTH,
-  qrCodeBytes,
+  qrBitmap,
+  qrRasterBytes,
   receiptLines,
   toBase64,
   toPrintable,
@@ -54,21 +55,47 @@ describe('receipt layout', () => {
     expect(Buffer.from(bytes).toString('latin1')).toContain('*** VOIDED ***');
   });
 
-  it('builds the ESC/POS QR commands: model 2, size, error level, store, print', () => {
-    const store = [0x1d, 0x28, 0x6b, 0x06, 0x00, 0x31, 0x50, 0x30, 0x41, 0x42, 0x43];
-    expect(qrCodeBytes('ABC')).toEqual([
-      ...[0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00],
-      ...[0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, 0x06],
-      ...[0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31],
-      ...store,
-      ...[0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30],
-    ]);
+  it('draws the QR code with a white border, small enough for a 58 mm printer', () => {
+    const bitmap = qrBitmap(receipt.machineCode);
+    expect(bitmap.size).toBeGreaterThan(200);
+    expect(bitmap.size).toBeLessThanOrEqual(384);
+    // Quiet zone: the corners are white; the top-left finder pattern starts dark just inside it.
+    expect(bitmap.isDark(0, 0)).toBe(false);
+    expect(bitmap.isDark(bitmap.size - 1, bitmap.size - 1)).toBe(false);
+    let firstDark = 0;
+    while (!bitmap.isDark(firstDark, firstDark)) firstDark += 1;
+    expect(bitmap.isDark(firstDark, firstDark)).toBe(true);
+    expect(firstDark).toBeGreaterThan(0);
   });
 
-  it("prints the order's QR code, but not on a voided receipt", () => {
+  it('sends the QR code as raster bands whose sizes match the picture', () => {
+    const bitmap = qrBitmap('LPOS1:T0001:' + 'a'.repeat(32));
+    const bytes = qrRasterBytes('LPOS1:T0001:' + 'a'.repeat(32));
+    const widthBytes = Math.ceil(bitmap.size / 8);
+    let offset = 0;
+    let rows = 0;
+    while (offset < bytes.length) {
+      expect(bytes.slice(offset, offset + 4)).toEqual([0x1d, 0x76, 0x30, 0x00]);
+      expect(bytes[offset + 4] + 256 * bytes[offset + 5]).toBe(widthBytes);
+      const band = bytes[offset + 6] + 256 * bytes[offset + 7];
+      // The first data byte of each band row matches the picture's first 8 dots.
+      const first = bytes[offset + 8];
+      let expected = 0;
+      for (let bit = 0; bit < 8; bit += 1) if (bitmap.isDark(bit, rows)) expected |= 0x80 >> bit;
+      expect(first).toBe(expected);
+      rows += band;
+      offset += 8 + band * widthBytes;
+    }
+    expect(offset).toBe(bytes.length);
+    expect(rows).toBe(bitmap.size);
+  });
+
+  it("prints the order's QR code as a picture, but not on a voided receipt", () => {
     const text = (data: ReceiptData) => Buffer.from(buildReceipt(data)).toString('latin1');
-    expect(text(receipt)).toContain(receipt.machineCode);
-    expect(text({ ...receipt, voided: true })).not.toContain(receipt.machineCode);
+    const raster = String.fromCharCode(0x1d, 0x76, 0x30);
+    expect(text(receipt)).toContain('Scan at the machines');
+    expect(text(receipt)).toContain(raster);
+    expect(text({ ...receipt, voided: true })).not.toContain(raster);
   });
 
   it('base64-encodes like Node does', () => {

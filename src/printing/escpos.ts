@@ -1,3 +1,5 @@
+import makeQrCode from 'qrcode-generator';
+
 import { formatReceiptDateTime } from '@/domain/dates';
 import { formatAmount } from '@/domain/money';
 import { PAYMENT_CHANNEL_LABELS, type PaymentChannel } from '@/domain/payments';
@@ -15,24 +17,60 @@ const BOLD_OFF = [ESC, 0x45, 0x00];
 const FEED_3 = [ESC, 0x64, 0x03];
 const GS = 0x1d;
 
-/** QR module size in dots; 6 makes a symbol about 2.5 cm wide on a 58 mm printer. */
-const QR_MODULE_SIZE = 6;
+/** About 3.6 cm on a 58 mm printer (8 dots per mm, 384 dots across). */
+const QR_TARGET_DOTS = 288;
+/** The white border a QR code needs around it to scan reliably, in modules. */
+const QR_QUIET_MODULES = 4;
+/** Rows per raster command; small bands suit printers with little memory. */
+const RASTER_BAND_ROWS = 64;
 
-/** One GS ( k packet for a QR code (cn = 0x31): function byte, then its parameters. */
-function qrPacket(fn: number, params: readonly number[]): number[] {
-  const length = params.length + 2;
-  return [GS, 0x28, 0x6b, length & 0xff, length >> 8, 0x31, fn, ...params];
+export interface QrBitmap {
+  /** Width and height in printer dots. */
+  size: number;
+  isDark: (x: number, y: number) => boolean;
 }
 
-/** Native ESC/POS QR code: model 2, module size, error correction M, store the data, print it. */
-export function qrCodeBytes(text: string): number[] {
-  return [
-    ...qrPacket(0x41, [0x32, 0x00]),
-    ...qrPacket(0x43, [QR_MODULE_SIZE]),
-    ...qrPacket(0x45, [0x31]),
-    ...qrPacket(0x50, [0x30, ...bytes(text)]),
-    ...qrPacket(0x51, [0x30]),
-  ];
+/** The QR code as a square of dots, with its quiet zone, scaled to about QR_TARGET_DOTS. */
+export function qrBitmap(text: string): QrBitmap {
+  const qr = makeQrCode(0, 'M');
+  qr.addData(text);
+  qr.make();
+  const count = qr.getModuleCount();
+  const modules = count + 2 * QR_QUIET_MODULES;
+  const scale = Math.max(1, Math.floor(QR_TARGET_DOTS / modules));
+  return {
+    size: modules * scale,
+    isDark: (x, y) => {
+      const col = Math.floor(x / scale) - QR_QUIET_MODULES;
+      const row = Math.floor(y / scale) - QR_QUIET_MODULES;
+      return row >= 0 && row < count && col >= 0 && col < count && qr.isDark(row, col);
+    },
+  };
+}
+
+/**
+ * The QR code as a printed picture (GS v 0 raster image), which nearly every thermal printer
+ * supports; many cheap 58 mm printers ignore the native ESC/POS QR command.
+ */
+export function qrRasterBytes(text: string): number[] {
+  const bitmap = qrBitmap(text);
+  const widthBytes = Math.ceil(bitmap.size / 8);
+  const out: number[] = [];
+  for (let top = 0; top < bitmap.size; top += RASTER_BAND_ROWS) {
+    const rows = Math.min(RASTER_BAND_ROWS, bitmap.size - top);
+    out.push(GS, 0x76, 0x30, 0x00, widthBytes & 0xff, widthBytes >> 8, rows & 0xff, rows >> 8);
+    for (let y = top; y < top + rows; y += 1) {
+      for (let byte = 0; byte < widthBytes; byte += 1) {
+        let value = 0;
+        for (let bit = 0; bit < 8; bit += 1) {
+          const x = byte * 8 + bit;
+          if (x < bitmap.size && bitmap.isDark(x, y)) value |= 0x80 >> bit;
+        }
+        out.push(value);
+      }
+    }
+  }
+  return out;
 }
 
 export interface ReceiptData {
@@ -116,7 +154,7 @@ export function buildReceipt(data: ReceiptData): Uint8Array {
   }
   out.push(...ALIGN_CENTER);
   if (!data.voided) {
-    out.push(...bytes('\nScan at the machines\n'), ...qrCodeBytes(data.machineCode), ...bytes('\n'));
+    out.push(...bytes('\nScan at the machines\n'), ...qrRasterBytes(data.machineCode), ...bytes('\n'));
   }
   out.push(...bytes(`\n${data.footer}\n`), ...FEED_3);
   return Uint8Array.from(out);
