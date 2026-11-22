@@ -1,6 +1,16 @@
 import { useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 
 import type { MachineRow } from '@/db/schema';
+import {
+  CYCLE_LABELS,
+  CYCLES,
+  cycleMinutes,
+  cyclePulses,
+  sameForEveryCycle,
+  type Cycle,
+  type CycleSettings,
+} from '@/domain/cycles';
 import { can } from '@/domain/permissions';
 import {
   MACHINE_TYPE_LABELS,
@@ -24,6 +34,7 @@ import {
   listMachines,
   RESULT_MESSAGES,
   saveLockController,
+  setMultiCycle,
   setReceiptScanRequired,
   testStart,
   updateMachine,
@@ -38,6 +49,7 @@ import { EmptyState, ListRow, Notice, Panel, Row, Screen, Section } from '@/ui/l
 import { ManageScreen } from '@/ui/ManagerGate';
 import { Text } from '@/ui/Text';
 import { TextField } from '@/ui/TextField';
+import { space } from '@/ui/theme';
 
 function pulseSummary(machine: MachineRow): string {
   return `${machine.pulseCount} × ${machine.pulseOnMs} ms on, ${machine.pulseOffMs} ms off`;
@@ -50,8 +62,14 @@ function topUpSummary(prices: TopUpPrices): string {
     : `top-ups ${options.map((o) => `${o.minutes} min ${formatPeso(o.price)}`).join(', ')}`;
 }
 
-function machineSummary(machine: MachineRow): string {
+function machineSummary(machine: MachineRow, multiCycle: boolean): string {
   const topUp = machine.type === 'DRYER' ? ` · ${topUpSummary(machine)}` : '';
+  if (multiCycle) {
+    const cycles = CYCLES.map(
+      (cycle) => `${CYCLE_LABELS[cycle]} ${cyclePulses(machine, cycle)}× ${cycleMinutes(machine, cycle)} min`,
+    ).join(', ');
+    return `${cycles} · ${machine.pulseOnMs} ms on, ${machine.pulseOffMs} ms off${topUp}`;
+  }
   return `${machine.runMinutes} min run · ${pulseSummary(machine)}${topUp}`;
 }
 
@@ -70,6 +88,7 @@ export default function MachineSettings() {
   const machines = useData(listMachines);
   const simulate = useData((c) => getSetting(c.db, 'simulateMachines'));
   const receiptScan = useData((c) => getSetting(c.db, 'requireReceiptScan'));
+  const multiCycle = useData((c) => getSetting(c.db, 'multiCycle'));
   const saved = useData((c) => ({
     address: getSetting(c.db, 'lockControllerAddress'),
     key: getSetting(c.db, 'lockControllerKey'),
@@ -159,6 +178,16 @@ export default function MachineSettings() {
           description={`Each machine's channel (1 to ${MAX_CHANNEL}) is the machine controller terminal it is wired to. A start sends that machine's pulses.`}
           action={<Button label="Add machine" icon="plus" onPress={() => setEditing('new')} />}
         >
+          <Toggle
+            label="Multi-cycle"
+            description={
+              multiCycle
+                ? 'Staff pick Delicates, Light, Medium or Heavy before a machine runs. Set the pulses and minutes of each cycle on each machine.'
+                : 'Off: every start sends the machine\'s one pulse count. Turn on to give each machine Delicates, Light, Medium and Heavy cycles.'
+            }
+            value={multiCycle}
+            onChange={(value) => void action.run((c) => setMultiCycle(c, actor, value))}
+          />
           <Panel>
             {machines.length === 0 ? (
               <EmptyState icon="washing-machine" title="No machines yet" body="Add each washer and dryer once it is wired to the controller." />
@@ -169,7 +198,7 @@ export default function MachineSettings() {
                   title={machine.name}
                   subtitle={`${MACHINE_TYPE_LABELS[machine.type]} · channel ${machine.hardwareChannel} (${
                     channelTerminal(machine.hardwareChannel) ?? 'not on the board'
-                  }) · ${machineSummary(machine)}`}
+                  }) · ${machineSummary(machine, multiCycle)}`}
                   right={
                     <Row>
                       {!machine.enabled && <Badge label="Off" tone="warning" />}
@@ -193,6 +222,7 @@ export default function MachineSettings() {
         <MachineDialog
           machine={editing === 'new' ? null : editing}
           machines={machines}
+          multiCycle={multiCycle}
           nextChannel={machines.reduce((max, m) => Math.max(max, m.hardwareChannel), 0) + 1}
           onClose={() => setEditing(null)}
         />
@@ -204,14 +234,41 @@ export default function MachineSettings() {
 
 type PulseTargets = 'this' | 'all' | 'selected';
 
+type CycleTexts = Record<Cycle, { pulses: string; minutes: string }>;
+
+function cycleTexts(settings: CycleSettings): CycleTexts {
+  const texts: Partial<CycleTexts> = {};
+  for (const cycle of CYCLES) {
+    texts[cycle] = { pulses: String(cyclePulses(settings, cycle)), minutes: String(cycleMinutes(settings, cycle)) };
+  }
+  return { DELICATES: texts.DELICATES ?? EMPTY, LIGHT: texts.LIGHT ?? EMPTY, MEDIUM: texts.MEDIUM ?? EMPTY, HEAVY: texts.HEAVY ?? EMPTY };
+}
+
+const EMPTY = { pulses: '', minutes: '' };
+
+function cycleSettings(texts: CycleTexts): CycleSettings {
+  return {
+    delicatesPulses: Number(texts.DELICATES.pulses),
+    delicatesMinutes: Number(texts.DELICATES.minutes),
+    lightPulses: Number(texts.LIGHT.pulses),
+    lightMinutes: Number(texts.LIGHT.minutes),
+    mediumPulses: Number(texts.MEDIUM.pulses),
+    mediumMinutes: Number(texts.MEDIUM.minutes),
+    heavyPulses: Number(texts.HEAVY.pulses),
+    heavyMinutes: Number(texts.HEAVY.minutes),
+  };
+}
+
 function MachineDialog({
   machine,
   machines,
+  multiCycle,
   nextChannel,
   onClose,
 }: {
   machine: MachineRow | null;
   machines: readonly MachineRow[];
+  multiCycle: boolean;
   nextChannel: number;
   onClose: () => void;
 }) {
@@ -225,6 +282,7 @@ function MachineDialog({
   const [onText, setOnText] = useState(String(machine?.pulseOnMs ?? 500));
   const [offText, setOffText] = useState(String(machine?.pulseOffMs ?? 500));
   const [runText, setRunText] = useState(String(machine?.runMinutes ?? 40));
+  const [cycles, setCycles] = useState<CycleTexts>(() => cycleTexts(machine ?? sameForEveryCycle(1, 40)));
   const [topUpCountText, setTopUpCountText] = useState(String(machine?.topUpPulseCount ?? 1));
   const [priceTexts, setPriceTexts] = useState<Record<TopUpMinutes, string>>(() => ({
     5: centavosToInput(machine?.topUpPrice ?? 0),
@@ -259,7 +317,24 @@ function MachineDialog({
         })
         .find((problem) => problem !== null) ??
       null);
-  const invalid = pulseError !== null || runError !== null || topUpPulseError !== null || topUpPriceError !== null;
+  const cycleValues = cycleSettings(cycles);
+  // Without Multi-cycle a new machine's cycles simply copy its one pulse count and run time.
+  const savedCycles = multiCycle || machine ? cycleValues : sameForEveryCycle(pulses.count, runMinutes);
+  const cycleError = !multiCycle
+    ? null
+    : (CYCLES.map((cycle) => {
+        const problem = pulsesProblem({ ...pulses, count: cyclePulses(cycleValues, cycle) });
+        if (problem) return `${CYCLE_LABELS[cycle]}: ${problem}`;
+        const minutes = cycleMinutes(cycleValues, cycle);
+        return Number.isInteger(minutes) && minutes >= RUN_MINUTES_LIMITS.min && minutes <= RUN_MINUTES_LIMITS.max
+          ? null
+          : `${CYCLE_LABELS[cycle]}: enter ${RUN_MINUTES_LIMITS.min} to ${RUN_MINUTES_LIMITS.max} minutes.`;
+      }).find((problem) => problem !== null) ?? null);
+  const invalid =
+    (multiCycle ? cycleError !== null : pulseError !== null || runError !== null) ||
+    pulsesProblem({ ...pulses, count: 1 }) !== null ||
+    topUpPulseError !== null ||
+    topUpPriceError !== null;
   const digits = (set: (value: string) => void) => (text: string) => set(text.replace(/\D/g, ''));
   const others = machines.filter((m) => m.id !== machine?.id);
   const [targets, setTargets] = useState<PulseTargets>('this');
@@ -302,13 +377,14 @@ function MachineDialog({
       runMinutes,
       topUpPulseCount: Number(topUpCountText),
       ...topUpPrices,
+      ...savedCycles,
     };
     const result = await action.run((c) =>
       c.db.transaction((tx) => {
         const txCtx = { ...c, db: tx };
         if (machine) updateMachine(txCtx, actor, machine.id, input);
         else addMachine(txCtx, actor, input);
-        applyPulsesToMachines(txCtx, actor, pulses, copyTo);
+        applyPulsesToMachines(txCtx, actor, pulses, copyTo, multiCycle ? cycleValues : null);
         applyTopUpPricesToDryers(txCtx, actor, topUpPrices, priceCopyTo);
       }),
     );
@@ -342,14 +418,55 @@ function MachineDialog({
       />
       <Text variant="label">Start pulses</Text>
       <Text tone="muted">
-        {`A start sends ${pulses.count || '?'} pulse${pulses.count === 1 ? '' : 's'} of ${pulses.onMs || '?'} ms with ${pulses.offMs || '?'} ms between them, like coins in the slot.`}
+        {multiCycle
+          ? `Each cycle sends its own number of pulses of ${pulses.onMs || '?'} ms with ${pulses.offMs || '?'} ms between them, like coins in the slot.`
+          : `A start sends ${pulses.count || '?'} pulse${pulses.count === 1 ? '' : 's'} of ${pulses.onMs || '?'} ms with ${pulses.offMs || '?'} ms between them, like coins in the slot.`}
       </Text>
+      {multiCycle && (
+        <View style={styles.cycleTable}>
+          <Row>
+            <Text variant="label" style={styles.cycleName}>
+              Cycle
+            </Text>
+            <Text variant="label" style={styles.flex}>
+              Pulses
+            </Text>
+            <Text variant="label" style={styles.flex}>
+              Minutes
+            </Text>
+          </Row>
+          {CYCLES.map((cycle) => (
+            <Row key={cycle}>
+              <Text style={styles.cycleName}>{CYCLE_LABELS[cycle]}</Text>
+              <TextField
+                label={`${CYCLE_LABELS[cycle]} pulses`}
+                hideLabel
+                value={cycles[cycle].pulses}
+                onChangeText={(text) => setCycles({ ...cycles, [cycle]: { ...cycles[cycle], pulses: text.replace(/\D/g, '') } })}
+                keyboardType="number-pad"
+                style={styles.flex}
+              />
+              <TextField
+                label={`${CYCLE_LABELS[cycle]} minutes`}
+                hideLabel
+                value={cycles[cycle].minutes}
+                onChangeText={(text) => setCycles({ ...cycles, [cycle]: { ...cycles[cycle], minutes: text.replace(/\D/g, '') } })}
+                keyboardType="number-pad"
+                style={styles.flex}
+              />
+            </Row>
+          ))}
+          {cycleError && <Text tone="danger">{cycleError}</Text>}
+        </View>
+      )}
       <Row wrap style={{ alignItems: 'flex-start' }}>
-        <TextField label="Number of pulses" value={countText} onChangeText={digits(setCountText)} keyboardType="number-pad" style={{ flex: 1 }} />
+        {!multiCycle && (
+          <TextField label="Number of pulses" value={countText} onChangeText={digits(setCountText)} keyboardType="number-pad" style={{ flex: 1 }} />
+        )}
         <TextField label="Pulse length (ms)" value={onText} onChangeText={digits(setOnText)} keyboardType="number-pad" style={{ flex: 1 }} />
         <TextField label="Gap (ms)" value={offText} onChangeText={digits(setOffText)} keyboardType="number-pad" style={{ flex: 1 }} />
       </Row>
-      {pulseError && <Text tone="danger">{pulseError}</Text>}
+      {!multiCycle && pulseError && <Text tone="danger">{pulseError}</Text>}
       {others.length > 0 && (
         <Choice
           label="Use these pulses on"
@@ -374,17 +491,19 @@ function MachineDialog({
         ))}
       {copyTo.length > 0 && (
         <Text tone="muted">
-          {`Saving also gives ${copyTo.length} other machine${copyTo.length === 1 ? '' : 's'} these start pulses. Their run time and top-up settings stay as they are.`}
+          {`Saving also gives ${copyTo.length} other machine${copyTo.length === 1 ? '' : 's'} these start pulses${multiCycle ? ' for every cycle' : ''}. Their run times and top-up settings stay as they are.`}
         </Text>
       )}
-      <TextField
-        label="Run time (minutes)"
-        value={runText}
-        onChangeText={digits(setRunText)}
-        keyboardType="number-pad"
-        hint="How long one start runs. The Machines tab counts it down and keeps the machine in use until then."
-        error={runText !== '' ? runError : null}
-      />
+      {!multiCycle && (
+        <TextField
+          label="Run time (minutes)"
+          value={runText}
+          onChangeText={digits(setRunText)}
+          keyboardType="number-pad"
+          hint="How long one start runs. The Machines tab counts it down and keeps the machine in use until then."
+          error={runText !== '' ? runError : null}
+        />
+      )}
       {dryer && (
         <>
           <Text variant="label">Top-ups</Text>
@@ -488,3 +607,9 @@ function PinDialog({ onClose }: { onClose: () => void }) {
     </Dialog>
   );
 }
+
+const styles = StyleSheet.create({
+  cycleTable: { gap: space.sm },
+  cycleName: { width: 110 },
+  flex: { flex: 1 },
+});

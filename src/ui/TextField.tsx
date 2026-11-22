@@ -6,6 +6,8 @@ import { colors, MIN_TOUCH, radius, space, type } from './theme';
 
 interface Props {
   label: string;
+  /** For inputs in a table whose column heading already names them; the label stays for screen readers. */
+  hideLabel?: boolean;
   value: string;
   onChangeText: (text: string) => void;
   placeholder?: string;
@@ -27,6 +29,7 @@ interface Props {
 
 export function TextField({
   label,
+  hideLabel = false,
   value,
   onChangeText,
   placeholder,
@@ -48,7 +51,7 @@ export function TextField({
   const borderColor = error ? colors.danger : focused ? colors.accent : colors.border;
   return (
     <View style={[styles.wrap, style]}>
-      <Text variant="label">{label}</Text>
+      {!hideLabel && <Text variant="label">{label}</Text>}
       <View
         style={[
           styles.box,

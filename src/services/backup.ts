@@ -28,7 +28,7 @@ import { DEVICE_ONLY_SETTINGS } from './settings';
 
 export const BACKUP_FORMAT = 'laundry-pos-backup';
 /** 2: machine run timers, dryer top-ups and the TOP_UP log kind. */
-export const BACKUP_VERSION = 6;
+export const BACKUP_VERSION = 7;
 
 function readAll(db: Db) {
   return {
@@ -173,7 +173,27 @@ const tableSchemas = {
     topUpPrice20: int.default(0),
     runOrderId: z.string().nullable().default(null),
     runEndsAt: int.nullable().default(null),
-  }),
+    // Backups before version 7 had no cycles: every cycle starts as the machine's own pulses and time.
+    delicatesPulses: int.optional(),
+    delicatesMinutes: int.optional(),
+    lightPulses: int.optional(),
+    lightMinutes: int.optional(),
+    mediumPulses: int.optional(),
+    mediumMinutes: int.optional(),
+    heavyPulses: int.optional(),
+    heavyMinutes: int.optional(),
+    assignedCycle: maybeText.default(null),
+  }).transform((machine) => ({
+    ...machine,
+    delicatesPulses: machine.delicatesPulses ?? machine.pulseCount,
+    delicatesMinutes: machine.delicatesMinutes ?? machine.runMinutes,
+    lightPulses: machine.lightPulses ?? machine.pulseCount,
+    lightMinutes: machine.lightMinutes ?? machine.runMinutes,
+    mediumPulses: machine.mediumPulses ?? machine.pulseCount,
+    mediumMinutes: machine.mediumMinutes ?? machine.runMinutes,
+    heavyPulses: machine.heavyPulses ?? machine.pulseCount,
+    heavyMinutes: machine.heavyMinutes ?? machine.runMinutes,
+  })),
   machineUnlocks: z.object({
     id: int,
     at: int,
@@ -190,6 +210,7 @@ const tableSchemas = {
     result: z.enum(['PENDING', 'ACKED', 'REJECTED', 'BUSY', 'FAILED', 'TIMEOUT', 'NOT_CONNECTED', 'DENIED']),
     resolvedAt: maybeInt,
     charge: int.nullable().default(null),
+    cycle: maybeText.default(null),
   }),
 };
 

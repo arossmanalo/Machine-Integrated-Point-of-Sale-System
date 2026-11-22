@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { MachineRow } from '@/db/schema';
+import { CYCLE_LABELS, CYCLES, cycleMinutes, isCycle, type Cycle } from '@/domain/cycles';
 import { UserFacingError, type ServiceContext } from '@/db/types';
 import { isRunning, MACHINE_TYPE_LABELS, machineAllowance, minutesLeft, type MachineType } from '@/domain/machinePolicy';
 import type { Earned } from '@/domain/machineEarnings';
@@ -92,15 +93,46 @@ function machineIcon(type: MachineType) {
 }
 
 /** The one question before pulses go out (after the receipt scan), so a stray tap cannot start the wrong machine. */
-function ConfirmStart({ machine, orderId, customerName }: { machine: MachineRow; orderId: string; customerName: string }) {
+/** With Multi-cycle on, the cycle is picked here; null until staff pick one. */
+function ConfirmStart({
+  machine,
+  orderId,
+  customerName,
+  multiCycle,
+  cycle,
+  onCycle,
+}: {
+  machine: MachineRow;
+  orderId: string;
+  customerName: string;
+  multiCycle: boolean;
+  cycle: Cycle | null;
+  onCycle: (cycle: Cycle) => void;
+}) {
+  const minutes = multiCycle ? (cycle ? cycleMinutes(machine, cycle) : null) : machine.runMinutes;
   return (
     <View style={styles.confirm}>
       <MaterialCommunityIcons name={machineIcon(machine.type)} size={40} color={colors.accent} />
       <Text variant="heading">{`Run ${machine.name} for ${orderId}?`}</Text>
       <Text>{customerName}</Text>
+      {multiCycle && (
+        <Choice
+          label="Cycle"
+          value={cycle ?? ''}
+          onChange={(value) => {
+            if (isCycle(value)) onCycle(value);
+          }}
+          options={CYCLES.map((option) => ({
+            value: option,
+            label: `${CYCLE_LABELS[option]} · ${cycleMinutes(machine, option)} min`,
+          }))}
+        />
+      )}
       <Text tone="muted">
-        {`Load the laundry and close the door first. ${machine.name} starts as soon as you tap Run machine and runs for ` +
-          `${machine.runMinutes} minutes.`}
+        {minutes === null
+          ? 'Pick the cycle for this load, then tap Run machine.'
+          : `Load the laundry and close the door first. ${machine.name} starts as soon as you tap Run machine and runs for ` +
+            `${minutes} minutes.`}
       </Text>
     </View>
   );
@@ -119,6 +151,8 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
   const [chosen, setChosen] = useState<MachineRow | null>(null);
   const [receiptCode, setReceiptCode] = useState<string | null>(null);
   const scanOn = useData((c) => getSetting(c.db, 'requireReceiptScan'));
+  const multiCycle = useData((c) => getSetting(c.db, 'multiCycle'));
+  const [cycle, setCycle] = useState<Cycle | null>(null);
   const needScan = scanOn && receiptCode === null;
   const data = useData(
     (c) => {
@@ -135,13 +169,14 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
 
   function back() {
     action.clearError();
+    setCycle(null);
     setChosen(null);
     setReceiptCode(null);
   }
 
   async function start(machine: MachineRow) {
     const result = await action.run((c) =>
-      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode),
+      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode, multiCycle ? cycle : null),
     );
     if (!result.ok) return;
     report(result.value, machine.name);
@@ -152,7 +187,15 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
   const actions = chosen ? (
     <>
       <Button label="Back" kind="secondary" onPress={back} />
-      {!needScan && <Button label="Run machine" icon="play" onPress={() => void start(chosen)} busy={action.busy} />}
+      {!needScan && (
+        <Button
+          label="Run machine"
+          icon="play"
+          onPress={() => void start(chosen)}
+          busy={action.busy}
+          disabled={multiCycle && cycle === null}
+        />
+      )}
     </>
   ) : (
     <Button label="Close" kind="secondary" onPress={onClose} />
@@ -167,7 +210,14 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
           onAccepted={setReceiptCode}
         />
       ) : chosen ? (
-        <ConfirmStart machine={chosen} orderId={orderId} customerName={data.customerName} />
+        <ConfirmStart
+          machine={chosen}
+          orderId={orderId}
+          customerName={data.customerName}
+          multiCycle={multiCycle}
+          cycle={cycle}
+          onCycle={setCycle}
+        />
       ) : (
         <>
           <Text tone="muted">
@@ -285,6 +335,8 @@ export function OrderPickerDialog({
   const [chosen, setChosen] = useState<{ orderId: string; customerName: string } | null>(null);
   const [receiptCode, setReceiptCode] = useState<string | null>(null);
   const scanOn = useData((c) => getSetting(c.db, 'requireReceiptScan'));
+  const multiCycle = useData((c) => getSetting(c.db, 'multiCycle'));
+  const [cycle, setCycle] = useState<Cycle | null>(null);
   const candidates = useData(
     (c) =>
       listOrderSummaries(c)
@@ -302,6 +354,7 @@ export function OrderPickerDialog({
 
   function back() {
     action.clearError();
+    setCycle(null);
     setChosen(null);
     setReceiptCode(null);
   }
@@ -329,7 +382,7 @@ export function OrderPickerDialog({
 
   async function start(orderId: string) {
     const result = await action.run((c) =>
-      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode),
+      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode, multiCycle ? cycle : null),
     );
     if (!result.ok) return;
     report(result.value, machine.name);
@@ -340,7 +393,13 @@ export function OrderPickerDialog({
   const actions = chosen ? (
     <>
       <Button label="Back" kind="secondary" onPress={back} />
-      <Button label="Run machine" icon="play" onPress={() => void start(chosen.orderId)} busy={action.busy} />
+      <Button
+        label="Run machine"
+        icon="play"
+        onPress={() => void start(chosen.orderId)}
+        busy={action.busy}
+        disabled={multiCycle && cycle === null}
+      />
     </>
   ) : (
     <>
@@ -352,7 +411,14 @@ export function OrderPickerDialog({
     <Dialog visible title={`Assign an order to ${machine.name}`} onClose={onClose} actions={actions}>
       {!chosen && <MachineEarningsStats machine={machine} />}
       {chosen ? (
-        <ConfirmStart machine={machine} orderId={chosen.orderId} customerName={chosen.customerName} />
+        <ConfirmStart
+          machine={machine}
+          orderId={chosen.orderId}
+          customerName={chosen.customerName}
+          multiCycle={multiCycle}
+          cycle={cycle}
+          onCycle={setCycle}
+        />
       ) : scanOn && receiptCode === null ? (
         <ReceiptScanner
           prompt={`Scan the order receipt to run ${machine.name}. No receipt, no start.`}

@@ -1,4 +1,5 @@
 import { createTestContext, receiptOf, testEmployee } from '@/db/testing';
+import { sameForEveryCycle } from '@/domain/cycles';
 import { NO_TOP_UP_PRICES } from '@/domain/machinePolicy';
 import { receiptCodeFor, TEST_RECEIPT_CODE } from '@/domain/receiptCode';
 import { MockMachineController } from '@/machines/MockMachineController';
@@ -19,6 +20,7 @@ import {
   readReceiptCode,
   saveLockController,
   saveShopTopUpPrices,
+  setMultiCycle,
   setReceiptScanRequired,
   startMachine,
   startOrderOnMachine,
@@ -31,7 +33,7 @@ import {
 import { createOrder, getOrderDetail, updateOrderStatus, voidOrder } from '../orders';
 import { getSetting, setSetting } from '../settings';
 
-const PULSES = { pulseCount: 1, pulseOnMs: 500, pulseOffMs: 500, runMinutes: 30, topUpPulseCount: 1, ...NO_TOP_UP_PRICES };
+const PULSES = { pulseCount: 1, pulseOnMs: 500, pulseOffMs: 500, runMinutes: 30, topUpPulseCount: 1, ...NO_TOP_UP_PRICES, ...sameForEveryCycle(1, 30) };
 const MIN = 60 * 1000;
 const DAY = 24 * 60 * MIN;
 
@@ -625,5 +627,80 @@ describe('top-ups paid with the order', () => {
     await run(dryers[2]);
     expect(controller.starts[3].pulses.count).toBe(1);
     expect(machineById(dryers[2])?.runEndsAt).toBe(ctx.now() + 30 * MIN);
+  });
+});
+
+describe('multi-cycle', () => {
+  const cycles = {
+    delicatesPulses: 2,
+    delicatesMinutes: 25,
+    lightPulses: 3,
+    lightMinutes: 30,
+    mediumPulses: 4,
+    mediumMinutes: 40,
+    heavyPulses: 6,
+    heavyMinutes: 55,
+  };
+
+  async function setupCycles() {
+    const env = await setup();
+    updateMachine(env.ctx, env.owner, env.washers[0], { ...machine('Washer 1', 'WASHER', 1), ...cycles });
+    setMultiCycle(env.ctx, env.owner, true);
+    return env;
+  }
+
+  it('only the owner turns it on, and while off a start ignores cycles', async () => {
+    const { ctx, owner, controller, order, washers } = await setup();
+    expect(() => setMultiCycle(ctx, testEmployee, true)).toThrow('Only the owner');
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order), 'HEAVY');
+    expect(controller.starts[0].pulses.count).toBe(3);
+    setMultiCycle(ctx, owner, true);
+    expect(getSetting(ctx.db, 'multiCycle')).toBe(true);
+  });
+
+  it("needs a cycle, then sends that cycle's pulses and counts down its minutes", async () => {
+    const { ctx, controller, order, washers, machineById, log } = await setupCycles();
+    const run = (cycle: 'DELICATES' | 'HEAVY' | null) =>
+      startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order), cycle);
+    await expect(run(null)).rejects.toThrow('Pick a cycle');
+    expect(controller.starts).toEqual([]);
+
+    await expect(run('HEAVY')).resolves.toBe('acked');
+    expect(controller.starts[0]).toEqual({ channel: 1, pulses: { count: 6, onMs: 500, offMs: 500 } });
+    expect(machineById(washers[0])?.runEndsAt).toBe(ctx.now() + 55 * MIN);
+    expect(log()[0]).toMatchObject({ kind: 'ORDER', cycle: 'HEAVY' });
+  });
+
+  it('a retry after a start that sent nothing runs the cycle that was picked', async () => {
+    const { ctx, controller, order, washers } = await setupCycles();
+    controller.failNextStart('failed');
+    await expect(
+      startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order), 'DELICATES'),
+    ).resolves.toBe('failed');
+    await expect(startMachine(ctx, controller, testEmployee, washers[0])).resolves.toBe('acked');
+    expect(controller.starts[0].pulses.count).toBe(2);
+  });
+
+  it('owner overrides and test starts run the Medium cycle', async () => {
+    const { ctx, owner, controller, washers } = await setupCycles();
+    await testStart(ctx, controller, owner, washers[0]);
+    expect(controller.starts[0].pulses.count).toBe(4);
+  });
+
+  it("checks each cycle's pulses and minutes, and copies cycle pulses to other machines", async () => {
+    const { ctx, owner, washers, machineById } = await setupCycles();
+    expect(() =>
+      updateMachine(ctx, owner, washers[1], { ...machine('Washer 2', 'WASHER', 2), ...cycles, heavyPulses: 51 }),
+    ).toThrow('Heavy');
+    expect(() =>
+      updateMachine(ctx, owner, washers[1], { ...machine('Washer 2', 'WASHER', 2), ...cycles, lightMinutes: 0 }),
+    ).toThrow('Light: run time');
+    applyPulsesToMachines(ctx, owner, { count: 1, onMs: 300, offMs: 300 }, [washers[1]], {
+      delicatesPulses: 2,
+      lightPulses: 3,
+      mediumPulses: 4,
+      heavyPulses: 6,
+    });
+    expect(machineById(washers[1])).toMatchObject({ pulseOnMs: 300, heavyPulses: 6, heavyMinutes: 30 });
   });
 });

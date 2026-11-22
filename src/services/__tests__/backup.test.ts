@@ -1,4 +1,5 @@
 import { createTestContext, receiptOf, testEmployee } from '@/db/testing';
+import { sameForEveryCycle } from '@/domain/cycles';
 import { NO_TOP_UP_PRICES } from '@/domain/machinePolicy';
 import { MockMachineController } from '@/machines/MockMachineController';
 
@@ -140,7 +141,7 @@ describe('full backup', () => {
     const { ctx, owner } = await setup();
     importLegacyExport(ctx, owner, legacyExport);
     setSetting(ctx.db, 'pricePerLoad', 25000);
-    const pulses = { pulseCount: 2, pulseOnMs: 300, pulseOffMs: 400, runMinutes: 35, topUpPulseCount: 2, topUpPrice: 2000, topUpPrice10: 3500, topUpPrice15: 0, topUpPrice20: 0 };
+    const pulses = { pulseCount: 2, pulseOnMs: 300, pulseOffMs: 400, runMinutes: 35, topUpPulseCount: 2, topUpPrice: 2000, topUpPrice10: 3500, topUpPrice15: 0, topUpPrice20: 0, ...sameForEveryCycle(2, 35) };
     const machineId = addMachine(ctx, owner, { name: 'Washer 1', type: 'WASHER', hardwareChannel: 1, enabled: true, ...pulses });
     const dryerId = addMachine(ctx, owner, { name: 'Dryer 1', type: 'DRYER', hardwareChannel: 2, enabled: true, ...pulses });
     const order = createOrder(ctx, testEmployee, {
@@ -197,6 +198,7 @@ describe('full backup', () => {
       runMinutes: 30,
       topUpPulseCount: 1,
       ...NO_TOP_UP_PRICES,
+      ...sameForEveryCycle(4, 30),
     });
     const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
     for (const row of backup.tables.machines) {
@@ -213,6 +215,15 @@ describe('full backup', () => {
         'topUpPrice10',
         'topUpPrice15',
         'topUpPrice20',
+        'delicatesPulses',
+        'delicatesMinutes',
+        'lightPulses',
+        'lightMinutes',
+        'mediumPulses',
+        'mediumMinutes',
+        'heavyPulses',
+        'heavyMinutes',
+        'assignedCycle',
         'runOrderId',
         'runEndsAt',
       ]) {
@@ -228,6 +239,7 @@ describe('full backup', () => {
       assignedOrderId: null,
       runMinutes: 40,
       ...NO_TOP_UP_PRICES,
+      ...sameForEveryCycle(1, 40),
       runEndsAt: null,
     });
   });

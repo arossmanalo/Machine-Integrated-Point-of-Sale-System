@@ -165,6 +165,17 @@ export const machines = sqliteTable('machines', {
   topUpPrice10: integer('top_up_price_10').notNull().default(0),
   topUpPrice15: integer('top_up_price_15').notNull().default(0),
   topUpPrice20: integer('top_up_price_20').notNull().default(0),
+  /** Multi-cycle: pulses and run minutes for each cycle (pulse length and gap as above). */
+  delicatesPulses: integer('cycle_delicates_pulses').notNull().default(1),
+  delicatesMinutes: integer('cycle_delicates_minutes').notNull().default(40),
+  lightPulses: integer('cycle_light_pulses').notNull().default(1),
+  lightMinutes: integer('cycle_light_minutes').notNull().default(40),
+  mediumPulses: integer('cycle_medium_pulses').notNull().default(1),
+  mediumMinutes: integer('cycle_medium_minutes').notNull().default(40),
+  heavyPulses: integer('cycle_heavy_pulses').notNull().default(1),
+  heavyMinutes: integer('cycle_heavy_minutes').notNull().default(40),
+  /** The cycle picked for the waiting assignment, so Run machine can retry it. */
+  assignedCycle: text('assigned_cycle'),
   /** Order of the latest run, kept after the run ends so a dryer top-up can follow it. */
   runOrderId: text('run_order_id').references(() => orders.id),
   /** When the latest run ends. The machine is in use while this is in the future. */
@@ -193,6 +204,8 @@ export const machineUnlocks = sqliteTable(
     resolvedAt: integer('resolved_at'),
     /** Top-ups: centavos added to the order's bill, kept here so the daily report can tally them. */
     charge: integer('charge'),
+    /** Multi-cycle: the cycle that was run. */
+    cycle: text('cycle'),
   },
   (t) => [index('unlocks_order').on(t.orderId), index('unlocks_at').on(t.at)],
 );

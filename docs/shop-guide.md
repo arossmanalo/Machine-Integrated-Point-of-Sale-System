@@ -33,6 +33,10 @@ The washers and dryers only start for an order, and only with that order's recei
 - If the app says the order has used all its washers or dryers, it has used all of its loads. Ask the owner for an override.
 - The order page lists each load with the washer and dryer that ran it.
 
+### Cycles (when Multi-cycle is on)
+
+If the owner has turned on Multi-cycle, the **Run Washer 1 for T0012?** window asks for a cycle: **Delicates**, **Light**, **Medium** or **Heavy**, each with its minutes. Pick one, then tap **Run machine**. The machine gets that cycle's pulses and the countdown uses its minutes. The machine log shows the cycle.
+
 ### Dryer top-ups
 
 If the laundry is still damp, tap **Top up** on the dryer in **Machines** while it is still running. Pick 5, 10, 15 or 20 minutes (only the lengths the owner has priced show), then tap **Add**. The minutes go on the countdown and the price is added to the order's bill. Once the countdown ends or someone taps **Mark as done**, the Top up button is gone. If the top-up does not reach the dryer, the charge comes off again.
@@ -120,6 +124,10 @@ In **Manage › Shop settings › Expenses**, turn on **Employees can record exp
 ### Backups
 
 Everything lives only on this tablet. Go to **Manage › Backup and import › Save a backup** at least once a week and keep the file somewhere else (Google Drive, email to yourself).
+
+### Multi-cycle
+
+In **Manage › Machines**, turn on **Multi-cycle** to make staff pick Delicates, Light, Medium or Heavy before a machine runs. Each machine's settings then show a table with the pulses and minutes of each cycle in place of the single pulse count and run time; pulse length and gap stay the same for all cycles. **Use these pulses on** also copies the cycle pulses. Owner overrides and test starts run the Medium cycle. When you first turn it on, every cycle has the machine's current pulses and run time, so set each one.
 
 ### Setting up machines
 

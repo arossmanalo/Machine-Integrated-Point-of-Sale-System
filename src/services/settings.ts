@@ -29,6 +29,8 @@ const settingSchemas = {
   employeesRecordExpenses: z.boolean(),
   /** File in the app's document folder with the shop's GCash QR, shown when a customer pays by GCash. */
   gcashQrFile: z.string().nullable(),
+  /** Staff pick Delicates, Light, Medium or Heavy before a machine runs; each has its own pulses. */
+  multiCycle: z.boolean(),
   /** Prices for a dryer top-up added when the order is taken, before the dryer is known. */
   orderTopUpPrices: z.object({
     topUpPrice: z.number().int().nonnegative(),
@@ -59,6 +61,7 @@ export const DEFAULT_SETTINGS: Settings = {
   employeesRecordExpenses: false,
   gcashQrFile: null,
   orderTopUpPrices: NO_TOP_UP_PRICES,
+  multiCycle: false,
 };
 
 function parseStored<K extends SettingKey>(key: K, raw: string | undefined): Settings[K] {

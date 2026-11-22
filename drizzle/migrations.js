@@ -9,6 +9,7 @@ import m0004 from './0004_order_receipt_codes.sql';
 import m0005 from './0005_expense_recorded_by.sql';
 import m0006 from './0006_top_up_lengths.sql';
 import m0007 from './0007_prepaid_top_ups.sql';
+import m0008 from './0008_machine_cycles.sql';
 
   export default {
     journal,
@@ -20,7 +21,8 @@ m0003,
 m0004,
 m0005,
 m0006,
-m0007
+m0007,
+m0008
     }
   }
   

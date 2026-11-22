@@ -18,6 +18,16 @@ import {
   type TopUpPrices,
   type PolicyOrder,
 } from '@/domain/machinePolicy';
+import {
+  CYCLE_LABELS,
+  CYCLES,
+  cycleMinutes,
+  cyclePulses,
+  DEFAULT_CYCLE,
+  isCycle,
+  type Cycle,
+  type CycleSettings,
+} from '@/domain/cycles';
 import { formatPeso } from '@/domain/money';
 import { machineEarnings, type MachineEarnings } from '@/domain/machineEarnings';
 import { parseReceiptCode, tokensMatch } from '@/domain/receiptCode';
@@ -85,12 +95,6 @@ export function topUpPulsesOf(
   };
 }
 
-/** A dryer start that also carries a top-up paid for with the order. */
-function withPrepaidTopUp(machine: MachineRow, minutes: TopUpMinutes): PulseSettings {
-  const start = pulsesOf(machine);
-  return { ...start, count: start.count + topUpPulsesOf(machine, minutes).count };
-}
-
 /** Problems with a dryer's top-up prices, or with the pulses each priced length would send. */
 function topUpProblem(
   dryer: Pick<MachineRow, 'topUpPulseCount' | 'pulseOnMs' | 'pulseOffMs'>,
@@ -129,6 +133,15 @@ export interface MachineInput {
   topUpPrice10: number;
   topUpPrice15: number;
   topUpPrice20: number;
+  /** Multi-cycle pulses and minutes, for both washers and dryers. */
+  delicatesPulses: number;
+  delicatesMinutes: number;
+  lightPulses: number;
+  lightMinutes: number;
+  mediumPulses: number;
+  mediumMinutes: number;
+  heavyPulses: number;
+  heavyMinutes: number;
 }
 
 export function listMachines(ctx: ServiceContext): MachineRow[] {
@@ -151,6 +164,14 @@ function checkMachine(db: Db, input: MachineInput, editingId: number | null): Ma
   const { min, max } = RUN_MINUTES_LIMITS;
   if (!Number.isInteger(input.runMinutes) || input.runMinutes < min || input.runMinutes > max) {
     throw new UserFacingError(`Run time must be a whole number of minutes from ${min} to ${max}.`);
+  }
+  for (const cycle of CYCLES) {
+    const problem = pulsesProblem({ count: cyclePulses(input, cycle), onMs: input.pulseOnMs, offMs: input.pulseOffMs });
+    if (problem) throw new UserFacingError(`${CYCLE_LABELS[cycle]}: ${problem}`);
+    const cycleRun = cycleMinutes(input, cycle);
+    if (!Number.isInteger(cycleRun) || cycleRun < min || cycleRun > max) {
+      throw new UserFacingError(`${CYCLE_LABELS[cycle]}: run time must be a whole number of minutes from ${min} to ${max}.`);
+    }
   }
   if (input.type === 'DRYER') {
     const topUpPulseProblem = pulsesProblem({
@@ -191,20 +212,38 @@ export function updateMachine(ctx: ServiceContext, actor: Actor, id: number, inp
   ctx.db.update(machines).set({ ...values, ...release }).where(eq(machines.id, id)).run();
 }
 
-/** Gives several machines the same start pulses (count, length and gap) in one step. */
+export type CyclePulses = Pick<CycleSettings, 'delicatesPulses' | 'lightPulses' | 'mediumPulses' | 'heavyPulses'>;
+
+/**
+ * Gives several machines the same start pulses (count, length and gap) in one step, and with
+ * Multi-cycle the same pulse count per cycle. Run times are left as they are.
+ */
 export function applyPulsesToMachines(
   ctx: ServiceContext,
   actor: Actor,
   pulses: PulseSettings,
   machineIds: readonly number[],
+  cycles: CyclePulses | null = null,
 ): void {
   requireOwner(actor);
   const problem = pulsesProblem(pulses);
   if (problem) throw new UserFacingError(problem);
+  if (cycles) {
+    const counts: [Cycle, number][] = [
+      ['DELICATES', cycles.delicatesPulses],
+      ['LIGHT', cycles.lightPulses],
+      ['MEDIUM', cycles.mediumPulses],
+      ['HEAVY', cycles.heavyPulses],
+    ];
+    for (const [cycle, count] of counts) {
+      const cycleProblem = pulsesProblem({ ...pulses, count });
+      if (cycleProblem) throw new UserFacingError(`${CYCLE_LABELS[cycle]}: ${cycleProblem}`);
+    }
+  }
   if (machineIds.length === 0) return;
   ctx.db
     .update(machines)
-    .set({ pulseCount: pulses.count, pulseOnMs: pulses.onMs, pulseOffMs: pulses.offMs })
+    .set({ pulseCount: pulses.count, pulseOnMs: pulses.onMs, pulseOffMs: pulses.offMs, ...(cycles ?? {}) })
     .where(inArray(machines.id, [...machineIds]))
     .run();
 }
@@ -348,7 +387,13 @@ export function checkReceiptFor(ctx: ServiceContext, scanned: string, orderId: s
 // ---------- Assigning ----------
 
 /** Puts an order on a machine, if the order still has that machine type left. */
-export function assignOrder(ctx: ServiceContext, actor: Actor, orderId: string, machineId: number): void {
+export function assignOrder(
+  ctx: ServiceContext,
+  actor: Actor,
+  orderId: string,
+  machineId: number,
+  cycle: Cycle | null = null,
+): void {
   ctx.db.transaction((tx) => {
     const txCtx = { ...ctx, db: tx };
     const machine = requireMachine(tx, machineId);
@@ -361,7 +406,7 @@ export function assignOrder(ctx: ServiceContext, actor: Actor, orderId: string, 
     });
     if (!decision.allowed) throw new UserFacingError(decision.message);
     tx.update(machines)
-      .set({ assignedOrderId: orderId, assignedAt: ctx.now(), assignedByName: actor.username })
+      .set({ assignedOrderId: orderId, assignedAt: ctx.now(), assignedByName: actor.username, assignedCycle: cycle })
       .where(eq(machines.id, machineId))
       .run();
   });
@@ -388,6 +433,7 @@ interface LogEntry {
   overrideReason?: string | null;
   overrideNote?: string | null;
   charge?: number | null;
+  cycle?: Cycle | null;
 }
 
 function writeLog(ctx: ServiceContext, entry: LogEntry): number {
@@ -408,6 +454,7 @@ function writeLog(ctx: ServiceContext, entry: LogEntry): number {
       result: entry.result,
       resolvedAt: entry.result === 'PENDING' ? null : ctx.now(),
       charge: entry.charge ?? null,
+      cycle: entry.cycle ?? null,
     })
     .returning({ id: machineUnlocks.id })
     .get();
@@ -442,8 +489,35 @@ function isReady(controller: MachineController): boolean {
 }
 
 /** In use from now for the machine's run time, for this order (null for an override without one). */
-function runFields(machine: MachineRow, orderId: string | null, now: number) {
-  return { runOrderId: orderId, runEndsAt: now + machine.runMinutes * 60000 };
+function runFields(machine: MachineRow, orderId: string | null, now: number, cycle: Cycle | null = null) {
+  const minutes = cycle === null ? machine.runMinutes : cycleMinutes(machine, cycle);
+  return { runOrderId: orderId, runEndsAt: now + minutes * 60000 };
+}
+
+/** The pulses that start a machine: its cycle's count when Multi-cycle is on, else its own. */
+function startPulsesFor(machine: MachineRow, cycle: Cycle | null): PulseSettings {
+  const pulses = pulsesOf(machine);
+  return cycle === null ? pulses : { ...pulses, count: cyclePulses(machine, cycle) };
+}
+
+/** The cycle an order start runs: the one picked when it was assigned (Multi-cycle only). */
+function cycleForStart(db: Db, machine: MachineRow): Cycle | null {
+  if (!getSetting(db, 'multiCycle')) return null;
+  if (machine.assignedCycle === null || !isCycle(machine.assignedCycle)) {
+    throw new UserFacingError(`No cycle was picked for ${machine.name}. Tap Remove, then assign the order again.`);
+  }
+  return machine.assignedCycle;
+}
+
+/** Owner overrides and test starts have no cycle picked, so with Multi-cycle on they run Medium. */
+function plainCycle(db: Db): Cycle | null {
+  return getSetting(db, 'multiCycle') ? DEFAULT_CYCLE : null;
+}
+
+/** Owner only: turns cycle choices on or off for every machine. */
+export function setMultiCycle(ctx: ServiceContext, actor: Actor, on: boolean): void {
+  requireOwner(actor);
+  setSetting(ctx.db, 'multiCycle', on);
 }
 
 /** Puts back the run that a start replaced, when the start sent nothing. */
@@ -476,14 +550,17 @@ export async function startMachine(
     if (!decision.allowed || machine.assignedOrderId === null || !order) {
       throw new UserFacingError(decision.allowed ? 'Assign an order first.' : decision.message);
     }
+    const cycle = cycleForStart(tx, machine);
     // A top-up paid with the order goes out with the start: its pulses follow the start's.
     const topUp = prepaidTopUpFor(tx, ctx.now(), machine, order);
-    const pulses = topUp === null ? pulsesOf(machine) : withPrepaidTopUp(machine, topUp);
+    const start = startPulsesFor(machine, cycle);
+    const pulses =
+      topUp === null ? start : { ...start, count: start.count + topUpPulsesOf(machine, topUp).count };
     const problem = pulsesProblem(pulses);
     if (problem) {
       throw new UserFacingError(`${machine.name} cannot send the start and the paid top-up together: ${problem}`);
     }
-    const run = runFields(machine, machine.assignedOrderId, ctx.now());
+    const run = runFields(machine, machine.assignedOrderId, ctx.now(), cycle);
     tx.update(machines)
       .set({
         assignedOrderId: null,
@@ -496,7 +573,7 @@ export async function startMachine(
       .run();
     const logId = writeLog(
       { ...ctx, db: tx },
-      { machine, actor, kind: 'ORDER', orderId: machine.assignedOrderId, result: 'PENDING' },
+      { machine, actor, kind: 'ORDER', orderId: machine.assignedOrderId, result: 'PENDING', cycle },
     );
     return { machine, logId, pulses };
   });
@@ -529,10 +606,14 @@ export async function startOrderOnMachine(
   orderId: string,
   machineId: number,
   receiptCode: string | null,
+  cycle: Cycle | null = null,
 ): Promise<StartResult> {
   if (getSetting(ctx.db, 'requireReceiptScan')) checkReceiptFor(ctx, receiptCode ?? '', orderId);
+  if (getSetting(ctx.db, 'multiCycle') && cycle === null) {
+    throw new UserFacingError('Pick a cycle: Delicates, Light, Medium or Heavy.');
+  }
   const machine = requireMachine(ctx.db, machineId);
-  if (machine.assignedOrderId !== orderId) {
+  if (machine.assignedOrderId !== orderId || machine.assignedCycle !== cycle) {
     ctx.db.transaction((tx) => {
       // A start that sent nothing left the order waiting on another machine; staff chose this one instead.
       tx.update(machines)
@@ -541,7 +622,14 @@ export async function startOrderOnMachine(
           and(eq(machines.assignedOrderId, orderId), eq(machines.type, machine.type), ne(machines.id, machineId)),
         )
         .run();
-      assignOrder({ ...ctx, db: tx }, actor, orderId, machineId);
+      if (machine.assignedOrderId === orderId) {
+        // Same order, new cycle: free the machine's own slot first so the allowance check passes.
+        tx.update(machines)
+          .set({ assignedOrderId: null, assignedAt: null, assignedByName: null })
+          .where(eq(machines.id, machineId))
+          .run();
+      }
+      assignOrder({ ...ctx, db: tx }, actor, orderId, machineId, cycle);
     });
   }
   return startMachine(ctx, controller, actor, machineId);
@@ -711,14 +799,15 @@ export async function overrideStart(
     throw new UserFacingError('Wrong owner PIN.');
   }
   const ready = isReady(controller);
-  const logId = writeLog(ctx, { ...base, kind: 'OVERRIDE', result: ready ? 'PENDING' : 'NOT_CONNECTED' });
+  const cycle = plainCycle(ctx.db);
+  const logId = writeLog(ctx, { ...base, kind: 'OVERRIDE', result: ready ? 'PENDING' : 'NOT_CONNECTED', cycle });
   if (!ready) return 'not-connected';
   ctx.db
     .update(machines)
-    .set(runFields(machine, input.orderId, ctx.now()))
+    .set(runFields(machine, input.orderId, ctx.now(), cycle))
     .where(eq(machines.id, machine.id))
     .run();
-  const result = await sendAndRecord(ctx, controller, logId, machine);
+  const result = await sendAndRecord(ctx, controller, logId, machine, startPulsesFor(machine, cycle));
   if (NOTHING_SENT.includes(result)) restoreRun(ctx.db, machine);
   return result;
 }
@@ -733,15 +822,17 @@ export async function testStart(
   requireOwner(actor);
   const machine = requireMachine(ctx.db, machineId);
   const ready = isReady(controller);
+  const cycle = plainCycle(ctx.db);
   const logId = writeLog(ctx, {
     machine,
     actor,
     kind: 'TEST',
     orderId: null,
     result: ready ? 'PENDING' : 'NOT_CONNECTED',
+    cycle,
   });
   if (!ready) return 'not-connected';
-  return sendAndRecord(ctx, controller, logId, machine);
+  return sendAndRecord(ctx, controller, logId, machine, startPulsesFor(machine, cycle));
 }
 
 // ---------- Log ----------
