@@ -80,7 +80,7 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 - Those are all the pins that stay quiet at boot: they avoid the boot-strapping pins (0, 2, 5, 12, 15), GPIO 14 (pulses at boot, which could start a machine), flash (6–11), USB serial (1, 3) and input-only pins (34–39). The list lives in `LOCK_PINS` in the sketch and `LOCK_CHANNEL_TERMINALS` in `protocol.ts`; change both together. A WROVER board cannot use channels 13–14 (PSRAM). More than 14 machines needs an I/O expander (MCP23017 or PCF8575) or a second ESP32.
 - `WiFi.setSleep(false)` is required: with modem sleep on, the tablet intermittently could not reach the ESP32.
 - Connection: the ESP32 and the tablet are both on the shop Wi-Fi (2.4 GHz). The owner enters the ESP32's address and the key in Manage › Machines. The ESP32 is powered separately (USB charger).
-- Fixed address (2026-11-21): the router gave the ESP32 a new address after a restart and the app lost it, so `config.h` sets `STATIC_IP` 192.168.1.200 (gateway 192.168.1.1). If another device ever takes .200, pick another free address, upload again and change it in the app.
+- Fixed address (2026-11-21): the router gave the ESP32 a new address after a restart and the app lost it, so `config.h` sets `STATIC_IP`. Since the Wi-Fi change on 2026-11-22 it is 192.168.123.200 (gateway 192.168.123.1; the router hands out 192.168.123.x). After changing Wi-Fi, check the new router's range the same way: boot once without `STATIC_IP` and read the `READY <address>` line on serial. If another device ever takes .200, pick another free address, upload again and change it in the app.
 - Moved from a USB-wired Arduino Uno to the ESP32 on 2026-11-19.
 
 ### HTTP protocol (the contract between app and ESP32)
