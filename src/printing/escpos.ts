@@ -17,12 +17,15 @@ const BOLD_OFF = [ESC, 0x45, 0x00];
 const FEED_3 = [ESC, 0x64, 0x03];
 const GS = 0x1d;
 
-/** About 3.6 cm on a 58 mm printer (8 dots per mm, 384 dots across). */
-const QR_TARGET_DOTS = 288;
+/**
+ * About 2.6 cm on a 58 mm printer (8 dots per mm). Kept small because a cheap printer's memory
+ * overflows on a big picture and then prints the rest of the image data as text.
+ */
+const QR_TARGET_DOTS = 224;
 /** The white border a QR code needs around it to scan reliably, in modules. */
 const QR_QUIET_MODULES = 4;
 /** Rows per raster command; small bands suit printers with little memory. */
-const RASTER_BAND_ROWS = 64;
+const RASTER_BAND_ROWS = 24;
 
 export interface QrBitmap {
   /** Width and height in printer dots. */

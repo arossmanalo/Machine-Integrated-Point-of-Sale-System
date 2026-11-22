@@ -57,8 +57,8 @@ describe('receipt layout', () => {
 
   it('draws the QR code with a white border, small enough for a 58 mm printer', () => {
     const bitmap = qrBitmap(receipt.machineCode);
-    expect(bitmap.size).toBeGreaterThan(200);
-    expect(bitmap.size).toBeLessThanOrEqual(384);
+    expect(bitmap.size).toBeGreaterThan(160);
+    expect(bitmap.size).toBeLessThanOrEqual(224);
     // Quiet zone: the corners are white; the top-left finder pattern starts dark just inside it.
     expect(bitmap.isDark(0, 0)).toBe(false);
     expect(bitmap.isDark(bitmap.size - 1, bitmap.size - 1)).toBe(false);
