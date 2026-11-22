@@ -100,17 +100,8 @@ class ReceiptPrinterModule : Module() {
     }
     val socket = connect(device)
     try {
-      // Cheap printers have a small buffer and drop bytes when it overflows, which turns a
-      // picture (the receipt QR code) into rows of garbage text. Send in small paced pieces.
-      val stream = socket.outputStream
-      var offset = 0
-      while (offset < bytes.size) {
-        val length = minOf(CHUNK_BYTES, bytes.size - offset)
-        stream.write(bytes, offset, length)
-        stream.flush()
-        offset += length
-        if (offset < bytes.size) Thread.sleep(CHUNK_PAUSE_MS)
-      }
+      socket.outputStream.write(bytes)
+      socket.outputStream.flush()
       // Give the printer time to drain its buffer before the link closes.
       Thread.sleep(PRINT_DRAIN_MS)
     } catch (error: IOException) {
@@ -127,7 +118,5 @@ class ReceiptPrinterModule : Module() {
   companion object {
     private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
     private const val PRINT_DRAIN_MS = 1500L
-    private const val CHUNK_BYTES = 256
-    private const val CHUNK_PAUSE_MS = 30L
   }
 }
