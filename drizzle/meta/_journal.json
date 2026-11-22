@@ -43,6 +43,13 @@
       "when": 1795269709301,
       "tag": "0005_expense_recorded_by",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1795350075898,
+      "tag": "0006_top_up_lengths",
+      "breakpoints": true
     }
   ]
 }

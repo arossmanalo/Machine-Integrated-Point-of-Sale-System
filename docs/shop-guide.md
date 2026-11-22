@@ -35,7 +35,9 @@ The washers and dryers only start for an order, and only with that order's recei
 
 ### Dryer top-ups
 
-If the laundry is still damp, tap **Top up 5 min** on the dryer in **Machines**. It works while the dryer runs and after it finished, as long as the dryer has not started another order. The app shows the price and asks first; the top-up adds 5 minutes and the price is added to the order's bill. If the top-up does not reach the dryer, the charge comes off again.
+If the laundry is still damp, tap **Top up** on the dryer in **Machines** while it is still running. Pick 5, 10, 15 or 20 minutes (only the lengths the owner has priced show), then tap **Add**. The minutes go on the countdown and the price is added to the order's bill. Once the countdown ends or someone taps **Mark as done**, the Top up button is gone. If the top-up does not reach the dryer, the charge comes off again.
+
+**Owner:** set the prices in **Manage › Machines** on each dryer: pulses per 5 minutes (10 minutes sends them twice, 20 minutes four times) and a price for each length. Leave a length blank to not offer it. **Use these top-up prices on** copies the four prices to all dryers or to the dryers you pick.
 
 ### Payments later
 

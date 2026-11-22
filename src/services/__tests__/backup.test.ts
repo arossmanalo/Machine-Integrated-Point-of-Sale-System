@@ -1,4 +1,5 @@
 import { createTestContext, receiptOf, testEmployee } from '@/db/testing';
+import { NO_TOP_UP_PRICES } from '@/domain/machinePolicy';
 import { MockMachineController } from '@/machines/MockMachineController';
 
 import { completeFirstRunSetup, listStaff, logIn } from '../auth';
@@ -139,7 +140,7 @@ describe('full backup', () => {
     const { ctx, owner } = await setup();
     importLegacyExport(ctx, owner, legacyExport);
     setSetting(ctx.db, 'pricePerLoad', 25000);
-    const pulses = { pulseCount: 2, pulseOnMs: 300, pulseOffMs: 400, runMinutes: 35, topUpPulseCount: 2, topUpPrice: 2000 };
+    const pulses = { pulseCount: 2, pulseOnMs: 300, pulseOffMs: 400, runMinutes: 35, topUpPulseCount: 2, topUpPrice: 2000, topUpPrice10: 3500, topUpPrice15: 0, topUpPrice20: 0 };
     const machineId = addMachine(ctx, owner, { name: 'Washer 1', type: 'WASHER', hardwareChannel: 1, enabled: true, ...pulses });
     const dryerId = addMachine(ctx, owner, { name: 'Dryer 1', type: 'DRYER', hardwareChannel: 2, enabled: true, ...pulses });
     const order = createOrder(ctx, testEmployee, {
@@ -158,7 +159,7 @@ describe('full backup', () => {
     await controller.connect();
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, machineId, receiptOf(order));
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryerId, receiptOf(order));
-    await topUpDryer(ctx, controller, testEmployee, dryerId);
+    await topUpDryer(ctx, controller, testEmployee, dryerId, 10);
 
     const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
     expect(detectBackupKind(backup)).toBe('backup');
@@ -195,7 +196,7 @@ describe('full backup', () => {
       pulseOffMs: 100,
       runMinutes: 30,
       topUpPulseCount: 1,
-      topUpPrice: 0,
+      ...NO_TOP_UP_PRICES,
     });
     const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
     for (const row of backup.tables.machines) {
@@ -209,6 +210,9 @@ describe('full backup', () => {
         'runMinutes',
         'topUpPulseCount',
         'topUpPrice',
+        'topUpPrice10',
+        'topUpPrice15',
+        'topUpPrice20',
         'runOrderId',
         'runEndsAt',
       ]) {
@@ -223,7 +227,7 @@ describe('full backup', () => {
       pulseOffMs: 500,
       assignedOrderId: null,
       runMinutes: 40,
-      topUpPrice: 0,
+      ...NO_TOP_UP_PRICES,
       runEndsAt: null,
     });
   });

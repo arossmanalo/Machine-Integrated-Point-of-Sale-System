@@ -26,8 +26,45 @@ export interface PolicyMachine {
   runEndsAt: number | null;
 }
 
-/** A dryer top-up adds this much time; the price per top-up is set per dryer. */
-export const TOP_UP_MINUTES = 5;
+/** The dryer top-ups on offer. Each dryer has its own price for each; price 0 means not offered. */
+export const TOP_UP_CHOICES = [5, 10, 15, 20] as const;
+export type TopUpMinutes = (typeof TOP_UP_CHOICES)[number];
+/** The dryer's top-up pulses buy this many minutes; longer top-ups send them once per step. */
+export const TOP_UP_STEP_MINUTES = 5;
+
+/** A dryer's top-up prices in centavos. `topUpPrice` is the 5-minute price. */
+export interface TopUpPrices {
+  topUpPrice: number;
+  topUpPrice10: number;
+  topUpPrice15: number;
+  topUpPrice20: number;
+}
+
+export const NO_TOP_UP_PRICES: TopUpPrices = { topUpPrice: 0, topUpPrice10: 0, topUpPrice15: 0, topUpPrice20: 0 };
+
+export function topUpPriceFor(prices: TopUpPrices, minutes: TopUpMinutes): number {
+  if (minutes === 5) return prices.topUpPrice;
+  if (minutes === 10) return prices.topUpPrice10;
+  if (minutes === 15) return prices.topUpPrice15;
+  return prices.topUpPrice20;
+}
+
+/** The top-ups a dryer offers, shortest first. */
+export function topUpOptions(prices: TopUpPrices): { minutes: TopUpMinutes; price: number }[] {
+  return TOP_UP_CHOICES.map((minutes) => ({ minutes, price: topUpPriceFor(prices, minutes) })).filter(
+    (option) => option.price > 0,
+  );
+}
+
+/** Pulses for a top-up: the dryer's 5-minute pulses, once for every 5 minutes. */
+export function topUpPulseCountFor(fiveMinutePulses: number, minutes: TopUpMinutes): number {
+  return fiveMinutePulses * (minutes / TOP_UP_STEP_MINUTES);
+}
+
+export function isTopUpMinutes(value: number): value is TopUpMinutes {
+  return TOP_UP_CHOICES.some((choice) => choice === value);
+}
+
 export const RUN_MINUTES_LIMITS = { min: 1, max: 240 } as const;
 
 export function isRunning(machine: Pick<PolicyMachine, 'runEndsAt'>, now: number): boolean {
@@ -39,9 +76,9 @@ export function minutesLeft(machine: Pick<PolicyMachine, 'runEndsAt'>, now: numb
   return machine.runEndsAt === null ? 0 : Math.max(0, Math.ceil((machine.runEndsAt - now) / 60000));
 }
 
-/** When a run ends after a top-up: it extends a running dryer, or restarts a finished one. */
-export function endAfterTopUp(machine: Pick<PolicyMachine, 'runEndsAt'>, now: number): number {
-  return Math.max(machine.runEndsAt ?? now, now) + TOP_UP_MINUTES * 60000;
+/** When a run ends after a top-up: the extra minutes go on the end of the running dryer. */
+export function endAfterTopUp(machine: Pick<PolicyMachine, 'runEndsAt'>, now: number, minutes: TopUpMinutes): number {
+  return Math.max(machine.runEndsAt ?? now, now) + minutes * 60000;
 }
 
 /**
@@ -64,7 +101,8 @@ export type MachineDenial =
   | 'not-assigned'
   | 'not-a-dryer'
   | 'no-top-up-price'
-  | 'no-run';
+  | 'no-run'
+  | 'not-running';
 
 export type MachineDecision = { allowed: true } | { allowed: false; reason: MachineDenial; message: string };
 
@@ -147,13 +185,25 @@ export function decideStart(machine: PolicyMachine, order: PolicyOrder | null, n
  * A dryer top-up goes to the order of the dryer's latest run, while that order is open. It works
  * during the run and after it ended (laundry found damp), until the dryer runs something else.
  */
-export function decideTopUp(machine: PolicyMachine, order: PolicyOrder | null, price: number): MachineDecision {
+/**
+ * A dryer can be topped up only while it is still drying an order: once its timer runs out or
+ * staff mark it as done, the top-up is gone. `price` is the price of the chosen top-up.
+ */
+export function decideTopUp(
+  machine: PolicyMachine,
+  order: PolicyOrder | null,
+  price: number,
+  now: number,
+): MachineDecision {
   if (machine.type !== 'DRYER') return deny('not-a-dryer', 'Only dryers take top-ups.');
   if (!machine.enabled) return deny('machine-disabled', `${machine.name} is switched off in settings.`);
   if (price <= 0) {
-    return deny('no-top-up-price', `Top-ups on ${machine.name} have no price yet. The owner sets it in Manage, Machines.`);
+    return deny('no-top-up-price', `That top-up on ${machine.name} has no price. The owner sets it in Manage, Machines.`);
   }
-  if (machine.runOrderId === null) return deny('no-run', `${machine.name} has not dried an order yet.`);
+  if (!isRunning(machine, now)) {
+    return deny('not-running', `${machine.name} is not running. Top-ups can only be added while it dries.`);
+  }
+  if (machine.runOrderId === null) return deny('no-run', `${machine.name} is not drying an order.`);
   if (order === null) return NO_ORDER;
   return orderProblem(order) ?? { allowed: true };
 }

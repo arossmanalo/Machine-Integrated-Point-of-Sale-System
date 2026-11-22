@@ -28,7 +28,7 @@ import { DEVICE_ONLY_SETTINGS } from './settings';
 
 export const BACKUP_FORMAT = 'laundry-pos-backup';
 /** 2: machine run timers, dryer top-ups and the TOP_UP log kind. */
-export const BACKUP_VERSION = 4;
+export const BACKUP_VERSION = 5;
 
 function readAll(db: Db) {
   return {
@@ -164,6 +164,10 @@ const tableSchemas = {
     runMinutes: int.default(40),
     topUpPulseCount: int.default(1),
     topUpPrice: int.default(0),
+    // Backups before version 5 had one top-up length (5 minutes) only.
+    topUpPrice10: int.default(0),
+    topUpPrice15: int.default(0),
+    topUpPrice20: int.default(0),
     runOrderId: z.string().nullable().default(null),
     runEndsAt: int.nullable().default(null),
   }),

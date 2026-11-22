@@ -2,7 +2,17 @@ import { useState } from 'react';
 
 import type { MachineRow } from '@/db/schema';
 import { can } from '@/domain/permissions';
-import { MACHINE_TYPE_LABELS, MACHINE_TYPES, RUN_MINUTES_LIMITS, TOP_UP_MINUTES, type MachineType } from '@/domain/machinePolicy';
+import {
+  MACHINE_TYPE_LABELS,
+  MACHINE_TYPES,
+  RUN_MINUTES_LIMITS,
+  TOP_UP_CHOICES,
+  topUpOptions,
+  topUpPulseCountFor,
+  type MachineType,
+  type TopUpMinutes,
+  type TopUpPrices,
+} from '@/domain/machinePolicy';
 import { centavosToInput, formatPeso, parsePesoInput } from '@/domain/money';
 import { STATUS_LABELS } from '@/machines/MachineController';
 import { channelTerminal, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress, pulsesProblem } from '@/machines/protocol';
@@ -10,6 +20,7 @@ import { changeOwnerPin } from '@/services/auth';
 import {
   addMachine,
   applyPulsesToMachines,
+  applyTopUpPricesToDryers,
   listMachines,
   RESULT_MESSAGES,
   saveLockController,
@@ -32,14 +43,21 @@ function pulseSummary(machine: MachineRow): string {
   return `${machine.pulseCount} × ${machine.pulseOnMs} ms on, ${machine.pulseOffMs} ms off`;
 }
 
+function topUpSummary(prices: TopUpPrices): string {
+  const options = topUpOptions(prices);
+  return options.length === 0
+    ? 'no top-ups'
+    : `top-ups ${options.map((o) => `${o.minutes} min ${formatPeso(o.price)}`).join(', ')}`;
+}
+
 function machineSummary(machine: MachineRow): string {
-  const topUp =
-    machine.type !== 'DRYER'
-      ? ''
-      : machine.topUpPrice > 0
-        ? ` · top-up ${formatPeso(machine.topUpPrice)}`
-        : ' · no top-ups';
+  const topUp = machine.type === 'DRYER' ? ` · ${topUpSummary(machine)}` : '';
   return `${machine.runMinutes} min run · ${pulseSummary(machine)}${topUp}`;
+}
+
+/** Blank means 0, which switches that top-up length off. */
+function priceInput(text: string): number | null {
+  return text.trim() === '' ? 0 : parsePesoInput(text);
 }
 
 export default function MachineSettings() {
@@ -208,7 +226,12 @@ function MachineDialog({
   const [offText, setOffText] = useState(String(machine?.pulseOffMs ?? 500));
   const [runText, setRunText] = useState(String(machine?.runMinutes ?? 40));
   const [topUpCountText, setTopUpCountText] = useState(String(machine?.topUpPulseCount ?? 1));
-  const [topUpPriceText, setTopUpPriceText] = useState(centavosToInput(machine?.topUpPrice ?? 0));
+  const [priceTexts, setPriceTexts] = useState<Record<TopUpMinutes, string>>(() => ({
+    5: centavosToInput(machine?.topUpPrice ?? 0),
+    10: centavosToInput(machine?.topUpPrice10 ?? 0),
+    15: centavosToInput(machine?.topUpPrice15 ?? 0),
+    20: centavosToInput(machine?.topUpPrice20 ?? 0),
+  }));
   const pulses = { count: Number(countText), onMs: Number(onText), offMs: Number(offText) };
   const pulseError = pulsesProblem(pulses);
   const runMinutes = Number(runText);
@@ -216,16 +239,49 @@ function MachineDialog({
     Number.isInteger(runMinutes) && runMinutes >= RUN_MINUTES_LIMITS.min && runMinutes <= RUN_MINUTES_LIMITS.max
       ? null
       : `Enter ${RUN_MINUTES_LIMITS.min} to ${RUN_MINUTES_LIMITS.max} minutes.`;
-  const topUpPrice = topUpPriceText.trim() === '' ? 0 : parsePesoInput(topUpPriceText);
   const dryer = type === 'DRYER';
-  const topUpPulseError = dryer ? pulsesProblem({ ...pulses, count: Number(topUpCountText) }) : null;
-  const topUpPriceError = dryer && topUpPrice === null ? 'Enter a price like 20 or 20.50.' : null;
+  const parsedPrices = TOP_UP_CHOICES.map((minutes) => priceInput(priceTexts[minutes]));
+  const topUpPrices: TopUpPrices = {
+    topUpPrice: parsedPrices[0] ?? 0,
+    topUpPrice10: parsedPrices[1] ?? 0,
+    topUpPrice15: parsedPrices[2] ?? 0,
+    topUpPrice20: parsedPrices[3] ?? 0,
+  };
+  const topUpPriceError =
+    dryer && parsedPrices.some((price) => price === null) ? 'Enter prices like 20 or 20.50, or leave blank.' : null;
+  const topUpPulseError = !dryer
+    ? null
+    : (pulsesProblem({ ...pulses, count: Number(topUpCountText) }) ??
+      topUpOptions(topUpPrices)
+        .map((option) => {
+          const problem = pulsesProblem({ ...pulses, count: topUpPulseCountFor(Number(topUpCountText), option.minutes) });
+          return problem ? `${option.minutes} minutes: ${problem}` : null;
+        })
+        .find((problem) => problem !== null) ??
+      null);
   const invalid = pulseError !== null || runError !== null || topUpPulseError !== null || topUpPriceError !== null;
   const digits = (set: (value: string) => void) => (text: string) => set(text.replace(/\D/g, ''));
   const others = machines.filter((m) => m.id !== machine?.id);
   const [targets, setTargets] = useState<PulseTargets>('this');
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   const copyTo = targets === 'all' ? others.map((m) => m.id) : targets === 'selected' ? [...selected] : [];
+  const otherDryers = others.filter((m) => m.type === 'DRYER');
+  const [priceTargets, setPriceTargets] = useState<PulseTargets>('this');
+  const [priceSelected, setPriceSelected] = useState<ReadonlySet<number>>(new Set());
+  const priceCopyTo = !dryer
+    ? []
+    : priceTargets === 'all'
+      ? otherDryers.map((m) => m.id)
+      : priceTargets === 'selected'
+        ? [...priceSelected]
+        : [];
+
+  function togglePriceSelected(id: number, on: boolean) {
+    const next = new Set(priceSelected);
+    if (on) next.add(id);
+    else next.delete(id);
+    setPriceSelected(next);
+  }
 
   function toggleSelected(id: number, on: boolean) {
     const next = new Set(selected);
@@ -245,7 +301,7 @@ function MachineDialog({
       pulseOffMs: pulses.offMs,
       runMinutes,
       topUpPulseCount: Number(topUpCountText),
-      topUpPrice: topUpPrice ?? 0,
+      ...topUpPrices,
     };
     const result = await action.run((c) =>
       c.db.transaction((tx) => {
@@ -253,6 +309,7 @@ function MachineDialog({
         if (machine) updateMachine(txCtx, actor, machine.id, input);
         else addMachine(txCtx, actor, input);
         applyPulsesToMachines(txCtx, actor, pulses, copyTo);
+        applyTopUpPricesToDryers(txCtx, actor, topUpPrices, priceCopyTo);
       }),
     );
     if (result.ok) onClose();
@@ -330,29 +387,59 @@ function MachineDialog({
       />
       {dryer && (
         <>
-          <Text variant="label">{`Top-up (${TOP_UP_MINUTES} minutes)`}</Text>
+          <Text variant="label">Top-ups</Text>
           <Text tone="muted">
-            {`For damp laundry: each top-up adds ${TOP_UP_MINUTES} minutes, sends these pulses (same length and gap as a start) and adds the price to the order's bill. Leave the price at 0 to switch top-ups off.`}
+            {"For damp laundry, while the dryer is running: staff pick 5, 10, 15 or 20 more minutes and the price goes on the order's bill. Leave a price blank or 0 to not offer that length."}
           </Text>
+          <TextField
+            label="Pulses per 5 minutes"
+            value={topUpCountText}
+            onChangeText={digits(setTopUpCountText)}
+            keyboardType="number-pad"
+            hint="Same length and gap as a start. 10 minutes sends them twice, 15 three times, 20 four times."
+          />
           <Row wrap style={{ alignItems: 'flex-start' }}>
-            <TextField
-              label="Top-up pulses"
-              value={topUpCountText}
-              onChangeText={digits(setTopUpCountText)}
-              keyboardType="number-pad"
-              style={{ flex: 1 }}
-            />
-            <TextField
-              label="Top-up price"
-              value={topUpPriceText}
-              onChangeText={setTopUpPriceText}
-              keyboardType="decimal-pad"
-              prefix="₱"
-              style={{ flex: 1 }}
-            />
+            {TOP_UP_CHOICES.map((minutes) => (
+              <TextField
+                key={minutes}
+                label={`${minutes} min price`}
+                value={priceTexts[minutes]}
+                onChangeText={(text) => setPriceTexts({ ...priceTexts, [minutes]: text })}
+                keyboardType="decimal-pad"
+                prefix="₱"
+                style={{ flex: 1, minWidth: 120 }}
+              />
+            ))}
           </Row>
           {topUpPulseError && <Text tone="danger">{`Top-up: ${topUpPulseError}`}</Text>}
           {topUpPriceError && <Text tone="danger">{topUpPriceError}</Text>}
+          {otherDryers.length > 0 && (
+            <Choice
+              label="Use these top-up prices on"
+              value={priceTargets}
+              onChange={setPriceTargets}
+              options={[
+                { value: 'this', label: 'This dryer only' },
+                { value: 'all', label: `All dryers (${otherDryers.length + 1})` },
+                { value: 'selected', label: 'Selected dryers' },
+              ]}
+            />
+          )}
+          {priceTargets === 'selected' &&
+            otherDryers.map((other) => (
+              <Toggle
+                key={other.id}
+                label={other.name}
+                description={`Now ${topUpSummary(other)}`}
+                value={priceSelected.has(other.id)}
+                onChange={(on) => togglePriceSelected(other.id, on)}
+              />
+            ))}
+          {priceCopyTo.length > 0 && (
+            <Text tone="muted">
+              {`Saving also gives ${priceCopyTo.length} other dryer${priceCopyTo.length === 1 ? '' : 's'} these top-up prices. Their pulses stay as they are.`}
+            </Text>
+          )}
         </>
       )}
       <Toggle

@@ -5,7 +5,14 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { MachineRow } from '@/db/schema';
 import { formatShopTime } from '@/domain/dates';
-import { isRunning, MACHINE_TYPE_LABELS, TOP_UP_MINUTES, type MachineType } from '@/domain/machinePolicy';
+import {
+  isRunning,
+  isTopUpMinutes,
+  MACHINE_TYPE_LABELS,
+  topUpOptions,
+  type MachineType,
+  type TopUpMinutes,
+} from '@/domain/machinePolicy';
 import { formatPeso } from '@/domain/money';
 import { can } from '@/domain/permissions';
 import { isClosedStatus } from '@/domain/statuses';
@@ -15,7 +22,7 @@ import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData, useNow } from '@/state/hooks';
 import { useToast } from '@/state/toast';
 import { Button } from '@/ui/Button';
-import { Badge, Dialog, Toggle } from '@/ui/controls';
+import { Badge, Choice, Dialog, Toggle } from '@/ui/controls';
 import { EmptyState, Notice, Panel, Row, Screen, Section } from '@/ui/layout';
 import { MachineEarningsDialog, OrderPickerDialog, OverrideDialog, useReportStart } from '@/ui/machines/MachineDialogs';
 import { Text } from '@/ui/Text';
@@ -91,10 +98,12 @@ export default function Machines() {
     }
   }
 
+  // Only while the dryer still runs: once its timer ends or it is marked as done, the top-up goes.
   const canTopUp = (machine: MachineRow) =>
     machine.type === 'DRYER' &&
     machine.enabled &&
-    machine.topUpPrice > 0 &&
+    isRunning(machine, now) &&
+    topUpOptions(machine).length > 0 &&
     machine.runOrderId !== null &&
     data.openOrders.has(machine.runOrderId);
 
@@ -136,8 +145,8 @@ export default function Machines() {
                   const tappable = machine.enabled && !running && waiting === null;
                   const topUp = canTopUp(machine) && (
                     <Button
-                      label={`Top up ${TOP_UP_MINUTES} min · ${formatPeso(machine.topUpPrice)}`}
-                      kind={running ? 'secondary' : 'quiet'}
+                      label="Top up"
+                      kind="secondary"
                       icon="timer-plus-outline"
                       onPress={() => setToppingUp(machine)}
                       busy={action.busy}
@@ -300,9 +309,12 @@ function TopUpDialog({ machine, customerName, onClose }: { machine: MachineRow; 
   const { controller } = useApp();
   const action = useAction();
   const report = useReportStart();
+  const options = topUpOptions(machine);
+  const [minutes, setMinutes] = useState<TopUpMinutes>(options[0]?.minutes ?? 5);
+  const price = options.find((option) => option.minutes === minutes)?.price ?? 0;
 
   async function topUp() {
-    const result = await action.run((c) => topUpDryer(c, controller, actor, machine.id));
+    const result = await action.run((c) => topUpDryer(c, controller, actor, machine.id, minutes));
     if (!result.ok) return;
     report(result.value, `${machine.name} top-up`);
     if (result.value === 'acked' || result.value === 'timeout') onClose();
@@ -317,17 +329,30 @@ function TopUpDialog({ machine, customerName, onClose }: { machine: MachineRow; 
         <>
           <Button label="Cancel" kind="secondary" onPress={onClose} />
           <Button
-            label={`Add ${TOP_UP_MINUTES} min · ${formatPeso(machine.topUpPrice)}`}
+            label={`Add ${minutes} min · ${formatPeso(price)}`}
             icon="timer-plus-outline"
             onPress={() => void topUp()}
             busy={action.busy}
+            disabled={price <= 0}
           />
         </>
       }
     >
       <Text>{`${machine.runOrderId ?? ''} · ${customerName}`}</Text>
+      <Choice
+        label="Extra drying time"
+        value={String(minutes)}
+        onChange={(value) => {
+          const chosen = Number(value);
+          if (isTopUpMinutes(chosen)) setMinutes(chosen);
+        }}
+        options={options.map((option) => ({
+          value: String(option.minutes),
+          label: `${option.minutes} min · ${formatPeso(option.price)}`,
+        }))}
+      />
       <Text tone="muted">
-        {`Adds ${TOP_UP_MINUTES} minutes of drying and ${formatPeso(machine.topUpPrice)} to this order's bill. ` +
+        {`Adds ${minutes} minutes to the countdown and ${formatPeso(price)} to this order's bill. ` +
           'The charge comes off again if the top-up does not reach the dryer.'}
       </Text>
       {action.error && <Notice tone="danger">{action.error}</Notice>}

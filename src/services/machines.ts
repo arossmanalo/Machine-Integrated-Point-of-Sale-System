@@ -9,8 +9,12 @@ import {
   isRunning,
   MACHINE_TYPES,
   RUN_MINUTES_LIMITS,
-  TOP_UP_MINUTES,
+  TOP_UP_CHOICES,
+  topUpPriceFor,
+  topUpPulseCountFor,
   type MachineType,
+  type TopUpMinutes,
+  type TopUpPrices,
   type PolicyOrder,
 } from '@/domain/machinePolicy';
 import { formatPeso } from '@/domain/money';
@@ -68,9 +72,34 @@ export function pulsesOf(machine: MachineRow): PulseSettings {
   return { count: machine.pulseCount, onMs: machine.pulseOnMs, offMs: machine.pulseOffMs };
 }
 
-/** A top-up uses the dryer's own pulse length and gap, with its own count. */
-export function topUpPulsesOf(machine: MachineRow): PulseSettings {
-  return { count: machine.topUpPulseCount, onMs: machine.pulseOnMs, offMs: machine.pulseOffMs };
+/** A top-up uses the dryer's own pulse length and gap; its count grows with the minutes bought. */
+export function topUpPulsesOf(
+  machine: Pick<MachineRow, 'topUpPulseCount' | 'pulseOnMs' | 'pulseOffMs'>,
+  minutes: TopUpMinutes,
+): PulseSettings {
+  return {
+    count: topUpPulseCountFor(machine.topUpPulseCount, minutes),
+    onMs: machine.pulseOnMs,
+    offMs: machine.pulseOffMs,
+  };
+}
+
+/** Problems with a dryer's top-up prices, or with the pulses each priced length would send. */
+function topUpProblem(
+  dryer: Pick<MachineRow, 'topUpPulseCount' | 'pulseOnMs' | 'pulseOffMs'>,
+  prices: TopUpPrices,
+): string | null {
+  for (const minutes of TOP_UP_CHOICES) {
+    const price = topUpPriceFor(prices, minutes);
+    if (!Number.isInteger(price) || price < 0 || price > MAX_TOP_UP_PRICE) {
+      return `The ${minutes}-minute top-up price must be from ${formatPeso(0)} to ${formatPeso(MAX_TOP_UP_PRICE)}.`;
+    }
+    if (price > 0) {
+      const problem = pulsesProblem(topUpPulsesOf(dryer, minutes));
+      if (problem) return `${minutes}-minute top-up: ${problem}`;
+    }
+  }
+  return null;
 }
 
 /** Top-ups cost at most this much, to catch a price typed in centavos by mistake. */
@@ -90,6 +119,9 @@ export interface MachineInput {
   /** Checked for dryers only; washers keep whatever is stored. */
   topUpPulseCount: number;
   topUpPrice: number;
+  topUpPrice10: number;
+  topUpPrice15: number;
+  topUpPrice20: number;
 }
 
 export function listMachines(ctx: ServiceContext): MachineRow[] {
@@ -114,17 +146,14 @@ function checkMachine(db: Db, input: MachineInput, editingId: number | null): Ma
     throw new UserFacingError(`Run time must be a whole number of minutes from ${min} to ${max}.`);
   }
   if (input.type === 'DRYER') {
-    const topUpProblem = pulsesProblem({
+    const topUpPulseProblem = pulsesProblem({
       count: input.topUpPulseCount,
       onMs: input.pulseOnMs,
       offMs: input.pulseOffMs,
     });
-    if (topUpProblem) throw new UserFacingError(`Top-up: ${topUpProblem}`);
-    if (!Number.isInteger(input.topUpPrice) || input.topUpPrice < 0 || input.topUpPrice > MAX_TOP_UP_PRICE) {
-      throw new UserFacingError(
-        `The top-up price must be from ${formatPeso(0)} to ${formatPeso(MAX_TOP_UP_PRICE)}.`,
-      );
-    }
+    if (topUpPulseProblem) throw new UserFacingError(`Top-up: ${topUpPulseProblem}`);
+    const priceProblem = topUpProblem(input, input);
+    if (priceProblem) throw new UserFacingError(priceProblem);
   }
   const clash = db
     .select()
@@ -487,14 +516,16 @@ export async function startOrderOnMachine(
 }
 
 /**
- * Adds TOP_UP_MINUTES to a dryer for the order of its latest run, sends the dryer's top-up
- * pulses and puts the charge on that order's bill. The charge comes off again if nothing was sent.
+ * Adds 5, 10, 15 or 20 minutes to a running dryer for the order it is drying, sends the matching
+ * top-up pulses and puts that length's price on the order's bill. The charge comes off again if
+ * nothing was sent.
  */
 export async function topUpDryer(
   ctx: ServiceContext,
   controller: MachineController,
   actor: Actor,
   machineId: number,
+  minutes: TopUpMinutes,
 ): Promise<StartResult> {
   if (!isReady(controller)) return 'not-connected';
   const claimed = ctx.db.transaction((tx) => {
@@ -503,17 +534,17 @@ export async function topUpDryer(
       machine.runOrderId === null
         ? undefined
         : tx.select().from(orders).where(eq(orders.id, machine.runOrderId)).get();
-    const decision = decideTopUp(machine, policyOrder(order), machine.topUpPrice);
+    const price = topUpPriceFor(machine, minutes);
+    const decision = decideTopUp(machine, policyOrder(order), price, ctx.now());
     if (!decision.allowed || !order) {
       throw new UserFacingError(decision.allowed ? 'There is no order to top up.' : decision.message);
     }
-    const price = machine.topUpPrice;
     const item = tx
       .insert(orderItems)
       .values({
         orderId: order.id,
         inventoryItemId: null,
-        name: `Dryer top-up ${TOP_UP_MINUTES} min (${machine.name})`,
+        name: `Dryer top-up ${minutes} min (${machine.name})`,
         quantity: 1,
         unitPrice: price,
       })
@@ -524,7 +555,7 @@ export async function topUpDryer(
       .where(eq(orders.id, order.id))
       .run();
     tx.update(machines)
-      .set({ runEndsAt: endAfterTopUp(machine, ctx.now()) })
+      .set({ runEndsAt: endAfterTopUp(machine, ctx.now(), minutes) })
       .where(eq(machines.id, machineId))
       .run();
     const logId = writeLog(
@@ -538,7 +569,7 @@ export async function topUpDryer(
     controller,
     claimed.logId,
     claimed.machine,
-    topUpPulsesOf(claimed.machine),
+    topUpPulsesOf(claimed.machine, minutes),
   );
   if (NOTHING_SENT.includes(result)) {
     ctx.db.transaction((tx) => {
@@ -552,6 +583,41 @@ export async function topUpDryer(
     });
   }
   return result;
+}
+
+/**
+ * Owner only: gives these dryers the same top-up prices. Washers in the list are skipped, and each
+ * dryer's own top-up pulses must still fit the pulse limits for every length it will offer.
+ */
+export function applyTopUpPricesToDryers(
+  ctx: ServiceContext,
+  actor: Actor,
+  prices: TopUpPrices,
+  machineIds: readonly number[],
+): void {
+  requireOwner(actor);
+  if (machineIds.length === 0) return;
+  ctx.db.transaction((tx) => {
+    const dryers = tx
+      .select()
+      .from(machines)
+      .where(and(inArray(machines.id, [...machineIds]), eq(machines.type, 'DRYER')))
+      .all();
+    for (const dryer of dryers) {
+      const problem = topUpProblem(dryer, prices);
+      if (problem) throw new UserFacingError(`${dryer.name}: ${problem}`);
+    }
+    if (dryers.length === 0) return;
+    tx.update(machines)
+      .set({
+        topUpPrice: prices.topUpPrice,
+        topUpPrice10: prices.topUpPrice10,
+        topUpPrice15: prices.topUpPrice15,
+        topUpPrice20: prices.topUpPrice20,
+      })
+      .where(inArray(machines.id, dryers.map((d) => d.id)))
+      .run();
+  });
 }
 
 /** Ends the timer early, for a machine that finished before its set run time. */

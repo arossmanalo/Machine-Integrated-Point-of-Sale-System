@@ -3,6 +3,10 @@ import {
   decideStart,
   decideTopUp,
   endAfterTopUp,
+  isTopUpMinutes,
+  NO_TOP_UP_PRICES,
+  topUpOptions,
+  topUpPulseCountFor,
   isRunning,
   machineAllowance,
   minutesLeft,
@@ -92,29 +96,41 @@ describe('machine runs', () => {
     expect(decideStart(running, openOrder, NOW + 90 * 1000)).toEqual({ allowed: true });
   });
 
-  it('a top-up extends a running dryer and restarts a finished one for 5 minutes', () => {
-    expect(endAfterTopUp({ runEndsAt: NOW + 10 * MIN }, NOW)).toBe(NOW + 15 * MIN);
-    expect(endAfterTopUp({ runEndsAt: NOW - 30 * MIN }, NOW)).toBe(NOW + 5 * MIN);
-    expect(endAfterTopUp({ runEndsAt: null }, NOW)).toBe(NOW + 5 * MIN);
+  it('a top-up adds its minutes to the end of the run', () => {
+    expect(endAfterTopUp({ runEndsAt: NOW + 10 * MIN }, NOW, 5)).toBe(NOW + 15 * MIN);
+    expect(endAfterTopUp({ runEndsAt: NOW + 10 * MIN }, NOW, 20)).toBe(NOW + 30 * MIN);
+  });
+
+  it('offers only the top-up lengths with a price, and scales the pulses with the minutes', () => {
+    const prices = { topUpPrice: 2000, topUpPrice10: 0, topUpPrice15: 5000, topUpPrice20: 6000 };
+    expect(topUpOptions(prices)).toEqual([
+      { minutes: 5, price: 2000 },
+      { minutes: 15, price: 5000 },
+      { minutes: 20, price: 6000 },
+    ]);
+    expect(topUpOptions(NO_TOP_UP_PRICES)).toEqual([]);
+    expect([5, 10, 15, 20].map((m) => (isTopUpMinutes(m) ? topUpPulseCountFor(2, m) : null))).toEqual([2, 4, 6, 8]);
+    expect(isTopUpMinutes(7)).toBe(false);
   });
 });
 
 describe('decideTopUp', () => {
-  const dryer = { ...washer, name: 'Dryer 1', type: 'DRYER' as const, runOrderId: 'T0001', runEndsAt: NOW - MIN };
+  const dryer = { ...washer, name: 'Dryer 1', type: 'DRYER' as const, runOrderId: 'T0001', runEndsAt: NOW + MIN };
 
-  it("tops up the order of the dryer's latest run, during or after it, while the order is open", () => {
-    expect(decideTopUp(dryer, openOrder, 2000)).toEqual({ allowed: true });
-    expect(decideTopUp({ ...dryer, runEndsAt: NOW + MIN }, openOrder, 2000)).toEqual({ allowed: true });
+  it('tops up a dryer only while it is still drying an open order', () => {
+    expect(decideTopUp(dryer, openOrder, 2000, NOW)).toEqual({ allowed: true });
   });
 
   it.each([
     [{ ...washer, runOrderId: 'T0001' }, openOrder, 2000, 'not-a-dryer'],
     [dryer, openOrder, 0, 'no-top-up-price'],
     [{ ...dryer, runOrderId: null }, openOrder, 2000, 'no-run'],
+    [{ ...dryer, runEndsAt: NOW }, openOrder, 2000, 'not-running'],
+    [{ ...dryer, runEndsAt: null }, openOrder, 2000, 'not-running'],
     [{ ...dryer, enabled: false }, openOrder, 2000, 'machine-disabled'],
     [dryer, { ...openOrder, voided: true }, 2000, 'voided'],
     [dryer, { ...openOrder, status: 'COMPLETED' }, 2000, 'closed'],
   ] as const)('refuses %#: %s', (machine, order, price, reason) => {
-    expect(decideTopUp(machine, order, price)).toMatchObject({ allowed: false, reason });
+    expect(decideTopUp(machine, order, price, NOW)).toMatchObject({ allowed: false, reason });
   });
 });

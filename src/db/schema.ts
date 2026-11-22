@@ -152,10 +152,13 @@ export const machines = sqliteTable('machines', {
   assignedByName: text('assigned_by_name'),
   /** How long one start runs, for the in-use timer. */
   runMinutes: integer('run_minutes').notNull().default(40),
-  /** Dryers: pulses sent for one 5-minute top-up (same pulse length and gap as a start). */
+  /** Dryers: pulses for 5 minutes of top-up; longer top-ups send them once per 5 minutes. */
   topUpPulseCount: integer('top_up_pulse_count').notNull().default(1),
-  /** Dryers: centavos added to the order's bill for each top-up. 0 means top-ups are not offered. */
+  /** Dryers: centavos for a 5-minute top-up. Each length's price 0 means it is not offered. */
   topUpPrice: integer('top_up_price').notNull().default(0),
+  topUpPrice10: integer('top_up_price_10').notNull().default(0),
+  topUpPrice15: integer('top_up_price_15').notNull().default(0),
+  topUpPrice20: integer('top_up_price_20').notNull().default(0),
   /** Order of the latest run, kept after the run ends so a dryer top-up can follow it. */
   runOrderId: text('run_order_id').references(() => orders.id),
   /** When the latest run ends. The machine is in use while this is in the future. */

@@ -1,4 +1,5 @@
 import { createTestContext, receiptOf, testEmployee } from '@/db/testing';
+import { NO_TOP_UP_PRICES } from '@/domain/machinePolicy';
 import { receiptCodeFor, TEST_RECEIPT_CODE } from '@/domain/receiptCode';
 import { MockMachineController } from '@/machines/MockMachineController';
 
@@ -7,6 +8,7 @@ import { createCustomer } from '../customers';
 import {
   addMachine,
   applyPulsesToMachines,
+  applyTopUpPricesToDryers,
   assignOrder,
   listMachineLog,
   listMachines,
@@ -28,7 +30,7 @@ import {
 import { createOrder, getOrderDetail, updateOrderStatus, voidOrder } from '../orders';
 import { getSetting } from '../settings';
 
-const PULSES = { pulseCount: 1, pulseOnMs: 500, pulseOffMs: 500, runMinutes: 30, topUpPulseCount: 1, topUpPrice: 0 };
+const PULSES = { pulseCount: 1, pulseOnMs: 500, pulseOffMs: 500, runMinutes: 30, topUpPulseCount: 1, ...NO_TOP_UP_PRICES };
 const MIN = 60 * 1000;
 const DAY = 24 * 60 * MIN;
 
@@ -46,7 +48,7 @@ async function setup() {
   const washer1 = addMachine(ctx, owner, { ...machine('Washer 1', 'WASHER', 1), pulseCount: 3 });
   const washer2 = addMachine(ctx, owner, machine('Washer 2', 'WASHER', 2));
   const washer3 = addMachine(ctx, owner, machine('Washer 3', 'WASHER', 3));
-  const dryer1 = addMachine(ctx, owner, { ...machine('Dryer 1', 'DRYER', 4), topUpPulseCount: 2, topUpPrice: 2000 });
+  const dryer1 = addMachine(ctx, owner, { ...machine('Dryer 1', 'DRYER', 4), topUpPulseCount: 2, topUpPrice: 2000, topUpPrice15: 5000 });
   const dryer2 = addMachine(ctx, owner, machine('Dryer 2', 'DRYER', 5));
   const dryer3 = addMachine(ctx, owner, machine('Dryer 3', 'DRYER', 6));
   const customer = createCustomer(ctx, { name: 'Juan', phone: '', address: '', notes: '' });
@@ -340,27 +342,45 @@ describe('assigning starts the machine', () => {
 });
 
 describe('dryer top-ups', () => {
-  it('adds 5 minutes, sends the top-up pulses and charges the order, during or after the run', async () => {
+  it('adds the chosen minutes, sends pulses for them and charges that price', async () => {
     const { ctx, controller, order, dryers, machineById, log } = await setup();
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     const endsAt = machineById(dryers[0])?.runEndsAt ?? 0;
-    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0])).resolves.toBe('acked');
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).resolves.toBe('acked');
     expect(controller.starts[1]).toEqual({ channel: 4, pulses: { count: 2, onMs: 500, offMs: 500 } });
     expect(machineById(dryers[0])?.runEndsAt).toBe(endsAt + 5 * MIN);
 
-    ctx.advance(60 * MIN);
-    await topUpDryer(ctx, controller, testEmployee, dryers[0]);
-    expect(machineById(dryers[0])?.runEndsAt).toBe(ctx.now() + 5 * MIN);
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 15)).resolves.toBe('acked');
+    expect(controller.starts[2]).toEqual({ channel: 4, pulses: { count: 6, onMs: 500, offMs: 500 } });
+    expect(machineById(dryers[0])?.runEndsAt).toBe(endsAt + 20 * MIN);
 
     const detail = getOrderDetail(ctx, order.id);
-    expect(detail?.order.total).toBe(order.total + 4000);
+    expect(detail?.order.total).toBe(order.total + 2000 + 5000);
     expect(detail?.items.map((i) => [i.name, i.unitPrice])).toEqual([
       ['Dryer top-up 5 min (Dryer 1)', 2000],
-      ['Dryer top-up 5 min (Dryer 1)', 2000],
+      ['Dryer top-up 15 min (Dryer 1)', 5000],
     ]);
-    expect(log().filter((row) => row.kind === 'TOP_UP').map((row) => row.charge)).toEqual([2000, 2000]);
+    expect(log().filter((row) => row.kind === 'TOP_UP').map((row) => row.charge)).toEqual([5000, 2000]);
     // Top-ups do not use up the order's dryers.
     expect(machineUsage(ctx, order.id).DRYER).toBe(1);
+  });
+
+  it('is gone once the dryer finishes or is marked as done', async () => {
+    const { ctx, controller, order, newOrder, dryers } = await setup();
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
+    markRunDone(ctx, dryers[0]);
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).rejects.toThrow('not running');
+
+    const other = newOrder();
+    await startOrderOnMachine(ctx, controller, testEmployee, other.id, dryers[0], receiptOf(other));
+    ctx.advance(31 * MIN);
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).rejects.toThrow('not running');
+  });
+
+  it('refuses a length the dryer does not offer', async () => {
+    const { ctx, controller, order, dryers } = await setup();
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 10)).rejects.toThrow('no price');
   });
 
   it('takes the charge off again when nothing was sent', async () => {
@@ -368,7 +388,7 @@ describe('dryer top-ups', () => {
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     const endsAt = machineById(dryers[0])?.runEndsAt;
     controller.failNextStart('busy');
-    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0])).resolves.toBe('busy');
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).resolves.toBe('busy');
     expect(getOrderDetail(ctx, order.id)?.order.total).toBe(order.total);
     expect(getOrderDetail(ctx, order.id)?.items).toEqual([]);
     expect(machineById(dryers[0])?.runEndsAt).toBe(endsAt);
@@ -378,13 +398,29 @@ describe('dryer top-ups', () => {
   it('refuses washers, dryers without a price, and closed orders', async () => {
     const { ctx, owner, controller, order, washers, dryers } = await setup();
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
-    await expect(topUpDryer(ctx, controller, testEmployee, washers[0])).rejects.toThrow('Only dryers');
+    await expect(topUpDryer(ctx, controller, testEmployee, washers[0], 5)).rejects.toThrow('Only dryers');
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[1], receiptOf(order));
-    await expect(topUpDryer(ctx, controller, testEmployee, dryers[1])).rejects.toThrow('no price');
-    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0])).rejects.toThrow('not dried an order');
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[1], 5)).rejects.toThrow('no price');
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).rejects.toThrow('not running');
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     updateOrderStatus(ctx, owner, order.id, 'COMPLETED');
-    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0])).rejects.toThrow('completed');
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).rejects.toThrow('completed');
+  });
+
+  it('the owner can give all or some dryers the same top-up prices', async () => {
+    const { ctx, owner, washers, dryers, machineById } = await setup();
+    const prices = { topUpPrice: 2500, topUpPrice10: 4500, topUpPrice15: 6500, topUpPrice20: 8000 };
+    expect(() => applyTopUpPricesToDryers(ctx, testEmployee, prices, [dryers[1]])).toThrow('Only the owner');
+
+    applyTopUpPricesToDryers(ctx, owner, prices, [dryers[1], washers[0]]);
+    expect(machineById(dryers[1])).toMatchObject(prices);
+    expect(machineById(dryers[2])).toMatchObject(NO_TOP_UP_PRICES);
+    expect(machineById(washers[0])).toMatchObject(NO_TOP_UP_PRICES);
+
+    // 20 minutes at 13 pulses per 5 minutes would be 52 pulses, over the limit of 50.
+    updateMachine(ctx, owner, dryers[2], { ...machine('Dryer 3', 'DRYER', 6), topUpPulseCount: 13 });
+    expect(() => applyTopUpPricesToDryers(ctx, owner, prices, [dryers[1], dryers[2]])).toThrow('Dryer 3: 20-minute');
+    expect(machineById(dryers[1])).toMatchObject(prices);
   });
 });
 
