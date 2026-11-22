@@ -158,8 +158,11 @@ export const machines = sqliteTable('machines', {
   assignedByName: text('assigned_by_name'),
   /** How long one start runs, for the in-use timer. */
   runMinutes: integer('run_minutes').notNull().default(40),
-  /** Dryers: pulses for 5 minutes of top-up; longer top-ups send them once per 5 minutes. */
+  /** Dryers: pulses sent for each top-up length; `topUpPulseCount` is the 5-minute one. */
   topUpPulseCount: integer('top_up_pulse_count').notNull().default(1),
+  topUpPulses10: integer('top_up_pulses_10').notNull().default(2),
+  topUpPulses15: integer('top_up_pulses_15').notNull().default(3),
+  topUpPulses20: integer('top_up_pulses_20').notNull().default(4),
   /** Dryers: centavos for a 5-minute top-up. Each length's price 0 means it is not offered. */
   topUpPrice: integer('top_up_price').notNull().default(0),
   topUpPrice10: integer('top_up_price_10').notNull().default(0),

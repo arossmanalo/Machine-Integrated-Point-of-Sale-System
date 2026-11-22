@@ -83,13 +83,15 @@ export function pulsesOf(machine: MachineRow): PulseSettings {
   return { count: machine.pulseCount, onMs: machine.pulseOnMs, offMs: machine.pulseOffMs };
 }
 
-/** A top-up uses the dryer's own pulse length and gap; its count grows with the minutes bought. */
+type TopUpPulseFields = 'topUpPulseCount' | 'topUpPulses10' | 'topUpPulses15' | 'topUpPulses20';
+
+/** A top-up uses the dryer's own pulse length and gap, with the count set for that length. */
 export function topUpPulsesOf(
-  machine: Pick<MachineRow, 'topUpPulseCount' | 'pulseOnMs' | 'pulseOffMs'>,
+  machine: Pick<MachineRow, TopUpPulseFields | 'pulseOnMs' | 'pulseOffMs'>,
   minutes: TopUpMinutes,
 ): PulseSettings {
   return {
-    count: topUpPulseCountFor(machine.topUpPulseCount, minutes),
+    count: topUpPulseCountFor(machine, minutes),
     onMs: machine.pulseOnMs,
     offMs: machine.pulseOffMs,
   };
@@ -97,7 +99,7 @@ export function topUpPulsesOf(
 
 /** Problems with a dryer's top-up prices, or with the pulses each priced length would send. */
 function topUpProblem(
-  dryer: Pick<MachineRow, 'topUpPulseCount' | 'pulseOnMs' | 'pulseOffMs'>,
+  dryer: Pick<MachineRow, TopUpPulseFields | 'pulseOnMs' | 'pulseOffMs'>,
   prices: TopUpPrices,
 ): string | null {
   for (const minutes of TOP_UP_CHOICES) {
@@ -129,6 +131,9 @@ export interface MachineInput {
   runMinutes: number;
   /** Checked for dryers only; washers keep whatever is stored. */
   topUpPulseCount: number;
+  topUpPulses10: number;
+  topUpPulses15: number;
+  topUpPulses20: number;
   topUpPrice: number;
   topUpPrice10: number;
   topUpPrice15: number;
@@ -174,12 +179,6 @@ function checkMachine(db: Db, input: MachineInput, editingId: number | null): Ma
     }
   }
   if (input.type === 'DRYER') {
-    const topUpPulseProblem = pulsesProblem({
-      count: input.topUpPulseCount,
-      onMs: input.pulseOnMs,
-      offMs: input.pulseOffMs,
-    });
-    if (topUpPulseProblem) throw new UserFacingError(`Top-up: ${topUpPulseProblem}`);
     const priceProblem = topUpProblem(input, input);
     if (priceProblem) throw new UserFacingError(priceProblem);
   }

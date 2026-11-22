@@ -29,8 +29,6 @@ export interface PolicyMachine {
 /** The dryer top-ups on offer. Each dryer has its own price for each; price 0 means not offered. */
 export const TOP_UP_CHOICES = [5, 10, 15, 20] as const;
 export type TopUpMinutes = (typeof TOP_UP_CHOICES)[number];
-/** The dryer's top-up pulses buy this many minutes; longer top-ups send them once per step. */
-export const TOP_UP_STEP_MINUTES = 5;
 
 /** A dryer's top-up prices in centavos. `topUpPrice` is the 5-minute price. */
 export interface TopUpPrices {
@@ -56,9 +54,19 @@ export function topUpOptions(prices: TopUpPrices): { minutes: TopUpMinutes; pric
   );
 }
 
-/** Pulses for a top-up: the dryer's 5-minute pulses, once for every 5 minutes. */
-export function topUpPulseCountFor(fiveMinutePulses: number, minutes: TopUpMinutes): number {
-  return fiveMinutePulses * (minutes / TOP_UP_STEP_MINUTES);
+/** A dryer's pulse count for each top-up length. `topUpPulseCount` is the 5-minute one. */
+export interface TopUpPulses {
+  topUpPulseCount: number;
+  topUpPulses10: number;
+  topUpPulses15: number;
+  topUpPulses20: number;
+}
+
+export function topUpPulseCountFor(pulses: TopUpPulses, minutes: TopUpMinutes): number {
+  if (minutes === 5) return pulses.topUpPulseCount;
+  if (minutes === 10) return pulses.topUpPulses10;
+  if (minutes === 15) return pulses.topUpPulses15;
+  return pulses.topUpPulses20;
 }
 
 export function isTopUpMinutes(value: number): value is TopUpMinutes {

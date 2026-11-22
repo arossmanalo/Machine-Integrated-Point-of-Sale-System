@@ -101,7 +101,7 @@ describe('machine runs', () => {
     expect(endAfterTopUp({ runEndsAt: NOW + 10 * MIN }, NOW, 20)).toBe(NOW + 30 * MIN);
   });
 
-  it('offers only the top-up lengths with a price, and scales the pulses with the minutes', () => {
+  it('offers only the top-up lengths with a price, each with its own pulses', () => {
     const prices = { topUpPrice: 2000, topUpPrice10: 0, topUpPrice15: 5000, topUpPrice20: 6000 };
     expect(topUpOptions(prices)).toEqual([
       { minutes: 5, price: 2000 },
@@ -109,7 +109,8 @@ describe('machine runs', () => {
       { minutes: 20, price: 6000 },
     ]);
     expect(topUpOptions(NO_TOP_UP_PRICES)).toEqual([]);
-    expect([5, 10, 15, 20].map((m) => (isTopUpMinutes(m) ? topUpPulseCountFor(2, m) : null))).toEqual([2, 4, 6, 8]);
+    const pulses = { topUpPulseCount: 2, topUpPulses10: 5, topUpPulses15: 6, topUpPulses20: 9 };
+    expect([5, 10, 15, 20].map((m) => (isTopUpMinutes(m) ? topUpPulseCountFor(pulses, m) : null))).toEqual([2, 5, 6, 9]);
     expect(isTopUpMinutes(7)).toBe(false);
   });
 });

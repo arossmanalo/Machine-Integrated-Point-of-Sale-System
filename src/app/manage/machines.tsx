@@ -22,6 +22,7 @@ import {
   type MachineType,
   type TopUpMinutes,
   type TopUpPrices,
+  type TopUpPulses,
 } from '@/domain/machinePolicy';
 import { centavosToInput, formatPeso, parsePesoInput } from '@/domain/money';
 import { STATUS_LABELS } from '@/machines/MachineController';
@@ -283,7 +284,12 @@ function MachineDialog({
   const [offText, setOffText] = useState(String(machine?.pulseOffMs ?? 500));
   const [runText, setRunText] = useState(String(machine?.runMinutes ?? 40));
   const [cycles, setCycles] = useState<CycleTexts>(() => cycleTexts(machine ?? sameForEveryCycle(1, 40)));
-  const [topUpCountText, setTopUpCountText] = useState(String(machine?.topUpPulseCount ?? 1));
+  const [pulseTexts, setPulseTexts] = useState<Record<TopUpMinutes, string>>(() => ({
+    5: String(machine?.topUpPulseCount ?? 1),
+    10: String(machine?.topUpPulses10 ?? 2),
+    15: String(machine?.topUpPulses15 ?? 3),
+    20: String(machine?.topUpPulses20 ?? 4),
+  }));
   const [priceTexts, setPriceTexts] = useState<Record<TopUpMinutes, string>>(() => ({
     5: centavosToInput(machine?.topUpPrice ?? 0),
     10: centavosToInput(machine?.topUpPrice10 ?? 0),
@@ -307,16 +313,21 @@ function MachineDialog({
   };
   const topUpPriceError =
     dryer && parsedPrices.some((price) => price === null) ? 'Enter prices like 20 or 20.50, or leave blank.' : null;
+  const topUpPulses: TopUpPulses = {
+    topUpPulseCount: Number(pulseTexts[5]),
+    topUpPulses10: Number(pulseTexts[10]),
+    topUpPulses15: Number(pulseTexts[15]),
+    topUpPulses20: Number(pulseTexts[20]),
+  };
+  // Only the lengths on offer (with a price) have to send a valid number of pulses.
   const topUpPulseError = !dryer
     ? null
-    : (pulsesProblem({ ...pulses, count: Number(topUpCountText) }) ??
-      topUpOptions(topUpPrices)
+    : (topUpOptions(topUpPrices)
         .map((option) => {
-          const problem = pulsesProblem({ ...pulses, count: topUpPulseCountFor(Number(topUpCountText), option.minutes) });
+          const problem = pulsesProblem({ ...pulses, count: topUpPulseCountFor(topUpPulses, option.minutes) });
           return problem ? `${option.minutes} minutes: ${problem}` : null;
         })
-        .find((problem) => problem !== null) ??
-      null);
+        .find((problem) => problem !== null) ?? null);
   const cycleValues = cycleSettings(cycles);
   // Without Multi-cycle a new machine's cycles simply copy its one pulse count and run time.
   const savedCycles = multiCycle || machine ? cycleValues : sameForEveryCycle(pulses.count, runMinutes);
@@ -375,7 +386,7 @@ function MachineDialog({
       pulseOnMs: pulses.onMs,
       pulseOffMs: pulses.offMs,
       runMinutes,
-      topUpPulseCount: Number(topUpCountText),
+      ...topUpPulses,
       ...topUpPrices,
       ...savedCycles,
     };
@@ -508,28 +519,43 @@ function MachineDialog({
         <>
           <Text variant="label">Top-ups</Text>
           <Text tone="muted">
-            {"For damp laundry, while the dryer is running: staff pick 5, 10, 15 or 20 more minutes and the price goes on the order's bill. Leave a price blank or 0 to not offer that length."}
+            {"For damp laundry, while the dryer is running: staff pick 5, 10, 15 or 20 more minutes and the price goes on the order's bill. Each length sends its own number of pulses (same length and gap as a start). Leave a price blank or 0 to not offer that length."}
           </Text>
-          <TextField
-            label="Pulses per 5 minutes"
-            value={topUpCountText}
-            onChangeText={digits(setTopUpCountText)}
-            keyboardType="number-pad"
-            hint="Same length and gap as a start. 10 minutes sends them twice, 15 three times, 20 four times."
-          />
-          <Row wrap style={{ alignItems: 'flex-start' }}>
+          <View style={styles.cycleTable}>
+            <Row>
+              <Text variant="label" style={styles.cycleName}>
+                Extra time
+              </Text>
+              <Text variant="label" style={styles.flex}>
+                Pulses
+              </Text>
+              <Text variant="label" style={styles.flex}>
+                Price
+              </Text>
+            </Row>
             {TOP_UP_CHOICES.map((minutes) => (
-              <TextField
-                key={minutes}
-                label={`${minutes} min price`}
-                value={priceTexts[minutes]}
-                onChangeText={(text) => setPriceTexts({ ...priceTexts, [minutes]: text })}
-                keyboardType="decimal-pad"
-                prefix="₱"
-                style={{ flex: 1, minWidth: 120 }}
-              />
+              <Row key={minutes}>
+                <Text style={styles.cycleName}>{`${minutes} minutes`}</Text>
+                <TextField
+                  label={`${minutes} minute top-up pulses`}
+                  hideLabel
+                  value={pulseTexts[minutes]}
+                  onChangeText={(text) => setPulseTexts({ ...pulseTexts, [minutes]: text.replace(/\D/g, '') })}
+                  keyboardType="number-pad"
+                  style={styles.flex}
+                />
+                <TextField
+                  label={`${minutes} minute top-up price`}
+                  hideLabel
+                  value={priceTexts[minutes]}
+                  onChangeText={(text) => setPriceTexts({ ...priceTexts, [minutes]: text })}
+                  keyboardType="decimal-pad"
+                  prefix="₱"
+                  style={styles.flex}
+                />
+              </Row>
             ))}
-          </Row>
+          </View>
           {topUpPulseError && <Text tone="danger">{`Top-up: ${topUpPulseError}`}</Text>}
           {topUpPriceError && <Text tone="danger">{topUpPriceError}</Text>}
           {otherDryers.length > 0 && (
@@ -556,7 +582,7 @@ function MachineDialog({
             ))}
           {priceCopyTo.length > 0 && (
             <Text tone="muted">
-              {`Saving also gives ${priceCopyTo.length} other dryer${priceCopyTo.length === 1 ? '' : 's'} these top-up prices. Their pulses stay as they are.`}
+              {`Saving also gives ${priceCopyTo.length} other dryer${priceCopyTo.length === 1 ? '' : 's'} these top-up prices. Their top-up pulses stay as they are.`}
             </Text>
           )}
         </>

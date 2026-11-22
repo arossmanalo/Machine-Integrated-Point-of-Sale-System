@@ -33,7 +33,7 @@ import {
 import { createOrder, getOrderDetail, updateOrderStatus, voidOrder } from '../orders';
 import { getSetting, setSetting } from '../settings';
 
-const PULSES = { pulseCount: 1, pulseOnMs: 500, pulseOffMs: 500, runMinutes: 30, topUpPulseCount: 1, ...NO_TOP_UP_PRICES, ...sameForEveryCycle(1, 30) };
+const PULSES = { pulseCount: 1, pulseOnMs: 500, pulseOffMs: 500, runMinutes: 30, topUpPulseCount: 1, topUpPulses10: 2, topUpPulses15: 3, topUpPulses20: 4, ...NO_TOP_UP_PRICES, ...sameForEveryCycle(1, 30) };
 const MIN = 60 * 1000;
 const DAY = 24 * 60 * MIN;
 
@@ -51,7 +51,7 @@ async function setup() {
   const washer1 = addMachine(ctx, owner, { ...machine('Washer 1', 'WASHER', 1), pulseCount: 3 });
   const washer2 = addMachine(ctx, owner, machine('Washer 2', 'WASHER', 2));
   const washer3 = addMachine(ctx, owner, machine('Washer 3', 'WASHER', 3));
-  const dryer1 = addMachine(ctx, owner, { ...machine('Dryer 1', 'DRYER', 4), topUpPulseCount: 2, topUpPrice: 2000, topUpPrice15: 5000 });
+  const dryer1 = addMachine(ctx, owner, { ...machine('Dryer 1', 'DRYER', 4), topUpPulseCount: 2, topUpPulses10: 4, topUpPulses15: 7, topUpPrice: 2000, topUpPrice15: 5000 });
   const dryer2 = addMachine(ctx, owner, machine('Dryer 2', 'DRYER', 5));
   const dryer3 = addMachine(ctx, owner, machine('Dryer 3', 'DRYER', 6));
   const customer = createCustomer(ctx, { name: 'Juan', phone: '', address: '', notes: '' });
@@ -355,7 +355,7 @@ describe('dryer top-ups', () => {
     expect(machineById(dryers[0])?.runEndsAt).toBe(endsAt + 5 * MIN);
 
     await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 15)).resolves.toBe('acked');
-    expect(controller.starts[2]).toEqual({ channel: 4, pulses: { count: 6, onMs: 500, offMs: 500 } });
+    expect(controller.starts[2]).toEqual({ channel: 4, pulses: { count: 7, onMs: 500, offMs: 500 } });
     expect(machineById(dryers[0])?.runEndsAt).toBe(endsAt + 20 * MIN);
 
     const detail = getOrderDetail(ctx, order.id);
@@ -421,8 +421,8 @@ describe('dryer top-ups', () => {
     expect(machineById(dryers[2])).toMatchObject(NO_TOP_UP_PRICES);
     expect(machineById(washers[0])).toMatchObject(NO_TOP_UP_PRICES);
 
-    // 20 minutes at 13 pulses per 5 minutes would be 52 pulses, over the limit of 50.
-    updateMachine(ctx, owner, dryers[2], { ...machine('Dryer 3', 'DRYER', 6), topUpPulseCount: 13 });
+    // Dryer 3's 20-minute top-up sends 51 pulses, over the limit of 50.
+    updateMachine(ctx, owner, dryers[2], { ...machine('Dryer 3', 'DRYER', 6), topUpPulses20: 51 });
     expect(() => applyTopUpPricesToDryers(ctx, owner, prices, [dryers[1], dryers[2]])).toThrow('Dryer 3: 20-minute');
     expect(machineById(dryers[1])).toMatchObject(prices);
   });

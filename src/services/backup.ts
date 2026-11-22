@@ -28,7 +28,7 @@ import { DEVICE_ONLY_SETTINGS } from './settings';
 
 export const BACKUP_FORMAT = 'laundry-pos-backup';
 /** 2: machine run timers, dryer top-ups and the TOP_UP log kind. */
-export const BACKUP_VERSION = 7;
+export const BACKUP_VERSION = 8;
 
 function readAll(db: Db) {
   return {
@@ -166,6 +166,10 @@ const tableSchemas = {
     // Backups made before run timers and top-ups get the defaults of migration 0003.
     runMinutes: int.default(40),
     topUpPulseCount: int.default(1),
+    // Backups before version 8 scaled the 5-minute pulses for longer top-ups.
+    topUpPulses10: int.optional(),
+    topUpPulses15: int.optional(),
+    topUpPulses20: int.optional(),
     topUpPrice: int.default(0),
     // Backups before version 5 had one top-up length (5 minutes) only.
     topUpPrice10: int.default(0),
@@ -193,6 +197,9 @@ const tableSchemas = {
     mediumMinutes: machine.mediumMinutes ?? machine.runMinutes,
     heavyPulses: machine.heavyPulses ?? machine.pulseCount,
     heavyMinutes: machine.heavyMinutes ?? machine.runMinutes,
+    topUpPulses10: machine.topUpPulses10 ?? machine.topUpPulseCount * 2,
+    topUpPulses15: machine.topUpPulses15 ?? machine.topUpPulseCount * 3,
+    topUpPulses20: machine.topUpPulses20 ?? machine.topUpPulseCount * 4,
   })),
   machineUnlocks: z.object({
     id: int,

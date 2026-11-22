@@ -141,7 +141,7 @@ describe('full backup', () => {
     const { ctx, owner } = await setup();
     importLegacyExport(ctx, owner, legacyExport);
     setSetting(ctx.db, 'pricePerLoad', 25000);
-    const pulses = { pulseCount: 2, pulseOnMs: 300, pulseOffMs: 400, runMinutes: 35, topUpPulseCount: 2, topUpPrice: 2000, topUpPrice10: 3500, topUpPrice15: 0, topUpPrice20: 0, ...sameForEveryCycle(2, 35) };
+    const pulses = { pulseCount: 2, pulseOnMs: 300, pulseOffMs: 400, runMinutes: 35, topUpPulseCount: 2, topUpPulses10: 4, topUpPulses15: 6, topUpPulses20: 8, topUpPrice: 2000, topUpPrice10: 3500, topUpPrice15: 0, topUpPrice20: 0, ...sameForEveryCycle(2, 35) };
     const machineId = addMachine(ctx, owner, { name: 'Washer 1', type: 'WASHER', hardwareChannel: 1, enabled: true, ...pulses });
     const dryerId = addMachine(ctx, owner, { name: 'Dryer 1', type: 'DRYER', hardwareChannel: 2, enabled: true, ...pulses });
     const order = createOrder(ctx, testEmployee, {
@@ -197,6 +197,9 @@ describe('full backup', () => {
       pulseOffMs: 100,
       runMinutes: 30,
       topUpPulseCount: 1,
+      topUpPulses10: 2,
+      topUpPulses15: 3,
+      topUpPulses20: 4,
       ...NO_TOP_UP_PRICES,
       ...sameForEveryCycle(4, 30),
     });
@@ -215,6 +218,9 @@ describe('full backup', () => {
         'topUpPrice10',
         'topUpPrice15',
         'topUpPrice20',
+        'topUpPulses10',
+        'topUpPulses15',
+        'topUpPulses20',
         'delicatesPulses',
         'delicatesMinutes',
         'lightPulses',
@@ -240,6 +246,8 @@ describe('full backup', () => {
       runMinutes: 40,
       ...NO_TOP_UP_PRICES,
       ...sameForEveryCycle(1, 40),
+      topUpPulses10: 2,
+      topUpPulses20: 4,
       runEndsAt: null,
     });
   });
