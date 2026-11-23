@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { MachineRow } from '@/db/schema';
-import { CYCLE_LABELS, CYCLES, cyclePulses, DEFAULT_CYCLE, isCycle, type Cycle } from '@/domain/cycles';
+import { CYCLE_LABELS, CYCLES, cyclePulses, DEFAULT_CYCLE, hasCycles, isCycle, type Cycle } from '@/domain/cycles';
 import { formatShopTime } from '@/domain/dates';
 import {
   isRunning,
@@ -76,7 +76,7 @@ export default function Machines() {
 
   async function test(machine: MachineRow) {
     // With Multi-cycle on, the owner picks which cycle's pulses to send first.
-    if (multiCycle) {
+    if (hasCycles(multiCycle, machine.type)) {
       setTestingCycles(machine);
       return;
     }

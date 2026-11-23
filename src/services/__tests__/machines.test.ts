@@ -671,6 +671,18 @@ describe('multi-cycle', () => {
     expect(log()[0]).toMatchObject({ kind: 'ORDER', cycle: 'HEAVY' });
   });
 
+  it('dryers have no cycles: they start with their own pulses and run time', async () => {
+    const { ctx, owner, controller, order, washers, dryers, machineById } = await setupCycles();
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order), 'LIGHT');
+    await expect(
+      startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order)),
+    ).resolves.toBe('acked');
+    expect(controller.starts[1].pulses.count).toBe(1);
+    expect(machineById(dryers[0])?.runEndsAt).toBe(ctx.now() + 30 * MIN);
+    await testStart(ctx, controller, owner, dryers[1], 'HEAVY');
+    expect(controller.starts[2].pulses.count).toBe(1);
+  });
+
   it('a retry after a start that sent nothing runs the cycle that was picked', async () => {
     const { ctx, controller, order, washers } = await setupCycles();
     controller.failNextStart('failed');

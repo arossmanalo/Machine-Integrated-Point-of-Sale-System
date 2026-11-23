@@ -24,6 +24,7 @@ import {
   cycleMinutes,
   cyclePulses,
   DEFAULT_CYCLE,
+  hasCycles,
   isCycle,
   type Cycle,
   type CycleSettings,
@@ -501,16 +502,16 @@ function startPulsesFor(machine: MachineRow, cycle: Cycle | null): PulseSettings
 
 /** The cycle an order start runs: the one picked when it was assigned (Multi-cycle only). */
 function cycleForStart(db: Db, machine: MachineRow): Cycle | null {
-  if (!getSetting(db, 'multiCycle')) return null;
+  if (!hasCycles(getSetting(db, 'multiCycle'), machine.type)) return null;
   if (machine.assignedCycle === null || !isCycle(machine.assignedCycle)) {
     throw new UserFacingError(`No cycle was picked for ${machine.name}. Tap Remove, then assign the order again.`);
   }
   return machine.assignedCycle;
 }
 
-/** Owner overrides and test starts have no cycle picked, so with Multi-cycle on they run Medium. */
-function plainCycle(db: Db): Cycle | null {
-  return getSetting(db, 'multiCycle') ? DEFAULT_CYCLE : null;
+/** Owner overrides have no cycle picked, so a washer runs Medium with Multi-cycle on. */
+function plainCycle(db: Db, machine: MachineRow): Cycle | null {
+  return hasCycles(getSetting(db, 'multiCycle'), machine.type) ? DEFAULT_CYCLE : null;
 }
 
 /** Owner only: turns cycle choices on or off for every machine. */
@@ -605,13 +606,15 @@ export async function startOrderOnMachine(
   orderId: string,
   machineId: number,
   receiptCode: string | null,
-  cycle: Cycle | null = null,
+  pickedCycle: Cycle | null = null,
 ): Promise<StartResult> {
   if (getSetting(ctx.db, 'requireReceiptScan')) checkReceiptFor(ctx, receiptCode ?? '', orderId);
-  if (getSetting(ctx.db, 'multiCycle') && cycle === null) {
+  const machine = requireMachine(ctx.db, machineId);
+  const usesCycles = hasCycles(getSetting(ctx.db, 'multiCycle'), machine.type);
+  if (usesCycles && pickedCycle === null) {
     throw new UserFacingError('Pick a cycle: Delicates, Light, Medium or Heavy.');
   }
-  const machine = requireMachine(ctx.db, machineId);
+  const cycle = usesCycles ? pickedCycle : null;
   if (machine.assignedOrderId !== orderId || machine.assignedCycle !== cycle) {
     ctx.db.transaction((tx) => {
       // A start that sent nothing left the order waiting on another machine; staff chose this one instead.
@@ -798,7 +801,7 @@ export async function overrideStart(
     throw new UserFacingError('Wrong owner PIN.');
   }
   const ready = isReady(controller);
-  const cycle = plainCycle(ctx.db);
+  const cycle = plainCycle(ctx.db, machine);
   const logId = writeLog(ctx, { ...base, kind: 'OVERRIDE', result: ready ? 'PENDING' : 'NOT_CONNECTED', cycle });
   if (!ready) return 'not-connected';
   ctx.db
@@ -826,7 +829,7 @@ export async function testStart(
   requireOwner(actor);
   const machine = requireMachine(ctx.db, machineId);
   const ready = isReady(controller);
-  const cycle = getSetting(ctx.db, 'multiCycle') ? (testCycle ?? DEFAULT_CYCLE) : null;
+  const cycle = hasCycles(getSetting(ctx.db, 'multiCycle'), machine.type) ? (testCycle ?? DEFAULT_CYCLE) : null;
   const logId = writeLog(ctx, {
     machine,
     actor,

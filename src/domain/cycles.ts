@@ -1,3 +1,5 @@
+import type { MachineType } from './machinePolicy';
+
 /**
  * Multi-cycle machines: when the owner turns on Multi-cycle, staff pick one of these cycles before
  * a machine runs. Each machine sends its own number of pulses and counts down its own minutes
@@ -12,6 +14,11 @@ export const CYCLE_LABELS: Record<Cycle, string> = {
   MEDIUM: 'Medium',
   HEAVY: 'Heavy',
 };
+
+/** Cycles are for washers only; dryers keep one start and offer top-ups instead. */
+export function hasCycles(multiCycle: boolean, type: MachineType): boolean {
+  return multiCycle && type === 'WASHER';
+}
 
 /** Owner overrides and test starts have no cycle to pick, so they run this one. */
 export const DEFAULT_CYCLE: Cycle = 'MEDIUM';

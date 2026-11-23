@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { MachineRow } from '@/db/schema';
-import { CYCLE_LABELS, CYCLES, cycleMinutes, isCycle, type Cycle } from '@/domain/cycles';
+import { CYCLE_LABELS, CYCLES, cycleMinutes, hasCycles, isCycle, type Cycle } from '@/domain/cycles';
 import { UserFacingError, type ServiceContext } from '@/db/types';
 import { isRunning, MACHINE_TYPE_LABELS, machineAllowance, minutesLeft, type MachineType } from '@/domain/machinePolicy';
 import type { Earned } from '@/domain/machineEarnings';
@@ -153,6 +153,7 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
   const scanOn = useData((c) => getSetting(c.db, 'requireReceiptScan'));
   const multiCycle = useData((c) => getSetting(c.db, 'multiCycle'));
   const [cycle, setCycle] = useState<Cycle | null>(null);
+  const usesCycles = chosen !== null && hasCycles(multiCycle, chosen.type);
   const needScan = scanOn && receiptCode === null;
   const data = useData(
     (c) => {
@@ -176,7 +177,7 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
 
   async function start(machine: MachineRow) {
     const result = await action.run((c) =>
-      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode, multiCycle ? cycle : null),
+      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode, usesCycles ? cycle : null),
     );
     if (!result.ok) return;
     report(result.value, machine.name);
@@ -193,7 +194,7 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
           icon="play"
           onPress={() => void start(chosen)}
           busy={action.busy}
-          disabled={multiCycle && cycle === null}
+          disabled={usesCycles && cycle === null}
         />
       )}
     </>
@@ -214,7 +215,7 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
           machine={chosen}
           orderId={orderId}
           customerName={data.customerName}
-          multiCycle={multiCycle}
+          multiCycle={usesCycles}
           cycle={cycle}
           onCycle={setCycle}
         />
@@ -337,6 +338,7 @@ export function OrderPickerDialog({
   const scanOn = useData((c) => getSetting(c.db, 'requireReceiptScan'));
   const multiCycle = useData((c) => getSetting(c.db, 'multiCycle'));
   const [cycle, setCycle] = useState<Cycle | null>(null);
+  const usesCycles = hasCycles(multiCycle, machine.type);
   const candidates = useData(
     (c) =>
       listOrderSummaries(c)
@@ -382,7 +384,7 @@ export function OrderPickerDialog({
 
   async function start(orderId: string) {
     const result = await action.run((c) =>
-      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode, multiCycle ? cycle : null),
+      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode, usesCycles ? cycle : null),
     );
     if (!result.ok) return;
     report(result.value, machine.name);
@@ -398,7 +400,7 @@ export function OrderPickerDialog({
         icon="play"
         onPress={() => void start(chosen.orderId)}
         busy={action.busy}
-        disabled={multiCycle && cycle === null}
+        disabled={usesCycles && cycle === null}
       />
     </>
   ) : (
@@ -415,7 +417,7 @@ export function OrderPickerDialog({
           machine={machine}
           orderId={chosen.orderId}
           customerName={chosen.customerName}
-          multiCycle={multiCycle}
+          multiCycle={usesCycles}
           cycle={cycle}
           onCycle={setCycle}
         />
