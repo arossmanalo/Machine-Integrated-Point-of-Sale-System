@@ -70,6 +70,7 @@ export default function OrderDetails() {
   const dryerAllowance = machineAllowance(order, 'DRYER');
   const allowance = Math.max(washerAllowance, dryerAllowance);
   const machinesOpen = !voided && allowance > 0 && order.status !== 'COMPLETED' && order.status !== 'AUDITED';
+  const runsLeft = data.usage.WASHER < washerAllowance || data.usage.DRYER < dryerAllowance;
   const loads = orderHistory(order, detail.unlocks).loads;
 
   return (
@@ -108,7 +109,8 @@ export default function OrderDetails() {
             <Button
               label="Assign machine"
               icon="washing-machine"
-              kind={data.usage.WASHER === 0 && machinesOpen ? 'primary' : 'secondary'}
+              // Blue while the receipt's QR code still has washer or dryer runs left.
+              kind={machinesOpen && runsLeft ? 'primary' : 'secondary'}
               disabled={!machinesOpen}
               onPress={() => setStarting(true)}
             />
