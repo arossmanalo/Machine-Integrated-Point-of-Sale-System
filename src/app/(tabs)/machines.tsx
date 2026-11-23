@@ -4,20 +4,33 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { MachineRow } from '@/db/schema';
-import { CYCLE_LABELS, CYCLES, cyclePulses, DEFAULT_CYCLE, hasCycles, isCycle, type Cycle } from '@/domain/cycles';
+import type { ServiceContext } from '@/db/types';
+import { CYCLE_LABELS, CYCLES, cyclePulses, hasCycles } from '@/domain/cycles';
 import { formatShopTime } from '@/domain/dates';
 import {
   isRunning,
   isTopUpMinutes,
   MACHINE_TYPE_LABELS,
+  TOP_UP_CHOICES,
   topUpOptions,
+  topUpPulseCountFor,
   type MachineType,
   type TopUpMinutes,
 } from '@/domain/machinePolicy';
 import { formatPeso } from '@/domain/money';
 import { can } from '@/domain/permissions';
 import { isClosedStatus } from '@/domain/statuses';
-import { lastStarts, listMachines, markRunDone, startMachine, testStart, topUpDryer, unassignMachine } from '@/services/machines';
+import type { StartResult } from '@/machines/MachineController';
+import {
+  lastStarts,
+  listMachines,
+  markRunDone,
+  startMachine,
+  testStart,
+  testTopUp,
+  topUpDryer,
+  unassignMachine,
+} from '@/services/machines';
 import { createTestOrder, listOrderSummaries, voidOrder } from '@/services/orders';
 import { getSetting } from '@/services/settings';
 import { useActor, useApp } from '@/state/AppProvider';
@@ -75,8 +88,8 @@ export default function Machines() {
   }
 
   async function test(machine: MachineRow) {
-    // With Multi-cycle on, the owner picks which cycle's pulses to send first.
-    if (hasCycles(multiCycle, machine.type)) {
+    // Dryers (start or a top-up) and multi-cycle washers ask what to send first.
+    if (machine.type === 'DRYER' || hasCycles(multiCycle, machine.type)) {
       setTestingCycles(machine);
       return;
     }
@@ -301,7 +314,9 @@ export default function Machines() {
       )}
       {viewingEarnings && <MachineEarningsDialog machine={viewingEarnings} onClose={() => setViewingEarnings(null)} />}
       {overriding && <OverrideDialog machine={overriding} onClose={() => setOverriding(null)} />}
-      {testingCycles && <TestCycleDialog machine={testingCycles} onClose={() => setTestingCycles(null)} />}
+      {testingCycles && (
+        <TestMachineDialog machine={testingCycles} multiCycle={multiCycle} onClose={() => setTestingCycles(null)} />
+      )}
       {toppingUp && (
         <TopUpDialog
           machine={toppingUp}
@@ -314,17 +329,59 @@ export default function Machines() {
 }
 
 /** Top-ups cost money, so the charge is shown and confirmed before the pulses go out. */
-/** Testing mode with Multi-cycle: send any one cycle's pulses, as often as needed. */
-function TestCycleDialog({ machine, onClose }: { machine: MachineRow; onClose: () => void }) {
+/**
+ * Testing mode: pick what to send. Washers with Multi-cycle test each cycle; dryers test their
+ * start and each top-up length. Nothing is charged and no countdown is set, so tests can follow
+ * one another straight away.
+ */
+function TestMachineDialog({
+  machine,
+  multiCycle,
+  onClose,
+}: {
+  machine: MachineRow;
+  multiCycle: boolean;
+  onClose: () => void;
+}) {
   const actor = useActor();
   const { controller } = useApp();
   const action = useAction();
   const report = useReportStart();
-  const [cycle, setCycle] = useState<Cycle>(DEFAULT_CYCLE);
+  const plural = (count: number) => `${count} pulse${count === 1 ? '' : 's'}`;
+  const options: { value: string; label: string; send: (c: ServiceContext) => Promise<StartResult> }[] =
+    machine.type === 'DRYER'
+      ? [
+          {
+            value: 'start',
+            label: `Start · ${plural(machine.pulseCount)}`,
+            send: (c) => testStart(c, controller, actor, machine.id),
+          },
+          ...TOP_UP_CHOICES.map((minutes) => ({
+            value: String(minutes),
+            label: `Top-up ${minutes} min · ${plural(topUpPulseCountFor(machine, minutes))}`,
+            send: (c: ServiceContext) => testTopUp(c, controller, actor, machine.id, minutes),
+          })),
+        ]
+      : hasCycles(multiCycle, machine.type)
+        ? CYCLES.map((cycle) => ({
+            value: cycle,
+            label: `${CYCLE_LABELS[cycle]} · ${plural(cyclePulses(machine, cycle))}`,
+            send: (c: ServiceContext) => testStart(c, controller, actor, machine.id, cycle),
+          }))
+        : [
+            {
+              value: 'start',
+              label: `Start · ${plural(machine.pulseCount)}`,
+              send: (c: ServiceContext) => testStart(c, controller, actor, machine.id),
+            },
+          ];
+  const [chosen, setChosen] = useState(options[0]?.value ?? 'start');
+  const option = options.find((o) => o.value === chosen) ?? options[0];
 
   async function send() {
-    const result = await action.run((c) => testStart(c, controller, actor, machine.id, cycle));
-    if (result.ok) report(result.value, `${machine.name} ${CYCLE_LABELS[cycle]} (test)`);
+    if (!option) return;
+    const result = await action.run((c) => option.send(c));
+    if (result.ok) report(result.value, `${machine.name} ${option.label.split(' · ')[0]} (test)`);
   }
 
   return (
@@ -336,7 +393,7 @@ function TestCycleDialog({ machine, onClose }: { machine: MachineRow; onClose: (
         <>
           <Button label="Close" kind="secondary" onPress={onClose} />
           <Button
-            label={`Test ${CYCLE_LABELS[cycle]}`}
+            label={`Send ${option?.label.split(' · ')[0] ?? 'test'}`}
             icon="play-outline"
             onPress={() => void send()}
             busy={action.busy}
@@ -345,18 +402,14 @@ function TestCycleDialog({ machine, onClose }: { machine: MachineRow; onClose: (
       }
     >
       <Choice
-        label="Cycle"
-        value={cycle}
-        onChange={(value) => {
-          if (isCycle(value)) setCycle(value);
-        }}
-        options={CYCLES.map((option) => ({
-          value: option,
-          label: `${CYCLE_LABELS[option]} · ${cyclePulses(machine, option)} pulse${cyclePulses(machine, option) === 1 ? '' : 's'}`,
-        }))}
+        label={machine.type === 'DRYER' ? 'What to test' : 'Cycle'}
+        value={chosen}
+        onChange={setChosen}
+        options={options.map((o) => ({ value: o.value, label: o.label }))}
       />
       <Text tone="muted">
-        {"Sends the cycle's pulses without an order and logs it as a test. No countdown is set, so you can test the next cycle straight away."}
+        Sends these pulses without an order and logs it as a test. Nothing is charged and no countdown is set, so you can
+        send the next test straight away.
       </Text>
       {action.error && <Notice tone="danger">{action.error}</Notice>}
     </Dialog>

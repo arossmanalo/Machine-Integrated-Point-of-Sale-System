@@ -859,6 +859,36 @@ export async function testStart(
   return sendAndRecord(ctx, controller, logId, machine, startPulsesFor(machine, cycle));
 }
 
+/**
+ * Owner only: sends a dryer's pulses for one top-up length without an order, charge or countdown,
+ * to check the dryer adds the right time. Logged as a test with the length as its note.
+ */
+export async function testTopUp(
+  ctx: ServiceContext,
+  controller: MachineController,
+  actor: Actor,
+  machineId: number,
+  minutes: TopUpMinutes,
+): Promise<StartResult> {
+  requireOwner(actor);
+  const machine = requireMachine(ctx.db, machineId);
+  if (machine.type !== 'DRYER') throw new UserFacingError('Only dryers take top-ups.');
+  const pulses = topUpPulsesOf(machine, minutes);
+  const problem = pulsesProblem(pulses);
+  if (problem) throw new UserFacingError(`${minutes}-minute top-up: ${problem}`);
+  const ready = isReady(controller);
+  const logId = writeLog(ctx, {
+    machine,
+    actor,
+    kind: 'TEST',
+    orderId: null,
+    result: ready ? 'PENDING' : 'NOT_CONNECTED',
+    overrideNote: `${minutes}-minute top-up`,
+  });
+  if (!ready) return 'not-connected';
+  return sendAndRecord(ctx, controller, logId, machine, pulses);
+}
+
 // ---------- Log ----------
 
 export function listMachineLog(ctx: ServiceContext, range: { start: number; end: number }): MachineUnlockRow[] {

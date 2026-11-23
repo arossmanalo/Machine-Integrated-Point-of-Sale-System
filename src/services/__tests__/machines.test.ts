@@ -26,6 +26,7 @@ import {
   startMachine,
   startOrderOnMachine,
   testStart,
+  testTopUp,
   topUpDryer,
   unassignMachine,
   updateMachine,
@@ -443,6 +444,16 @@ describe('dryer top-ups', () => {
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     updateOrderStatus(ctx, owner, order.id, 'COMPLETED');
     await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).rejects.toThrow('completed');
+  });
+
+  it('the owner can test each top-up length on a dryer, with no order or charge', async () => {
+    const { ctx, owner, controller, washers, dryers, log, machineById } = await setup();
+    await expect(testTopUp(ctx, controller, testEmployee, dryers[0], 10)).rejects.toThrow('Only the owner');
+    await expect(testTopUp(ctx, controller, owner, washers[0], 10)).rejects.toThrow('Only dryers');
+    await expect(testTopUp(ctx, controller, owner, dryers[0], 15)).resolves.toBe('acked');
+    expect(controller.starts[0]).toEqual({ channel: 4, pulses: { count: 7, onMs: 500, offMs: 500 } });
+    expect(log()[0]).toMatchObject({ kind: 'TEST', orderId: null, charge: null, overrideNote: '15-minute top-up' });
+    expect(machineById(dryers[0])?.runEndsAt).toBeNull();
   });
 
   it('the owner can give all or some dryers the same top-up prices', async () => {

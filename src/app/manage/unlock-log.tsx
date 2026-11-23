@@ -103,6 +103,11 @@ export default function MachineLog() {
                             {`Reason: ${row.overrideReason}${row.overrideNote ? ` (${row.overrideNote})` : ''}`}
                           </Text>
                         )}
+                        {!row.overrideReason && row.overrideNote && (
+                          <Text variant="caption" tone="muted">
+                            {row.overrideNote}
+                          </Text>
+                        )}
                         {flags?.unpaid && !flags.voided && <Badge label="Order unpaid" tone="warning" />}
                         {flags?.voided && <Badge label="Order voided" tone="danger" />}
                       </Row>

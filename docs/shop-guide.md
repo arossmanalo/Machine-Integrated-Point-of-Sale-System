@@ -129,7 +129,7 @@ Everything lives only on this tablet. Go to **Manage › Backup and import › S
 
 ### Multi-cycle
 
-In **Manage › Machines**, turn on **Multi-cycle** to make staff pick Delicates, Light, Medium or Heavy before a machine runs. Each machine's settings then show a table with the pulses and minutes of each cycle in place of the single pulse count and run time; pulse length and gap stay the same for all cycles. **Use these pulses on** also copies the cycle pulses. Owner overrides run the Medium cycle. In Testing mode, **Test start** asks which cycle to send, so you can test each one in turn. When you first turn it on, every cycle has the machine's current pulses and run time, so set each one.
+In **Manage › Machines**, turn on **Multi-cycle** to make staff pick Delicates, Light, Medium or Heavy before a machine runs. Each machine's settings then show a table with the pulses and minutes of each cycle in place of the single pulse count and run time; pulse length and gap stay the same for all cycles. **Use these pulses on** also copies the cycle pulses. Owner overrides run the Medium cycle. In Testing mode, **Test start** on a washer asks which cycle to send, and on a dryer asks for **Start** or a 5, 10, 15 or 20-minute top-up, so you can test each one in turn. Tests charge nothing and set no countdown. When you first turn it on, every cycle has the machine's current pulses and run time, so set each one.
 
 ### Setting up machines
 
