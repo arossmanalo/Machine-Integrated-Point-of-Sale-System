@@ -434,6 +434,7 @@ describe('dryer top-ups', () => {
   it('refuses washers, dryers without a price, and closed orders', async () => {
     const { ctx, owner, controller, order, washers, dryers, markWashed } = await setup();
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
+    markRunDone(ctx, washers[0]);
     markWashed(order.id);
     await expect(topUpDryer(ctx, controller, testEmployee, washers[0], 5)).rejects.toThrow('Only dryers');
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[1], receiptOf(order));
@@ -468,6 +469,8 @@ describe('washer before dryer', () => {
       startOrderOnMachine(ctx, controller, testEmployee, order.id, machineId, receiptOf(order));
     await expect(run(dryers[0])).rejects.toThrow('Run a washer for');
     await run(washers[0]);
+    await expect(run(dryers[0])).rejects.toThrow('Load 1 of T0001 is still in the washer');
+    ctx.advance(30 * MIN);
     await expect(run(dryers[0])).resolves.toBe('acked');
     await expect(run(dryers[1])).rejects.toThrow('load 2 has not been washed');
     expect(controller.starts).toHaveLength(2);
@@ -516,6 +519,8 @@ describe('receipt QR codes', () => {
     const code = receiptOf(order);
     for (const id of [washers[0], washers[1], dryers[0], dryers[1]]) {
       await expect(startOrderOnMachine(ctx, controller, testEmployee, order.id, id, code)).resolves.toBe('acked');
+      // Staff tap Mark as done when a wash finishes early, so its load can go in a dryer.
+      markRunDone(ctx, id);
     }
     await expect(startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[2], code)).rejects.toThrow(
       'used all its washers',
@@ -680,6 +685,7 @@ describe('top-ups paid with the order', () => {
     });
     await run(washers[0]);
     expect(controller.starts[0].pulses.count).toBe(3);
+    markRunDone(ctx, washers[0]);
     markWashed(order.id, 2);
 
     // Dryer 1: 1 start pulse + 2 top-up pulses per 5 minutes x 2.
@@ -745,6 +751,7 @@ describe('multi-cycle', () => {
   it('dryers have no cycles: they start with their own pulses and run time', async () => {
     const { ctx, owner, controller, order, washers, dryers, machineById } = await setupCycles();
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order), 'LIGHT');
+    markRunDone(ctx, washers[0]);
     await expect(
       startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order)),
     ).resolves.toBe('acked');

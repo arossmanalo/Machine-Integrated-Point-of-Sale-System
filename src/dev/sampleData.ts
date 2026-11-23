@@ -165,8 +165,11 @@ export async function buildSampleBackup(now: number, days = 30): Promise<Backup>
             const washer = free(washers);
             await startOrderOnMachine(ctx, controller, employee, order.id, washer, receiptOf(order));
           }
-          await startOrderOnMachine(ctx, controller, employee, order.id, free(washers), receiptOf(order));
+          const washer = free(washers);
+          await startOrderOnMachine(ctx, controller, employee, order.id, washer, receiptOf(order));
           ctx.advance(random.int(2, 6) * MINUTE);
+          // The wash is over before the load goes in a dryer.
+          markRunDone(ctx, washer);
         }
         const dryer = free(dryers);
         await startOrderOnMachine(ctx, controller, employee, order.id, dryer, receiptOf(order));

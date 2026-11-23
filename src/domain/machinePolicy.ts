@@ -147,8 +147,10 @@ export interface AssignCheck {
    * waiting for an answer or never answered, and other machines it is assigned to right now.
    */
   usedOfType: number;
-  /** Washer starts of the order that may have run; a washed load can go in a dryer. */
-  washerStarts: number;
+  /** Loads of the order whose wash is over (started, and that washer is no longer counting down). */
+  washedLoads: number;
+  /** Loads of the order still in a washer right now. */
+  washingLoads: number;
   now: number;
 }
 
@@ -179,11 +181,14 @@ export function decideAssignment(check: AssignCheck): MachineDecision {
             'Use an owner override for an extra cycle.',
     );
   }
-  // A load is washed before it is dried, so a receipt cannot run a dryer ahead of its washer.
-  if (machine.type === 'DRYER' && order.service === CURRENT_SERVICE && check.usedOfType >= check.washerStarts) {
+  // A load is washed before it is dried, so a receipt cannot run a dryer ahead of its wash.
+  if (machine.type === 'DRYER' && order.service === CURRENT_SERVICE && check.usedOfType >= check.washedLoads) {
+    const load = check.usedOfType + 1;
     return deny(
       'washer-first',
-      `Run a washer for ${order.id} first: load ${check.usedOfType + 1} has not been washed yet.`,
+      check.usedOfType < check.washedLoads + check.washingLoads
+        ? `Load ${load} of ${order.id} is still in the washer. Wait until it is done, or tap Mark as done on the washer.`
+        : `Run a washer for ${order.id} first: load ${load} has not been washed yet.`,
     );
   }
   return { allowed: true };

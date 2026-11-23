@@ -159,6 +159,7 @@ describe('full backup', () => {
     const controller = new MockMachineController(0);
     await controller.connect();
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, machineId, receiptOf(order));
+    ctx.advance(35 * 60 * 1000);
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryerId, receiptOf(order));
     await topUpDryer(ctx, controller, testEmployee, dryerId, 10);
 

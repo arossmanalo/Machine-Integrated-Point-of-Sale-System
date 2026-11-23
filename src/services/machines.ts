@@ -337,6 +337,22 @@ function countedStarts(db: Db, now: number, orderId: string): { type: MachineTyp
 }
 
 /**
+ * How far the order's loads are through washing: a washer still counting down for the order is
+ * a load not yet ready for a dryer (Mark as done on the washer ends that).
+ */
+function washProgress(db: Db, now: number, orderId: string): { washedLoads: number; washingLoads: number } {
+  const started = countedStarts(db, now, orderId).filter((start) => start.type === 'WASHER').length;
+  const washing = db
+    .select({ runEndsAt: machines.runEndsAt })
+    .from(machines)
+    .where(and(eq(machines.type, 'WASHER'), eq(machines.runOrderId, orderId)))
+    .all()
+    .filter((washer) => isRunning(washer, now)).length;
+  const washingLoads = Math.min(washing, started);
+  return { washedLoads: started - washingLoads, washingLoads };
+}
+
+/**
  * The top-up paid for when the order was taken, if this dryer start is one of the loads it
  * covers: the first `prepaidTopUpLoads` dryer starts of the order get it.
  */
@@ -402,7 +418,7 @@ export function assignOrder(
       order: policyOrder(order),
       machine,
       usedOfType: machineUsage(txCtx, orderId)[machine.type],
-      washerStarts: countedStarts(tx, ctx.now(), orderId).filter((start) => start.type === 'WASHER').length,
+      ...washProgress(tx, ctx.now(), orderId),
       now: ctx.now(),
     });
     if (!decision.allowed) throw new UserFacingError(decision.message);
