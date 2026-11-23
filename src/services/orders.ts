@@ -12,7 +12,13 @@ import {
 } from '@/domain/payments';
 import { isTopUpMinutes, topUpPriceFor, type TopUpMinutes } from '@/domain/machinePolicy';
 import { can } from '@/domain/permissions';
-import { computeOrderTotal, CURRENT_SERVICE, loadRangeForWeight, type OrderTotal } from '@/domain/pricing';
+import {
+  computeOrderTotal,
+  CURRENT_SERVICE,
+  DRY_ONLY_SERVICE,
+  loadRangeForWeight,
+  type OrderTotal,
+} from '@/domain/pricing';
 import { newReceiptToken } from '@/domain/receiptCode';
 import { INITIAL_STATUS, isClosedStatus, normalizeStatus, selectableStatuses } from '@/domain/statuses';
 import {
@@ -67,6 +73,8 @@ export interface NewOrderInput {
   placedAt: number | null;
   /** A dryer top-up paid for now and added when the order's dryers start. */
   topUp?: PrepaidTopUpSelection | null;
+  /** The customer only wants the laundry dried: dryers only, at the dry-only price per load. */
+  dryOnly?: boolean;
 }
 
 /** Extra drying time for some of the order's loads, chosen when the order is taken. */
@@ -128,9 +136,11 @@ export function quoteOrder(
   loads: number,
   addOns: AddOnSelection[],
   topUpSelection: PrepaidTopUpSelection | null = null,
+  dryOnly = false,
 ): OrderQuote {
-  const pricePerLoad = getSetting(ctx.db, 'pricePerLoad');
-  const promoApplied = customer !== null && isPromoEligible(customer.loyaltyLoads);
+  const pricePerLoad = getSetting(ctx.db, dryOnly ? 'dryOnlyPricePerLoad' : 'pricePerLoad');
+  // The 10+1 promo is for wash, dry & fold loads only.
+  const promoApplied = !dryOnly && customer !== null && isPromoEligible(customer.loyaltyLoads);
   const addOnLines = resolveAddOns(ctx.db, addOns);
   const topUp = resolveTopUp(ctx.db, loads, topUpSelection);
   const total = computeOrderTotal({
@@ -211,7 +221,8 @@ export function createOrder(
   return ctx.db.transaction((tx) => {
     const txCtx = { ...ctx, db: tx };
     const customer = requireCustomer(tx, input.customerId);
-    const quote = quoteOrder(txCtx, customer, input.loads, input.addOns, input.topUp ?? null);
+    const dryOnly = input.dryOnly ?? false;
+    const quote = quoteOrder(txCtx, customer, input.loads, input.addOns, input.topUp ?? null, dryOnly);
     const payment = initialPayment(input, quote.total);
     for (const line of quote.addOnLines) {
       if (line.item.currentStock < line.quantity) {
@@ -225,7 +236,7 @@ export function createOrder(
     const order: OrderRow = {
       id: takeNextId(tx, 'order'),
       customerId: customer.id,
-      service: CURRENT_SERVICE,
+      service: dryOnly ? DRY_ONLY_SERVICE : CURRENT_SERVICE,
       placedAt,
       weightKg: input.weightKg,
       loadCount: input.loads,
@@ -288,14 +299,17 @@ export function createOrder(
         .run();
     }
 
-    tx.update(customers)
-      .set({
-        loyaltyLoads: loyaltyAfterOrder(customer.loyaltyLoads, quote.billableLoads, quote.promoApplied),
-      })
-      .where(eq(customers.id, customer.id))
-      .run();
+    if (!dryOnly) {
+      tx.update(customers)
+        .set({
+          loyaltyLoads: loyaltyAfterOrder(customer.loyaltyLoads, quote.billableLoads, quote.promoApplied),
+        })
+        .where(eq(customers.id, customer.id))
+        .run();
+    }
 
-    const autoItems = !useSupplies
+    // Detergent and other per-load supplies are for washing; a dry-only order takes none.
+    const autoItems = !useSupplies || dryOnly
       ? []
       : tx
           .select()

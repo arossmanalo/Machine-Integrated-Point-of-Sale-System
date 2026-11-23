@@ -18,6 +18,7 @@ export function dailyReport(ctx: ServiceContext, range: TimeRange): DailyReport 
       customerName: s.customerName,
       placedAt: s.order.placedAt,
       loadCount: s.order.loadCount,
+      service: s.order.service,
       status: s.order.status,
       total: s.order.total,
       paid: s.paid,

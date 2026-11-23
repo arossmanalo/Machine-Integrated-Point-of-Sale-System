@@ -19,6 +19,7 @@ describe('daily report printout', () => {
           customerName: 'Maria Clara de los Santos-Reyes',
           placedAt: DAY.start + 3600000,
           loadCount: 2,
+          service: 'WASH_DRY_FOLD',
           status: 'PENDING',
           total: 46000,
           paid: 46000,

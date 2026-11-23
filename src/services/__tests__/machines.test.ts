@@ -2,6 +2,7 @@ import { createTestContext, receiptOf, testEmployee } from '@/db/testing';
 import { sameForEveryCycle } from '@/domain/cycles';
 import { NO_TOP_UP_PRICES } from '@/domain/machinePolicy';
 import { receiptCodeFor, TEST_RECEIPT_CODE } from '@/domain/receiptCode';
+import { machineUnlocks } from '@/db/schema';
 import { MockMachineController } from '@/machines/MockMachineController';
 
 import { completeFirstRunSetup } from '../auth';
@@ -71,6 +72,25 @@ async function setup() {
   });
   const machineById = (id: number) => listMachines(ctx).find((m) => m.id === id);
   const log = () => listMachineLog(ctx, { start: 0, end: ctx.now() + 1 });
+  /** Records washer starts for an order, so its dryers may run, without using a test washer. */
+  const markWashed = (orderId: string, loads = 1) => {
+    for (let i = 0; i < loads; i += 1) {
+      ctx.db
+        .insert(machineUnlocks)
+        .values({
+          at: ctx.now(),
+          machineId: null,
+          machineName: 'Washer (earlier)',
+          machineType: 'WASHER',
+          hardwareChannel: 1,
+          orderId,
+          employeeName: 'ana',
+          kind: 'ORDER',
+          result: 'ACKED',
+        })
+        .run();
+    }
+  };
   const newOrder = () =>
     createOrder(ctx, testEmployee, {
       customerId: customer.id,
@@ -95,20 +115,26 @@ async function setup() {
     dryers: [dryer1, dryer2, dryer3],
     machineById,
     log,
+    markWashed,
   };
 }
 
 describe('assigning orders to machines', () => {
   it('an unpaid 2-load order can take exactly 2 washers and 2 dryers', async () => {
-    const { ctx, order, washers, dryers, machineById } = await setup();
+    const { ctx, order, washers, dryers, machineById, markWashed } = await setup();
     assignOrder(ctx, testEmployee, order.id, washers[0]);
     assignOrder(ctx, testEmployee, order.id, washers[1]);
     expect(() => assignOrder(ctx, testEmployee, order.id, washers[2])).toThrow('used all its washers');
+    expect(() => assignOrder(ctx, testEmployee, order.id, dryers[0])).toThrow('Run a washer');
+    // The two washers run: their assignments become started loads.
+    unassignMachine(ctx, washers[0]);
+    unassignMachine(ctx, washers[1]);
+    markWashed(order.id, 2);
     assignOrder(ctx, testEmployee, order.id, dryers[0]);
     assignOrder(ctx, testEmployee, order.id, dryers[1]);
     expect(() => assignOrder(ctx, testEmployee, order.id, dryers[2])).toThrow('used all its dryers');
     expect(machineUsage(ctx, order.id)).toEqual({ WASHER: 2, DRYER: 2 });
-    expect(machineById(washers[0])).toMatchObject({ assignedOrderId: order.id, assignedByName: 'ana' });
+    expect(machineById(dryers[0])).toMatchObject({ assignedOrderId: order.id, assignedByName: 'ana' });
   });
 
   it('one machine holds one order at a time, and removing frees the allowance', async () => {
@@ -132,7 +158,8 @@ describe('assigning orders to machines', () => {
   });
 
   it('frees machines when their order is voided or completed, or the machine is switched off', async () => {
-    const { ctx, owner, order, washers, dryers, machineById } = await setup();
+    const { ctx, owner, order, washers, dryers, machineById, markWashed } = await setup();
+    markWashed(order.id);
     assignOrder(ctx, testEmployee, order.id, washers[0]);
     updateMachine(ctx, owner, washers[0], { ...machine('Washer 1', 'WASHER', 1), enabled: false });
     expect(machineById(washers[0])?.assignedOrderId).toBeNull();
@@ -347,7 +374,8 @@ describe('assigning starts the machine', () => {
 
 describe('dryer top-ups', () => {
   it('adds the chosen minutes, sends pulses for them and charges that price', async () => {
-    const { ctx, controller, order, dryers, machineById, log } = await setup();
+    const { ctx, controller, order, dryers, machineById, log , markWashed } = await setup();
+    markWashed(order.id, 2);
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     const endsAt = machineById(dryers[0])?.runEndsAt ?? 0;
     await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).resolves.toBe('acked');
@@ -370,25 +398,29 @@ describe('dryer top-ups', () => {
   });
 
   it('is gone once the dryer finishes or is marked as done', async () => {
-    const { ctx, controller, order, newOrder, dryers } = await setup();
+    const { ctx, controller, order, newOrder, dryers, markWashed } = await setup();
+    markWashed(order.id, 2);
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     markRunDone(ctx, dryers[0]);
     await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).rejects.toThrow('not running');
 
     const other = newOrder();
+    markWashed(other.id);
     await startOrderOnMachine(ctx, controller, testEmployee, other.id, dryers[0], receiptOf(other));
     ctx.advance(31 * MIN);
     await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).rejects.toThrow('not running');
   });
 
   it('refuses a length the dryer does not offer', async () => {
-    const { ctx, controller, order, dryers } = await setup();
+    const { ctx, controller, order, dryers , markWashed } = await setup();
+    markWashed(order.id, 2);
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 10)).rejects.toThrow('no price');
   });
 
   it('takes the charge off again when nothing was sent', async () => {
-    const { ctx, controller, order, dryers, machineById, log } = await setup();
+    const { ctx, controller, order, dryers, machineById, log , markWashed } = await setup();
+    markWashed(order.id, 2);
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     const endsAt = machineById(dryers[0])?.runEndsAt;
     controller.failNextStart('busy');
@@ -400,8 +432,9 @@ describe('dryer top-ups', () => {
   });
 
   it('refuses washers, dryers without a price, and closed orders', async () => {
-    const { ctx, owner, controller, order, washers, dryers } = await setup();
+    const { ctx, owner, controller, order, washers, dryers, markWashed } = await setup();
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
+    markWashed(order.id);
     await expect(topUpDryer(ctx, controller, testEmployee, washers[0], 5)).rejects.toThrow('Only dryers');
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[1], receiptOf(order));
     await expect(topUpDryer(ctx, controller, testEmployee, dryers[1], 5)).rejects.toThrow('no price');
@@ -425,6 +458,40 @@ describe('dryer top-ups', () => {
     updateMachine(ctx, owner, dryers[2], { ...machine('Dryer 3', 'DRYER', 6), topUpPulses20: 51 });
     expect(() => applyTopUpPricesToDryers(ctx, owner, prices, [dryers[1], dryers[2]])).toThrow('Dryer 3: 20-minute');
     expect(machineById(dryers[1])).toMatchObject(prices);
+  });
+});
+
+describe('washer before dryer', () => {
+  it('a receipt cannot run a dryer for a load that has not been washed', async () => {
+    const { ctx, controller, order, washers, dryers } = await setup();
+    const run = (machineId: number) =>
+      startOrderOnMachine(ctx, controller, testEmployee, order.id, machineId, receiptOf(order));
+    await expect(run(dryers[0])).rejects.toThrow('Run a washer for');
+    await run(washers[0]);
+    await expect(run(dryers[0])).resolves.toBe('acked');
+    await expect(run(dryers[1])).rejects.toThrow('load 2 has not been washed');
+    expect(controller.starts).toHaveLength(2);
+  });
+
+  it('a dry-only order runs dryers only, with no washer needed', async () => {
+    const { ctx, controller, customer, washers, dryers } = await setup();
+    const dry = createOrder(ctx, testEmployee, {
+      customerId: customer.id,
+      weightKg: 8,
+      loads: 1,
+      addOns: [],
+      paymentMethod: 'PAY_LATER',
+      downPayment: 0,
+      channel: 'CASH',
+      gcashReference: '',
+      cashReceived: null,
+      placedAt: null,
+      dryOnly: true,
+    });
+    const run = (machineId: number) =>
+      startOrderOnMachine(ctx, controller, testEmployee, dry.id, machineId, receiptOf(dry));
+    await expect(run(washers[0])).rejects.toThrow('does not include washer use');
+    await expect(run(dryers[0])).resolves.toBe('acked');
   });
 });
 
@@ -607,9 +674,13 @@ describe('top-ups paid with the order', () => {
   });
 
   it('adds the minutes and pulses to the first dryer starts it covers, and not to washers', async () => {
-    const { ctx, controller, run, washers, dryers, machineById } = await setupPrepaid({ minutes: 10, loads: 2 });
+    const { ctx, controller, order, run, washers, dryers, machineById, markWashed } = await setupPrepaid({
+      minutes: 10,
+      loads: 2,
+    });
     await run(washers[0]);
     expect(controller.starts[0].pulses.count).toBe(3);
+    markWashed(order.id, 2);
 
     // Dryer 1: 1 start pulse + 2 top-up pulses per 5 minutes x 2.
     await run(dryers[0]);

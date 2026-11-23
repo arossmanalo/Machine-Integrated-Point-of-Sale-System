@@ -161,7 +161,10 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
       return {
         machines: listMachines(c),
         usage: machineUsage(c, orderId),
-        allowance: detail ? machineAllowance(detail.order) : 0,
+        allowance: {
+          WASHER: detail ? machineAllowance(detail.order, 'WASHER') : 0,
+          DRYER: detail ? machineAllowance(detail.order, 'DRYER') : 0,
+        },
         customerName: detail?.customerName ?? '',
       };
     },
@@ -222,8 +225,10 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
       ) : (
         <>
           <Text tone="muted">
-            {`Each load allows one washer and one dryer. Used: ${data.usage.WASHER} of ${data.allowance} washers, ` +
-              `${data.usage.DRYER} of ${data.allowance} dryers.`}
+            {data.allowance.WASHER === 0
+              ? `Dry only: each load allows one dryer. Used: ${data.usage.DRYER} of ${data.allowance.DRYER} dryers.`
+              : `Each load allows one washer and one dryer. Used: ${data.usage.WASHER} of ${data.allowance.WASHER} washers, ` +
+                `${data.usage.DRYER} of ${data.allowance.DRYER} dryers.`}
           </Text>
           {data.machines.length === 0 ? (
             <EmptyState
@@ -345,7 +350,7 @@ export function OrderPickerDialog({
         .filter((s) => s.order.voidedAt === null && !isClosedStatus(s.order.status))
         .map((s) => ({
           summary: s,
-          allowance: machineAllowance(s.order),
+          allowance: machineAllowance(s.order, machine.type),
           used: machineUsage(c, s.order.id)[machine.type],
         }))
         .filter((row) => row.used < row.allowance),

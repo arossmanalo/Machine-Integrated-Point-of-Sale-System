@@ -1,4 +1,4 @@
-import { CURRENT_SERVICE } from './pricing';
+import { CURRENT_SERVICE, DRY_ONLY_SERVICE } from './pricing';
 import { isClosedStatus } from './statuses';
 
 export const MACHINE_TYPES = ['WASHER', 'DRYER'] as const;
@@ -90,12 +90,14 @@ export function endAfterTopUp(machine: Pick<PolicyMachine, 'runEndsAt'>, now: nu
 }
 
 /**
- * Each load of Wash-Dry-Fold allows one washer start and one dryer start. Orders imported from
- * the old app with other services are history and allow none. Payment is deliberately not a
- * condition: pay-later orders run the same as paid ones.
+ * Each load of Wash-Dry-Fold allows one washer start and one dryer start; a dry-only load allows
+ * one dryer start and no washer. Orders imported from the old app with other services are history
+ * and allow none. Payment is deliberately not a condition: pay-later orders run the same.
  */
-export function machineAllowance(order: Pick<PolicyOrder, 'service' | 'loadCount'>): number {
-  return order.service === CURRENT_SERVICE ? order.loadCount : 0;
+export function machineAllowance(order: Pick<PolicyOrder, 'service' | 'loadCount'>, type: MachineType): number {
+  if (order.service === CURRENT_SERVICE) return order.loadCount;
+  if (order.service === DRY_ONLY_SERVICE) return type === 'DRYER' ? order.loadCount : 0;
+  return 0;
 }
 
 export type MachineDenial =
@@ -110,7 +112,8 @@ export type MachineDenial =
   | 'not-a-dryer'
   | 'no-top-up-price'
   | 'no-run'
-  | 'not-running';
+  | 'not-running'
+  | 'washer-first';
 
 export type MachineDecision = { allowed: true } | { allowed: false; reason: MachineDenial; message: string };
 
@@ -144,6 +147,8 @@ export interface AssignCheck {
    * waiting for an answer or never answered, and other machines it is assigned to right now.
    */
   usedOfType: number;
+  /** Washer starts of the order that may have run; a washed load can go in a dryer. */
+  washerStarts: number;
   now: number;
 }
 
@@ -163,7 +168,7 @@ export function decideAssignment(check: AssignCheck): MachineDecision {
         : `${machine.name} already has order ${machine.assignedOrderId}. Start it or remove that order first.`,
     );
   }
-  const allowance = machineAllowance(order);
+  const allowance = machineAllowance(order, machine.type);
   if (check.usedOfType >= allowance) {
     const typeLabel = MACHINE_TYPE_LABELS[machine.type].toLowerCase();
     return deny(
@@ -172,6 +177,13 @@ export function decideAssignment(check: AssignCheck): MachineDecision {
         ? `Order ${order.id} does not include ${typeLabel} use.`
         : `Order ${order.id} has used all its ${typeLabel}s (${check.usedOfType} of ${allowance}). ` +
             'Use an owner override for an extra cycle.',
+    );
+  }
+  // A load is washed before it is dried, so a receipt cannot run a dryer ahead of its washer.
+  if (machine.type === 'DRYER' && order.service === CURRENT_SERVICE && check.usedOfType >= check.washerStarts) {
+    return deny(
+      'washer-first',
+      `Run a washer for ${order.id} first: load ${check.usedOfType + 1} has not been washed yet.`,
     );
   }
   return { allowed: true };

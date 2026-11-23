@@ -1,15 +1,20 @@
 import type { Centavos } from './money';
 
-/** The only service sold. Orders imported from the old app may carry WASH or WASH_DRY. */
+/** The main service sold. Orders imported from the old app may carry WASH or WASH_DRY. */
 export const CURRENT_SERVICE = 'WASH_DRY_FOLD';
-export const SERVICES = ['WASH', 'WASH_DRY', 'WASH_DRY_FOLD'] as const;
+/** For customers who only want their laundry dried: dryers only, at its own price per load. */
+export const DRY_ONLY_SERVICE = 'DRY_ONLY';
+export const SERVICES = ['WASH', 'WASH_DRY', 'WASH_DRY_FOLD', 'DRY_ONLY'] as const;
 export type Service = (typeof SERVICES)[number];
 
 export const SERVICE_LABELS: Record<Service, string> = {
   WASH: 'Wash',
   WASH_DRY: 'Wash & dry',
   WASH_DRY_FOLD: 'Wash, dry & fold',
+  DRY_ONLY: 'Dry only',
 };
+
+export const DEFAULT_DRY_ONLY_PRICE_PER_LOAD: Centavos = 10000;
 
 /** Readable name for any stored service code, including ones this app no longer sells. */
 export function serviceLabel(service: string): string {

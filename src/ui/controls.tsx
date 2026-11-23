@@ -84,6 +84,42 @@ export function Toggle({
   );
 }
 
+/** A tick box with its label beside it, for a yes/no choice that sits inline in a form. */
+export function Checkbox({
+  label,
+  description,
+  value,
+  onChange,
+}: {
+  label: string;
+  description?: string;
+  value: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked: value }}
+      onPress={() => onChange(!value)}
+      style={({ pressed }) => [styles.checkbox, pressed && { opacity: 0.7 }]}
+    >
+      <MaterialCommunityIcons
+        name={value ? 'checkbox-marked' : 'checkbox-blank-outline'}
+        size={28}
+        color={value ? colors.accent : colors.textMuted}
+      />
+      <View>
+        <Text variant="bodyStrong">{label}</Text>
+        {description !== undefined && (
+          <Text variant="caption" tone="muted">
+            {description}
+          </Text>
+        )}
+      </View>
+    </Pressable>
+  );
+}
+
 /** Minus / number / plus, for quantities. */
 export function Stepper({
   value,
@@ -234,6 +270,7 @@ const styles = StyleSheet.create({
   },
   choiceSelected: { borderColor: colors.accent, borderWidth: 2, backgroundColor: colors.accentSoft },
   toggle: { flexDirection: 'row', alignItems: 'center', gap: space.md, minHeight: MIN_TOUCH },
+  checkbox: { flexDirection: 'row', alignItems: 'center', gap: space.sm, minHeight: MIN_TOUCH, paddingRight: space.sm },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   stepButton: {
     width: MIN_TOUCH,

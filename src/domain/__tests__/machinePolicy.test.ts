@@ -27,17 +27,24 @@ const washer = {
 };
 
 function check(overrides: Partial<AssignCheck>): AssignCheck {
-  return { order: openOrder, machine: washer, usedOfType: 0, now: NOW, ...overrides };
+  return { order: openOrder, machine: washer, usedOfType: 0, washerStarts: 0, now: NOW, ...overrides };
 }
 
 describe('machine allowance', () => {
   it('gives one washer and one dryer per load of wash-dry-fold', () => {
-    expect(machineAllowance(openOrder)).toBe(2);
+    expect(machineAllowance(openOrder, 'WASHER')).toBe(2);
+    expect(machineAllowance(openOrder, 'DRYER')).toBe(2);
+  });
+
+  it('gives a dry-only order dryers and no washers', () => {
+    const dryOnly = { service: 'DRY_ONLY', loadCount: 3 };
+    expect(machineAllowance(dryOnly, 'DRYER')).toBe(3);
+    expect(machineAllowance(dryOnly, 'WASHER')).toBe(0);
   });
 
   it('gives imported old-service orders nothing', () => {
-    expect(machineAllowance({ service: 'WASH', loadCount: 3 })).toBe(0);
-    expect(machineAllowance({ service: 'WASH_DRY', loadCount: 3 })).toBe(0);
+    expect(machineAllowance({ service: 'WASH', loadCount: 3 }, 'WASHER')).toBe(0);
+    expect(machineAllowance({ service: 'WASH_DRY', loadCount: 3 }, 'DRYER')).toBe(0);
   });
 });
 
@@ -67,7 +74,24 @@ describe('decideAssignment', () => {
 
   it('a third washer on a 2-load order is refused, the first dryer is not', () => {
     expect(decideAssignment(check({ usedOfType: 2 })).allowed).toBe(false);
-    expect(decideAssignment(check({ machine: { ...washer, type: 'DRYER' }, usedOfType: 0 })).allowed).toBe(true);
+    expect(decideAssignment(check({ machine: { ...washer, type: 'DRYER' }, usedOfType: 0, washerStarts: 1 })).allowed).toBe(
+      true,
+    );
+  });
+
+  it("a dryer waits for the load's washer, except on dry-only orders", () => {
+    const dryer = { ...washer, type: 'DRYER' as const };
+    expect(decideAssignment(check({ machine: dryer, usedOfType: 0, washerStarts: 0 }))).toMatchObject({
+      allowed: false,
+      reason: 'washer-first',
+    });
+    expect(decideAssignment(check({ machine: dryer, usedOfType: 1, washerStarts: 1 }))).toMatchObject({
+      reason: 'washer-first',
+    });
+    expect(decideAssignment(check({ machine: dryer, usedOfType: 1, washerStarts: 2 })).allowed).toBe(true);
+    const dryOnly = { ...openOrder, service: 'DRY_ONLY' };
+    expect(decideAssignment(check({ order: dryOnly, machine: dryer, washerStarts: 0 })).allowed).toBe(true);
+    expect(decideAssignment(check({ order: dryOnly, machine: washer })).allowed).toBe(false);
   });
 });
 

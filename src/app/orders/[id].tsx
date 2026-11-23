@@ -66,7 +66,9 @@ export default function OrderDetails() {
 
   const { order } = detail;
   const voided = order.voidedAt !== null;
-  const allowance = machineAllowance(order);
+  const washerAllowance = machineAllowance(order, 'WASHER');
+  const dryerAllowance = machineAllowance(order, 'DRYER');
+  const allowance = Math.max(washerAllowance, dryerAllowance);
   const machinesOpen = !voided && allowance > 0 && order.status !== 'COMPLETED' && order.status !== 'AUDITED';
   const loads = orderHistory(order, detail.unlocks).loads;
 
@@ -119,7 +121,11 @@ export default function OrderDetails() {
 
         <Section
           title="Machines"
-          description={`Each load allows one washer and one dryer. Used: ${data.usage.WASHER} of ${allowance} washers, ${data.usage.DRYER} of ${allowance} dryers.`}
+          description={
+            washerAllowance === 0
+              ? `Dry only: each load allows one dryer. Used: ${data.usage.DRYER} of ${dryerAllowance} dryers.`
+              : `Each load allows one washer and one dryer. Used: ${data.usage.WASHER} of ${washerAllowance} washers, ${data.usage.DRYER} of ${dryerAllowance} dryers.`
+          }
         >
           {allowance === 0 && (
             <Text tone="muted">

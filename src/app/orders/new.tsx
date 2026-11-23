@@ -27,7 +27,7 @@ import { useToast } from '@/state/toast';
 import { usePrintReceipt } from '@/state/usePrintReceipt';
 import { GcashQrForCustomer } from '@/ui/orders/GcashQr';
 import { Button } from '@/ui/Button';
-import { Choice, Stepper } from '@/ui/controls';
+import { Checkbox, Choice, Stepper } from '@/ui/controls';
 import { CustomerDialog } from '@/ui/CustomerDialog';
 import { Divider, ListRow, Notice, Panel, Row, Screen, Section } from '@/ui/layout';
 import { Text } from '@/ui/Text';
@@ -62,6 +62,7 @@ export default function NewOrder() {
   const [cashText, setCashText] = useState('');
   const [gcashRef, setGcashRef] = useState('');
   const [daysBack, setDaysBack] = useState(0);
+  const [dryOnly, setDryOnly] = useState(false);
   const [topUpChoice, setTopUpChoice] = useState('none');
   const [topUpLoadsWanted, setTopUpLoadsWanted] = useState(1);
 
@@ -69,6 +70,7 @@ export default function NewOrder() {
   const customer = useData((c) => (customerId ? (getCustomer(c, customerId) ?? null) : null), [customerId]);
   const addOnItems = useData((c) => listInventory(c).filter((item) => item.isAddOn));
   const selections = Object.entries(addOns).map(([itemId, quantity]) => ({ itemId, quantity }));
+  const dryOnlyPrice = useData((c) => getSetting(c.db, 'dryOnlyPricePerLoad'));
   const topUpChoices = useData((c) => topUpOptions(getSetting(c.db, 'orderTopUpPrices')));
   const topUpMinutes = Number(topUpChoice);
   const topUp =
@@ -76,8 +78,8 @@ export default function NewOrder() {
       ? { minutes: topUpMinutes, loads: Math.min(Math.max(topUpLoadsWanted, 1), loads) }
       : null;
   const quote = useData(
-    (c) => quoteOrder(c, customer, loads, selections, topUp),
-    [customer, loads, JSON.stringify(addOns), topUp?.minutes, topUp?.loads],
+    (c) => quoteOrder(c, customer, loads, selections, topUp, dryOnly),
+    [customer, loads, JSON.stringify(addOns), topUp?.minutes, topUp?.loads, dryOnly],
   );
 
   const addOnCount = quote.addOnLines.reduce((sum, line) => sum + line.quantity, 0);
@@ -112,6 +114,7 @@ export default function NewOrder() {
         cashReceived: channel === 'CASH' ? cashReceived : null,
         placedAt,
         topUp,
+        dryOnly,
       }),
     );
     if (!result.ok) return;
@@ -214,6 +217,14 @@ export default function NewOrder() {
                   : 'Up to 8 kg per load'}
               </Text>
             </View>
+            <View style={styles.dryOnly}>
+              <Checkbox
+                label="Dry only"
+                description={`${formatPeso(dryOnlyPrice)} per load, no washing`}
+                value={dryOnly}
+                onChange={setDryOnly}
+              />
+            </View>
           </Row>
           <Row wrap>
             <Button
@@ -310,6 +321,7 @@ export default function NewOrder() {
               <Text style={styles.flex}>
                 {quote.billableLoads} load{quote.billableLoads === 1 ? '' : 's'} × {formatPeso(quote.pricePerLoad)}
                 {quote.promoApplied ? ' (1 free)' : ''}
+                {dryOnly ? ' · dry only' : ''}
               </Text>
               <Text numeric>{formatPeso(quote.loadsSubtotal)}</Text>
             </Row>
@@ -436,6 +448,8 @@ const styles = StyleSheet.create({
   pad: { padding: space.lg },
   top: { alignItems: 'flex-start' },
   weight: { width: 180 },
-  loads: { gap: space.xs, flex: 1, minWidth: 220 },
+  loads: { gap: space.xs, minWidth: 180 },
+  // Lines the tick box up with the loads stepper, under the field labels.
+  dryOnly: { paddingTop: space.lg },
   summary: { padding: space.lg, gap: space.sm },
 });

@@ -1,5 +1,5 @@
 import { formatShopTime, inRange, type TimeRange } from './dates';
-import type { MachineType } from './machinePolicy';
+import { machineAllowance, type MachineType } from './machinePolicy';
 import type { Centavos } from './money';
 import type { PaymentChannel } from './payments';
 import { periodFigures, type PeriodFigures } from './reports';
@@ -27,6 +27,8 @@ export interface DayOrder {
   customerName: string;
   placedAt: number;
   loadCount: number;
+  /** Dry-only orders have no washer starts to expect. */
+  service: string;
   status: string;
   total: Centavos;
   paid: Centavos;
@@ -301,16 +303,18 @@ function dayChecks(
   const checks: DayCheck[] = [];
   const sold = orders.filter((o) => o.placedToday && !o.order.voided);
   const loads = sold.reduce((sum, o) => sum + o.order.loadCount, 0);
+  const washLoads = sold.reduce((sum, o) => sum + machineAllowance(o.order, 'WASHER'), 0);
   const washed = sold.reduce((sum, o) => sum + o.loads.filter((l) => l.number <= o.order.loadCount && l.washer).length, 0);
   const dried = sold.reduce((sum, o) => sum + o.loads.filter((l) => l.number <= o.order.loadCount && l.dryer).length, 0);
   checks.push({
-    tone: washed === loads && dried === loads ? 'ok' : 'warning',
+    tone: washed === washLoads && dried === loads ? 'ok' : 'warning',
     text: `${loads} load${loads === 1 ? '' : 's'} sold today: ${washed} washer start${washed === 1 ? '' : 's'}, ${dried} dryer start${dried === 1 ? '' : 's'}.`,
   });
   for (const entry of sold) {
     for (const load of entry.loads) {
       if (load.number > entry.order.loadCount) continue;
-      const missing = [load.washer ? null : 'washer', load.dryer ? null : 'dryer'].filter(Boolean);
+      const needsWasher = machineAllowance(entry.order, 'WASHER') > 0;
+      const missing = [load.washer || !needsWasher ? null : 'washer', load.dryer ? null : 'dryer'].filter(Boolean);
       if (missing.length > 0) {
         checks.push({
           tone: 'warning',

@@ -9,6 +9,7 @@ function order(id: string, overrides: Partial<DayOrder> = {}): DayOrder {
     customerName: `Customer ${id}`,
     placedAt: T(60),
     loadCount: 2,
+    service: 'WASH_DRY_FOLD',
     status: 'PENDING',
     total: 44000,
     paid: 44000,
@@ -43,6 +44,19 @@ const machines = [
 ];
 
 describe('daily report', () => {
+  it('does not expect washer starts for a dry-only order', () => {
+    const report = buildDailyReport({
+      range: DAY,
+      orders: [order('T0001', { service: 'DRY_ONLY', loadCount: 1 })],
+      payments: [],
+      expenses: [],
+      machines,
+      events: [event({ machineId: 3, machineName: 'Dryer 1', machineType: 'DRYER' })],
+    });
+    expect(report.checks[0]).toMatchObject({ tone: 'ok' });
+    expect(report.checks.some((check) => check.text.includes('has no'))).toBe(false);
+  });
+
   it('numbers each load by washer and dryer start and attaches top-ups to their dryer run', () => {
     const report = buildDailyReport({
       range: DAY,

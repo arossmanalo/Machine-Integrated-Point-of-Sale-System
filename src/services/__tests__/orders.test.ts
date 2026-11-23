@@ -100,6 +100,23 @@ describe('createOrder', () => {
     expect(getCustomer(ctx, customer.id)?.loyaltyLoads).toBe(1);
   });
 
+  it('dry only: its own price per load, no detergent, no loyalty loads and no promo', () => {
+    const { ctx, customer, detergent, order } = setup();
+    setSetting(ctx.db, 'dryOnlyPricePerLoad', 12000);
+    setSetting(ctx.db, 'pricePerLoad', 22000);
+    createOrder(ctx, testEmployee, order({ weightKg: 80, loads: 10 }));
+    expect(getCustomer(ctx, customer.id)?.loyaltyLoads).toBe(10);
+    const stockBefore = listInventory(ctx).find((i) => i.id === detergent)?.currentStock;
+
+    const dry = createOrder(ctx, testEmployee, order({ dryOnly: true }));
+    expect(dry.service).toBe('DRY_ONLY');
+    expect(dry.pricePerLoad).toBe(12000);
+    expect(dry.total).toBe(2 * 12000);
+    expect(dry.promoApplied).toBe(false);
+    expect(getCustomer(ctx, customer.id)?.loyaltyLoads).toBe(10);
+    expect(listInventory(ctx).find((i) => i.id === detergent)?.currentStock).toBe(stockBefore);
+  });
+
   it('pay later leaves the full balance and no payment row', () => {
     const { ctx, order } = setup();
     const created = createOrder(ctx, testEmployee, order({ paymentMethod: 'PAY_LATER' }));

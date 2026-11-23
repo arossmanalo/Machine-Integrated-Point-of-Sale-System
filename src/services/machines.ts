@@ -402,6 +402,7 @@ export function assignOrder(
       order: policyOrder(order),
       machine,
       usedOfType: machineUsage(txCtx, orderId)[machine.type],
+      washerStarts: countedStarts(tx, ctx.now(), orderId).filter((start) => start.type === 'WASHER').length,
       now: ctx.now(),
     });
     if (!decision.allowed) throw new UserFacingError(decision.message);

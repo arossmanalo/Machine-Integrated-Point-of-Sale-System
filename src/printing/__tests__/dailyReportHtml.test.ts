@@ -18,6 +18,7 @@ describe('daily report PDF page', () => {
           customerName: '<script>x</script>',
           placedAt: DAY.start + 3600000,
           loadCount: 1,
+          service: 'WASH_DRY_FOLD',
           status: 'PENDING',
           total: 22000,
           paid: 0,

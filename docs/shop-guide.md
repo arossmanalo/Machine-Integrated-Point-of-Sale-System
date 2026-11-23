@@ -12,6 +12,7 @@
 4. For add-ons (fabric softener and so on), tap **Add-ons** to open the list and set how many. Only items an admin marked "Sell as an add-on" in Stock, with a price, are listed.
 5. If the customer has 10 or more loads saved up, one load is free. The app does this by itself and shows it.
 6. Choose how they pay: **Full payment**, **Down payment** or **Pay later**. For GCash, type the reference number.
+6a. If the customer only wants the laundry dried, tick **Dry only** next to Loads. The order is charged at the dry-only price per load, uses no detergent, does not count toward the 10+1 promo, and can only run dryers.
 7. Tap **Save and print**. The order is saved and its receipt prints right away; give it to the customer, since staff scan its QR code to run the machines. If it did not print, open the order and tap **Print receipt**.
 
 ### Running a machine
@@ -25,6 +26,7 @@ The washers and dryers only start for an order, and only with that order's recei
 4. The app asks once: **Run Washer 1 for T0012?** Tap **Run machine**. The machine starts right away.
 
 - The owner can turn receipt scans off in **Manage › Machines › Scan receipt to run a machine**. Staff then pick the order from a list with no receipt, as before.
+- A load is washed before it is dried: a dryer only runs for an order after that load's washer has run (load 2's dryer waits for the second washer). Dry-only orders skip the washer.
 - A receipt for another order, or any other QR code, is refused. Tap **Scan again** and use the right receipt.
 - **For testing only:** until the receipt printer arrives, one test QR code (`docs/test-receipt-qr.png`) works for every open order. On the Machines tab you then pick the order from the list. Anyone holding a copy of it can start machines for any order, so it is removed before the shop relies on receipts.
 

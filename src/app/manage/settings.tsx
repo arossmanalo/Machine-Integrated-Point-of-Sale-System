@@ -26,7 +26,20 @@ export default function Settings() {
   return (
     <ManageScreen title="Shop settings" allowed={can.changeSettings}>
       <Screen>
-        <PriceSection current={settings.pricePerLoad} />
+        <PriceSection
+          current={settings.pricePerLoad}
+          settingKey="pricePerLoad"
+          title="Price per load"
+          description="Wash, dry & fold. Existing orders keep the price they were sold at."
+          savedMessage="Price per load"
+        />
+        <PriceSection
+          current={settings.dryOnlyPricePerLoad}
+          settingKey="dryOnlyPricePerLoad"
+          title="Dry-only price per load"
+          description="For customers who only want their laundry dried (the Dry only box on a new order)."
+          savedMessage="Dry-only price per load"
+        />
         {actor.role === 'OWNER' && <OrderTopUpSection current={settings.orderTopUpPrices} />}
         <StatusSection custom={settings.customStatuses} hidden={settings.hiddenStatuses} />
         <ExpenseEntrySection allowed={settings.employeesRecordExpenses} />
@@ -130,13 +143,25 @@ function OrderTopUpSection({ current }: { current: TopUpPrices }) {
   );
 }
 
-function PriceSection({ current }: { current: number }) {
+function PriceSection({
+  current,
+  settingKey,
+  title,
+  description,
+  savedMessage,
+}: {
+  current: number;
+  settingKey: 'pricePerLoad' | 'dryOnlyPricePerLoad';
+  title: string;
+  description: string;
+  savedMessage: string;
+}) {
   const action = useAction();
   const toast = useToast();
   const [text, setText] = useState(centavosToInput(current));
   const price = parsePesoInput(text);
   return (
-    <Section title="Price per load" description="Wash, dry & fold. Existing orders keep the price they were sold at.">
+    <Section title={title} description={description}>
       <Row wrap style={{ alignItems: 'flex-end' }}>
         <TextField
           label="Price"
@@ -153,8 +178,8 @@ function PriceSection({ current }: { current: number }) {
           busy={action.busy}
           onPress={async () => {
             if (price === null) return;
-            const result = await action.run((c) => setSetting(c.db, 'pricePerLoad', price));
-            if (result.ok) toast(`Price per load is now ${formatPeso(price)}`);
+            const result = await action.run((c) => setSetting(c.db, settingKey, price));
+            if (result.ok) toast(`${savedMessage} is now ${formatPeso(price)}`);
           }}
         />
       </Row>

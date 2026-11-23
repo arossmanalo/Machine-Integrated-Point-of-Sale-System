@@ -3,12 +3,14 @@ import { z } from 'zod';
 
 import { PIN_UNLOCKED } from '@/domain/secrets';
 import { NO_TOP_UP_PRICES } from '@/domain/machinePolicy';
-import { DEFAULT_PRICE_PER_LOAD } from '@/domain/pricing';
+import { DEFAULT_DRY_ONLY_PRICE_PER_LOAD, DEFAULT_PRICE_PER_LOAD } from '@/domain/pricing';
 import { settings } from '@/db/schema';
 import type { Db } from '@/db/types';
 
 const settingSchemas = {
   pricePerLoad: z.number().int().nonnegative(),
+  /** Price per load for customers who only want their laundry dried. */
+  dryOnlyPricePerLoad: z.number().int().nonnegative(),
   customStatuses: z.array(z.string()),
   hiddenStatuses: z.array(z.string()),
   printerAddress: z.string().nullable(),
@@ -45,6 +47,7 @@ export type Settings = { [K in SettingKey]: z.infer<(typeof settingSchemas)[K]> 
 
 export const DEFAULT_SETTINGS: Settings = {
   pricePerLoad: DEFAULT_PRICE_PER_LOAD,
+  dryOnlyPricePerLoad: DEFAULT_DRY_ONLY_PRICE_PER_LOAD,
   customStatuses: [],
   hiddenStatuses: [],
   printerAddress: null,
