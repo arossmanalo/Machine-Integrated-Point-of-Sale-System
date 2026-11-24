@@ -134,7 +134,8 @@ Everything lives only on this tablet. Go to **Manage › Backup and import › S
 **Manage › Machines** shows the machine setup: whether the machines are connected (**Check connection** tries again), whether receipt scans and Multi-cycle are on, and each machine with its run time and **coins** (one coin is one start signal, like a coin in the slot). Tap a machine to:
 
 - switch it off with **In use** while it is broken, so nobody can start it (an order waiting on it is taken off);
+- change its **coins** (how many coins one start counts as), and each cycle's coins;
 - tick which of a washer's cycles staff are offered (with none ticked, staff are not asked and it runs its normal time);
-- for a dryer, tick which top-up lengths are offered and set each one's price.
+- for a dryer, tick which top-up lengths are offered and set each one's coins and price.
 
-Then tap **Save changes**. To add machines or change coins, run times or cycles, contact support. The owner PIN is changed on the same screen.
+Then tap **Save changes**. Each coin count is 1 to 50. To add machines or change run times or cycles, contact support. The owner PIN is changed on the same screen.

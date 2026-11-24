@@ -7,12 +7,12 @@ import {
   TOP_UP_CHOICES,
   topUpOptions,
   topUpPriceFor,
-  topUpPulseCountFor,
   type TopUpMinutes,
   type TopUpPrices,
 } from '@/domain/machinePolicy';
 import { centavosToInput, parsePesoInput } from '@/domain/money';
 import { STATUS_LABELS } from '@/machines/MachineController';
+import { PULSE_LIMITS } from '@/machines/protocol';
 import { listCycles } from '@/services/cycles';
 import { listMachines, saveOwnerMachineChanges } from '@/services/machines';
 import { getSetting } from '@/services/settings';
@@ -39,7 +39,7 @@ function OnOff({ on }: { on: boolean }) {
 /**
  * The owner's view of the machine setup. It names each setting broadly and leaves out how the
  * machines are wired and signalled. The owner may switch machines and cycles on or off and set
- * dryer top-up prices; everything else stays with the built-in developer.
+ * coins and dryer top-up prices; everything else stays with the built-in developer.
  */
 export function MachineOverview() {
   const { controller, controllerState } = useApp();
@@ -84,7 +84,7 @@ export function MachineOverview() {
         </Panel>
       </Section>
 
-      <Section title="Machines" description="Tap a machine to switch it off, choose its cycles or set top-up prices.">
+      <Section title="Machines" description="Tap a machine to switch it off, choose its cycles, or change its coins and top-up prices.">
         <Panel>
           {machines.length === 0 ? (
             <EmptyState icon="washing-machine" title="No machines yet" body="Machines are added by support." />
@@ -133,9 +133,21 @@ function parsePrices(drafts: PriceDrafts): { prices: TopUpPrices | null; missing
   return { prices: missing.length === 0 ? prices : null, missing };
 }
 
+const digitsOnly = (text: string) => text.replace(/\D/g, '');
+
+/** Each coin count the owner typed, labelled; the first one out of range is the error. */
+function coinsError(entries: readonly [string, string][]): string | null {
+  const { maxCount } = PULSE_LIMITS;
+  const bad = entries.find(([, text]) => {
+    const coins = Number(text);
+    return text === '' || !Number.isInteger(coins) || coins < 1 || coins > maxCount;
+  });
+  return bad ? `${bad[0]}: enter 1 to ${maxCount} coins.` : null;
+}
+
 /**
- * The owner switches the machine and its cycles on or off and sets a dryer's top-up prices.
- * Coins, run times and the cycles themselves are shown but stay with support.
+ * The owner switches the machine and its cycles on or off and sets coins and a dryer's top-up
+ * prices. Run times, timings and the cycles themselves stay with support.
  */
 function MachineDetails({
   machine,
@@ -155,6 +167,17 @@ function MachineDetails({
     Object.fromEntries(cycles.map((cycle) => [cycle.id, cycle.enabled])),
   );
   const [drafts, setDrafts] = useState<PriceDrafts>(() => priceDrafts(machine));
+  const [coinsText, setCoinsText] = useState(String(machine.pulseCount));
+  const [cycleCoins, setCycleCoins] = useState<Record<number, string>>(() =>
+    Object.fromEntries(cycles.map((cycle) => [cycle.id, String(cycle.pulses)])),
+  );
+  const [topUpCoins, setTopUpCoins] = useState<Record<TopUpMinutes, string>>(() => ({
+    5: String(machine.topUpPulseCount),
+    10: String(machine.topUpPulses10),
+    15: String(machine.topUpPulses15),
+    20: String(machine.topUpPulses20),
+  }));
+  const cycleCoinsOf = (cycle: MachineCycleRow) => cycleCoins[cycle.id] ?? String(cycle.pulses);
   const isOffered = (cycle: MachineCycleRow) => offered[cycle.id] ?? cycle.enabled;
   const usesCycles = cycles.some(isOffered);
   const { prices, missing } = parsePrices(drafts);
@@ -162,6 +185,11 @@ function MachineDetails({
     dryer && missing.length > 0
       ? `Enter a price for ${missing.map((minutes) => `${minutes} min`).join(', ')}, or untick it.`
       : null;
+  const coinError = coinsError([
+    ['Coins', coinsText],
+    ...cycles.map((cycle): [string, string] => [cycle.name, cycleCoinsOf(cycle)]),
+    ...(dryer ? TOP_UP_CHOICES.map((minutes): [string, string] => [`${minutes}-minute top-up`, topUpCoins[minutes]]) : []),
+  ]);
 
   function setDraft(minutes: TopUpMinutes, change: Partial<PriceDrafts[TopUpMinutes]>) {
     setDrafts({ ...drafts, [minutes]: { ...drafts[minutes], ...change } });
@@ -170,8 +198,17 @@ function MachineDetails({
   async function save() {
     const changes = {
       enabled,
-      cycles: cycles.map((cycle) => ({ id: cycle.id, enabled: isOffered(cycle) })),
+      coins: Number(coinsText),
+      cycles: cycles.map((cycle) => ({ id: cycle.id, enabled: isOffered(cycle), coins: Number(cycleCoinsOf(cycle)) })),
       topUpPrices: dryer ? prices : null,
+      topUpCoins: dryer
+        ? {
+            topUpPulseCount: Number(topUpCoins[5]),
+            topUpPulses10: Number(topUpCoins[10]),
+            topUpPulses15: Number(topUpCoins[15]),
+            topUpPulses20: Number(topUpCoins[20]),
+          }
+        : null,
     };
     const result = await action.run((c) => saveOwnerMachineChanges(c, actor, machine.id, changes));
     if (result.ok) {
@@ -188,7 +225,7 @@ function MachineDetails({
       actions={
         <>
           <Button label="Cancel" kind="secondary" onPress={onClose} />
-          <Button label="Save changes" onPress={() => void save()} busy={action.busy} disabled={topUpError !== null} />
+          <Button label="Save changes" onPress={() => void save()} busy={action.busy} disabled={topUpError !== null || coinError !== null} />
         </>
       }
     >
@@ -200,9 +237,16 @@ function MachineDetails({
       />
       <Panel>
         <ListRow title="Type" right={<Text>{MACHINE_TYPE_LABELS[machine.type]}</Text>} last={usesCycles} />
-        {!usesCycles && <ListRow title="Run time" right={<Text>{`${machine.runMinutes} min`}</Text>} />}
-        {!usesCycles && <ListRow title="Coins" right={<Text>{coins(machine.pulseCount)}</Text>} last />}
+        {!usesCycles && <ListRow title="Run time" right={<Text>{`${machine.runMinutes} min`}</Text>} last />}
       </Panel>
+      {!usesCycles && (
+        <TextField
+          label="Coins per start"
+          value={coinsText}
+          onChangeText={(text) => setCoinsText(digitsOnly(text))}
+          keyboardType="number-pad"
+        />
+      )}
 
       {cycles.length > 0 && (
         <View style={styles.table}>
@@ -231,7 +275,14 @@ function MachineDetails({
                 />
               </View>
               <Text style={styles.name}>{cycle.name}</Text>
-              <Text style={[styles.flex, styles.number]}>{cycle.pulses}</Text>
+              <TextField
+                label={`${cycle.name} coins`}
+                hideLabel
+                value={cycleCoinsOf(cycle)}
+                onChangeText={(text) => setCycleCoins({ ...cycleCoins, [cycle.id]: digitsOnly(text) })}
+                keyboardType="number-pad"
+                style={styles.flex}
+              />
               <Text style={[styles.flex, styles.number]}>{cycle.minutes}</Text>
             </Row>
           ))}
@@ -270,7 +321,14 @@ function MachineDetails({
                 />
               </View>
               <Text style={styles.name}>{`${minutes} min`}</Text>
-              <Text style={[styles.flex, styles.number]}>{topUpPulseCountFor(machine, minutes)}</Text>
+              <TextField
+                label={`${minutes}-minute top-up coins`}
+                hideLabel
+                value={topUpCoins[minutes]}
+                onChangeText={(text) => setTopUpCoins({ ...topUpCoins, [minutes]: digitsOnly(text) })}
+                keyboardType="number-pad"
+                style={styles.flex}
+              />
               <TextField
                 label={`${minutes}-minute top-up price`}
                 hideLabel
@@ -286,6 +344,7 @@ function MachineDetails({
           {topUpError && <Text tone="danger">{topUpError}</Text>}
         </View>
       )}
+      {coinError && <Text tone="danger">{coinError}</Text>}
       {action.error && <Notice tone="danger">{action.error}</Notice>}
     </Dialog>
   );

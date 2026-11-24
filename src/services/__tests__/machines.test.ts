@@ -301,39 +301,65 @@ describe('machine settings', () => {
     expect(controller.starts).toEqual([]);
   });
 
-  it('lets the owner switch a machine and its cycles off and set top-up prices, and nothing else', async () => {
-    const { ctx, owner, order, washers, dryers, machineById } = await setup();
-    const keep = { enabled: true, cycles: [], topUpPrices: null };
+  it('lets the owner switch machines and cycles off and set coins and top-up prices, and nothing else', async () => {
+    const { ctx, owner, controller, order, washers, dryers, machineById, markWashed } = await setup();
     const washerCycles = listCycles(ctx).filter((c) => c.machineId === washers[0]);
+    const keep = (id: number) => {
+      const m = machineById(id);
+      if (!m) throw new Error('No machine');
+      return { enabled: true, coins: m.pulseCount, cycles: [], topUpPrices: null, topUpCoins: null };
+    };
     const before = machineById(dryers[0]);
 
     assignOrder(ctx, testEmployee, order.id, washers[0]);
     saveOwnerMachineChanges(ctx, owner, washers[0], {
-      ...keep,
+      ...keep(washers[0]),
       enabled: false,
-      cycles: [{ id: washerCycles[0].id, enabled: false }],
+      coins: 5,
+      cycles: [{ id: washerCycles[0].id, enabled: false, coins: 7 }],
     });
-    expect(machineById(washers[0])).toMatchObject({ enabled: false, assignedOrderId: null });
-    expect(listCycles(ctx).find((c) => c.id === washerCycles[0].id)?.enabled).toBe(false);
+    expect(machineById(washers[0])).toMatchObject({ enabled: false, assignedOrderId: null, pulseCount: 5 });
+    expect(listCycles(ctx).find((c) => c.id === washerCycles[0].id)).toMatchObject({ enabled: false, pulses: 7 });
 
     const prices = { topUpPrice: 0, topUpPrice10: 3000, topUpPrice15: 0, topUpPrice20: 6000 };
-    saveOwnerMachineChanges(ctx, owner, dryers[0], { ...keep, topUpPrices: prices });
+    const topUpCoins = { topUpPulseCount: 1, topUpPulses10: 6, topUpPulses15: 8, topUpPulses20: 9 };
+    saveOwnerMachineChanges(ctx, owner, dryers[0], { ...keep(dryers[0]), coins: 4, topUpPrices: prices, topUpCoins });
     expect(machineById(dryers[0])).toMatchObject({
       ...prices,
-      pulseCount: before?.pulseCount,
-      topUpPulses10: before?.topUpPulses10,
+      ...topUpCoins,
+      pulseCount: 4,
+      pulseOnMs: before?.pulseOnMs,
       runMinutes: before?.runMinutes,
     });
+    // The new coins are what a start sends.
+    markWashed(order.id);
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
+    expect(controller.starts[0].pulses.count).toBe(4);
 
-    expect(() => saveOwnerMachineChanges(ctx, testEmployee, dryers[0], keep)).toThrow('Only the owner');
+    expect(() => saveOwnerMachineChanges(ctx, testEmployee, dryers[0], keep(dryers[0]))).toThrow('Only the owner');
+    expect(() => saveOwnerMachineChanges(ctx, owner, washers[1], { ...keep(washers[1]), coins: 0 })).toThrow(
+      'Washer 2: enter 1 to 50 coins',
+    );
     expect(() =>
-      saveOwnerMachineChanges(ctx, owner, washers[1], { ...keep, cycles: [{ id: washerCycles[1].id, enabled: false }] }),
+      saveOwnerMachineChanges(ctx, owner, washers[0], {
+        ...keep(washers[0]),
+        cycles: [{ id: washerCycles[1].id, enabled: true, coins: 51 }],
+      }),
+    ).toThrow(`${washerCycles[1].name}: enter 1 to 50 coins`);
+    expect(() =>
+      saveOwnerMachineChanges(ctx, owner, washers[1], {
+        ...keep(washers[1]),
+        cycles: [{ id: washerCycles[1].id, enabled: false, coins: 1 }],
+      }),
     ).toThrow('not on Washer 2');
+    expect(() => saveOwnerMachineChanges(ctx, owner, washers[1], { ...keep(washers[1]), topUpPrices: prices })).toThrow(
+      'Only dryers',
+    );
     expect(() =>
-      saveOwnerMachineChanges(ctx, owner, washers[1], { ...keep, topUpPrices: prices }),
-    ).toThrow('Only dryers');
+      saveOwnerMachineChanges(ctx, owner, dryers[0], { ...keep(dryers[0]), topUpCoins: { ...topUpCoins, topUpPulses20: 0 } }),
+    ).toThrow('20-minute top-up: enter 1 to 50 coins');
     expect(() =>
-      saveOwnerMachineChanges(ctx, owner, dryers[0], { ...keep, topUpPrices: { ...prices, topUpPrice: -100 } }),
+      saveOwnerMachineChanges(ctx, owner, dryers[0], { ...keep(dryers[0]), topUpPrices: { ...prices, topUpPrice: -100 } }),
     ).toThrow('5-minute');
   });
 

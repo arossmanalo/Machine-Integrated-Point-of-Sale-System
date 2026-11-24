@@ -16,13 +16,21 @@ import {
   type MachineType,
   type TopUpMinutes,
   type TopUpPrices,
+  type TopUpPulses,
   type PolicyOrder,
 } from '@/domain/machinePolicy';
 import { formatPeso } from '@/domain/money';
 import { machineEarnings, type MachineEarnings } from '@/domain/machineEarnings';
 import { parseReceiptCode, tokensMatch } from '@/domain/receiptCode';
 import { periodRange } from '@/domain/reports';
-import { isValidChannel, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress, pulsesProblem } from '@/machines/protocol';
+import {
+  isValidChannel,
+  MAX_CHANNEL,
+  MIN_KEY_LENGTH,
+  normalizeAddress,
+  PULSE_LIMITS,
+  pulsesProblem,
+} from '@/machines/protocol';
 import type { MachineController, PulseSettings, StartResult } from '@/machines/MachineController';
 import {
   machineCycles,
@@ -190,18 +198,35 @@ export function updateMachine(ctx: ServiceContext, actor: Actor, id: number, inp
   ctx.db.update(machines).set({ ...values, ...release }).where(eq(machines.id, id)).run();
 }
 
-/** What the owner may change on a machine: in use, which cycles are offered, top-up prices. */
+/** What the owner may change on a machine. Timings, wiring and the cycles themselves are not here. */
 export interface OwnerMachineChanges {
   enabled: boolean;
-  /** The washer's cycles and whether each is offered. */
-  cycles: readonly { id: number; enabled: boolean }[];
+  /** Coins (pulses) for one start when the machine runs without a cycle. */
+  coins: number;
+  /** The washer's cycles: whether each is offered, and its coins. */
+  cycles: readonly { id: number; enabled: boolean; coins: number }[];
   /** Dryers only; a price of 0 means that length is not offered. */
   topUpPrices: TopUpPrices | null;
+  /** Dryers only: the coins each top-up length sends. */
+  topUpCoins: TopUpPulses | null;
+}
+
+/** The owner's word for pulses is coins; the timing of each coin stays as the developer set it. */
+function coinsProblem(label: string, coins: number): string | null {
+  const { maxCount } = PULSE_LIMITS;
+  return Number.isInteger(coins) && coins >= 1 && coins <= maxCount
+    ? null
+    : `${label}: enter 1 to ${maxCount} coins.`;
+}
+
+function requireCoins(label: string, coins: number): void {
+  const problem = coinsProblem(label, coins);
+  if (problem) throw new UserFacingError(problem);
 }
 
 /**
- * The owner's changes to one machine, saved together. Coins, timings, wiring and the cycles
- * themselves stay with the developer.
+ * The owner's changes to one machine, saved together: in use, coins, which cycles are offered,
+ * and a dryer's top-up prices and coins.
  */
 export function saveOwnerMachineChanges(
   ctx: ServiceContext,
@@ -212,30 +237,47 @@ export function saveOwnerMachineChanges(
   if (!can.viewMachineSettings(actor.role)) throw new UserFacingError('Only the owner can change machines.');
   ctx.db.transaction((tx) => {
     const machine = requireMachine(tx, machineId);
-    const own = new Set(
+    requireCoins(machine.name, changes.coins);
+    const own = new Map(
       tx
-        .select({ id: machineCycles.id })
+        .select({ id: machineCycles.id, name: machineCycles.name })
         .from(machineCycles)
         .where(eq(machineCycles.machineId, machineId))
         .all()
-        .map((cycle) => cycle.id),
+        .map((cycle) => [cycle.id, cycle.name]),
     );
     for (const cycle of changes.cycles) {
-      if (!own.has(cycle.id)) throw new UserFacingError(`That cycle is not on ${machine.name}.`);
-      tx.update(machineCycles).set({ enabled: cycle.enabled }).where(eq(machineCycles.id, cycle.id)).run();
+      const name = own.get(cycle.id);
+      if (name === undefined) throw new UserFacingError(`That cycle is not on ${machine.name}.`);
+      requireCoins(name, cycle.coins);
+      tx.update(machineCycles)
+        .set({ enabled: cycle.enabled, pulses: cycle.coins })
+        .where(eq(machineCycles.id, cycle.id))
+        .run();
     }
-    let prices = {};
-    if (changes.topUpPrices) {
+    let topUps = {};
+    if (changes.topUpPrices || changes.topUpCoins) {
       if (machine.type !== 'DRYER') throw new UserFacingError('Only dryers take top-ups.');
-      const problem = topUpProblem(machine, changes.topUpPrices);
+      const coins = changes.topUpCoins ?? machine;
+      for (const minutes of TOP_UP_CHOICES) requireCoins(`${minutes}-minute top-up`, topUpPulseCountFor(coins, minutes));
+      const prices = changes.topUpPrices ?? machine;
+      const problem = topUpProblem({ ...machine, ...coins }, prices);
       if (problem) throw new UserFacingError(problem);
-      const { topUpPrice, topUpPrice10, topUpPrice15, topUpPrice20 } = changes.topUpPrices;
-      prices = { topUpPrice, topUpPrice10, topUpPrice15, topUpPrice20 };
+      topUps = {
+        topUpPrice: prices.topUpPrice,
+        topUpPrice10: prices.topUpPrice10,
+        topUpPrice15: prices.topUpPrice15,
+        topUpPrice20: prices.topUpPrice20,
+        topUpPulseCount: coins.topUpPulseCount,
+        topUpPulses10: coins.topUpPulses10,
+        topUpPulses15: coins.topUpPulses15,
+        topUpPulses20: coins.topUpPulses20,
+      };
     }
     // A machine switched off cannot run the order waiting on it.
     const release = changes.enabled ? {} : { assignedOrderId: null, assignedAt: null, assignedByName: null };
     tx.update(machines)
-      .set({ enabled: changes.enabled, ...prices, ...release })
+      .set({ enabled: changes.enabled, pulseCount: changes.coins, ...topUps, ...release })
       .where(eq(machines.id, machineId))
       .run();
   });
