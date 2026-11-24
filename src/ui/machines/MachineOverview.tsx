@@ -1,15 +1,8 @@
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import type { MachineCycleRow, MachineRow } from '@/db/schema';
-import {
-  MACHINE_TYPE_LABELS,
-  TOP_UP_CHOICES,
-  topUpOptions,
-  topUpPriceFor,
-  type TopUpMinutes,
-  type TopUpPrices,
-} from '@/domain/machinePolicy';
+import type { DryerTopUpRow, MachineCycleRow, MachineRow } from '@/db/schema';
+import { MACHINE_TYPE_LABELS } from '@/domain/machinePolicy';
 import { centavosToInput, parsePesoInput } from '@/domain/money';
 import { STATUS_LABELS } from '@/machines/MachineController';
 import { PULSE_LIMITS } from '@/machines/protocol';
@@ -21,6 +14,7 @@ import {
   setReceiptScanRequired,
 } from '@/services/machines';
 import { getSetting } from '@/services/settings';
+import { listTopUps } from '@/services/topUps';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData } from '@/state/hooks';
 import { useToast } from '@/state/toast';
@@ -49,10 +43,12 @@ export function MachineOverview() {
   const [viewing, setViewing] = useState<MachineRow | null>(null);
   const machines = useData(listMachines);
   const cycles = useData(listCycles);
+  const topUps = useData(listTopUps);
   const settings = useData((c) => ({
     receiptScan: getSetting(c.db, 'requireReceiptScan'),
     multiCycle: getSetting(c.db, 'multiCycle'),
   }));
+  const topUpsOf = (machine: MachineRow) => topUps.filter((topUp) => topUp.machineId === machine.id);
   const cyclesOf = (machine: MachineRow) =>
     settings.multiCycle && machine.type === 'WASHER' ? cycles.filter((cycle) => cycle.machineId === machine.id) : [];
 
@@ -64,8 +60,9 @@ export function MachineOverview() {
         ? `${onCycles.length} cycle${onCycles.length === 1 ? '' : 's'}`
         : `${machine.runMinutes} min · ${coins(machine.pulseCount)}`;
     if (machine.type !== 'DRYER') return `${MACHINE_TYPE_LABELS[machine.type]} · ${start}`;
-    const topUps = topUpOptions(machine);
-    const topUpText = topUps.length === 0 ? 'no top-ups' : `top-ups ${topUps.map((o) => `${o.minutes}`).join(', ')} min`;
+    const offered = topUpsOf(machine).filter((topUp) => topUp.enabled);
+    const topUpText =
+      offered.length === 0 ? 'no top-ups' : `top-ups ${offered.map((topUp) => topUp.name).join(', ')}`;
     return `${MACHINE_TYPE_LABELS[machine.type]} · ${start} · ${topUpText}`;
   }
 
@@ -112,33 +109,25 @@ export function MachineOverview() {
       </Section>
 
       {viewing && (
-        <MachineDetails machine={viewing} cycles={cyclesOf(viewing)} onClose={() => setViewing(null)} />
+        <MachineDetails
+          machine={viewing}
+          cycles={cyclesOf(viewing)}
+          topUps={topUpsOf(viewing)}
+          onClose={() => setViewing(null)}
+        />
       )}
     </>
   );
 }
 
-type PriceDrafts = Record<TopUpMinutes, { offered: boolean; price: string }>;
-
-function priceDrafts(machine: MachineRow): PriceDrafts {
-  const draft = (minutes: TopUpMinutes) => {
-    const price = topUpPriceFor(machine, minutes);
-    return { offered: price > 0, price: price > 0 ? centavosToInput(price) : '' };
-  };
-  return { 5: draft(5), 10: draft(10), 15: draft(15), 20: draft(20) };
+interface TopUpDraft {
+  offered: boolean;
+  coins: string;
+  price: string;
 }
 
-/** The price for each length: an offered length needs a price above zero, others are 0. */
-function parsePrices(drafts: PriceDrafts): { prices: TopUpPrices | null; missing: TopUpMinutes[] } {
-  const missing: TopUpMinutes[] = [];
-  const priceOf = (minutes: TopUpMinutes) => {
-    if (!drafts[minutes].offered) return 0;
-    const price = parsePesoInput(drafts[minutes].price);
-    if (price === null || price === 0) missing.push(minutes);
-    return price ?? 0;
-  };
-  const prices = { topUpPrice: priceOf(5), topUpPrice10: priceOf(10), topUpPrice15: priceOf(15), topUpPrice20: priceOf(20) };
-  return { prices: missing.length === 0 ? prices : null, missing };
+function topUpDraft(topUp: DryerTopUpRow): TopUpDraft {
+  return { offered: topUp.enabled, coins: String(topUp.pulses), price: topUp.price > 0 ? centavosToInput(topUp.price) : '' };
 }
 
 const digitsOnly = (text: string) => text.replace(/\D/g, '');
@@ -160,10 +149,12 @@ function coinsError(entries: readonly [string, string][]): string | null {
 function MachineDetails({
   machine,
   cycles,
+  topUps,
   onClose,
 }: {
   machine: MachineRow;
   cycles: readonly MachineCycleRow[];
+  topUps: readonly DryerTopUpRow[];
   onClose: () => void;
 }) {
   const actor = useActor();
@@ -174,33 +165,35 @@ function MachineDetails({
   const [offered, setOffered] = useState<Record<number, boolean>>(() =>
     Object.fromEntries(cycles.map((cycle) => [cycle.id, cycle.enabled])),
   );
-  const [drafts, setDrafts] = useState<PriceDrafts>(() => priceDrafts(machine));
+  const [drafts, setDrafts] = useState<Record<number, TopUpDraft>>(() =>
+    Object.fromEntries(topUps.map((topUp) => [topUp.id, topUpDraft(topUp)])),
+  );
+  const draftOf = (topUp: DryerTopUpRow) => drafts[topUp.id] ?? topUpDraft(topUp);
   const [coinsText, setCoinsText] = useState(String(machine.pulseCount));
   const [cycleCoins, setCycleCoins] = useState<Record<number, string>>(() =>
     Object.fromEntries(cycles.map((cycle) => [cycle.id, String(cycle.pulses)])),
   );
-  const [topUpCoins, setTopUpCoins] = useState<Record<TopUpMinutes, string>>(() => ({
-    5: String(machine.topUpPulseCount),
-    10: String(machine.topUpPulses10),
-    15: String(machine.topUpPulses15),
-    20: String(machine.topUpPulses20),
-  }));
   const cycleCoinsOf = (cycle: MachineCycleRow) => cycleCoins[cycle.id] ?? String(cycle.pulses);
   const isOffered = (cycle: MachineCycleRow) => offered[cycle.id] ?? cycle.enabled;
   const usesCycles = cycles.some(isOffered);
-  const { prices, missing } = parsePrices(drafts);
-  const topUpError =
-    dryer && missing.length > 0
-      ? `Enter a price for ${missing.map((minutes) => `${minutes} min`).join(', ')}, or untick it.`
-      : null;
+  // An offered top-up needs a price above zero; an unticked one keeps its price for later.
+  const priceOf = (topUp: DryerTopUpRow) => {
+    const text = draftOf(topUp).price;
+    return text.trim() === '' ? 0 : parsePesoInput(text);
+  };
+  const badPrice = topUps.find((topUp) => {
+    const price = priceOf(topUp);
+    return price === null || (draftOf(topUp).offered && price === 0);
+  });
+  const topUpError = badPrice ? `${badPrice.name}: enter a price like 20 or 20.50, or untick it.` : null;
   const coinError = coinsError([
     ['Coins', coinsText],
     ...cycles.map((cycle): [string, string] => [cycle.name, cycleCoinsOf(cycle)]),
-    ...(dryer ? TOP_UP_CHOICES.map((minutes): [string, string] => [`${minutes}-minute top-up`, topUpCoins[minutes]]) : []),
+    ...topUps.map((topUp): [string, string] => [`${topUp.name} top-up`, draftOf(topUp).coins]),
   ]);
 
-  function setDraft(minutes: TopUpMinutes, change: Partial<PriceDrafts[TopUpMinutes]>) {
-    setDrafts({ ...drafts, [minutes]: { ...drafts[minutes], ...change } });
+  function setDraft(topUp: DryerTopUpRow, change: Partial<TopUpDraft>) {
+    setDrafts({ ...drafts, [topUp.id]: { ...draftOf(topUp), ...change } });
   }
 
   async function save() {
@@ -208,15 +201,12 @@ function MachineDetails({
       enabled,
       coins: Number(coinsText),
       cycles: cycles.map((cycle) => ({ id: cycle.id, enabled: isOffered(cycle), coins: Number(cycleCoinsOf(cycle)) })),
-      topUpPrices: dryer ? prices : null,
-      topUpCoins: dryer
-        ? {
-            topUpPulseCount: Number(topUpCoins[5]),
-            topUpPulses10: Number(topUpCoins[10]),
-            topUpPulses15: Number(topUpCoins[15]),
-            topUpPulses20: Number(topUpCoins[20]),
-          }
-        : null,
+      topUps: topUps.map((topUp) => ({
+        id: topUp.id,
+        enabled: draftOf(topUp).offered,
+        coins: Number(draftOf(topUp).coins),
+        price: priceOf(topUp) ?? 0,
+      })),
     };
     const result = await action.run((c) => saveOwnerMachineChanges(c, actor, machine.id, changes));
     if (result.ok) {
@@ -318,31 +308,34 @@ function MachineDetails({
               Price
             </Text>
           </Row>
-          {TOP_UP_CHOICES.map((minutes) => (
-            <Row key={minutes}>
+          {topUps.length === 0 && <Text tone="muted">No top-ups on this dryer. Support adds them.</Text>}
+          {topUps.map((topUp) => (
+            <Row key={topUp.id}>
               <View style={styles.check}>
                 <Checkbox
                   label=""
-                  accessibilityLabel={`Offer the ${minutes}-minute top-up`}
-                  value={drafts[minutes].offered}
-                  onChange={(on) => setDraft(minutes, { offered: on })}
+                  accessibilityLabel={`Offer the ${topUp.name} top-up`}
+                  value={draftOf(topUp).offered}
+                  onChange={(on) => setDraft(topUp, { offered: on })}
                 />
               </View>
-              <Text style={styles.name}>{`${minutes} min`}</Text>
+              <View style={styles.name}>
+                <Text>{topUp.name}</Text>
+                <Text variant="caption" tone="muted">{`${topUp.minutes} min`}</Text>
+              </View>
               <TextField
-                label={`${minutes}-minute top-up coins`}
+                label={`${topUp.name} top-up coins`}
                 hideLabel
-                value={topUpCoins[minutes]}
-                onChangeText={(text) => setTopUpCoins({ ...topUpCoins, [minutes]: digitsOnly(text) })}
+                value={draftOf(topUp).coins}
+                onChangeText={(text) => setDraft(topUp, { coins: digitsOnly(text) })}
                 keyboardType="number-pad"
                 style={styles.flex}
               />
               <TextField
-                label={`${minutes}-minute top-up price`}
+                label={`${topUp.name} top-up price`}
                 hideLabel
-                value={drafts[minutes].price}
-                onChangeText={(price) => setDraft(minutes, { price })}
-                editable={drafts[minutes].offered}
+                value={draftOf(topUp).price}
+                onChangeText={(price) => setDraft(topUp, { price })}
                 keyboardType="decimal-pad"
                 prefix="₱"
                 style={styles.flex}

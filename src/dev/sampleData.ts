@@ -1,7 +1,7 @@
 import { createTestContext, receiptOf } from '@/db/testing';
 import type { Actor } from '@/db/types';
 import { addShopDays, startOfShopDay } from '@/domain/dates';
-import { isRunning, type TopUpMinutes } from '@/domain/machinePolicy';
+import { isRunning } from '@/domain/machinePolicy';
 import { MockMachineController } from '@/machines/MockMachineController';
 import { addStaff, completeFirstRunSetup } from '@/services/auth';
 import { exportBackup, type Backup } from '@/services/backup';
@@ -19,6 +19,7 @@ import {
 } from '@/services/machines';
 import { createOrder, listOrderSummaries, receivePayment, updateOrderStatus } from '@/services/orders';
 import { setSetting } from '@/services/settings';
+import { listTopUps } from '@/services/topUps';
 
 /**
  * Builds a backup full of made-up shop activity, for trying out the reports without touching
@@ -67,14 +68,6 @@ function machineInput(name: string, type: 'WASHER' | 'DRYER', hardwareChannel: n
     pulseOnMs: 500,
     pulseOffMs: 500,
     runMinutes: dryer ? 40 : 35,
-    topUpPulseCount: 1,
-    topUpPulses10: 2,
-    topUpPulses15: 3,
-    topUpPulses20: 4,
-    topUpPrice: dryer ? 2000 : 0,
-    topUpPrice10: dryer ? 3500 : 0,
-    topUpPrice15: dryer ? 5000 : 0,
-    topUpPrice20: dryer ? 6500 : 0,
   };
 }
 
@@ -90,7 +83,13 @@ export async function buildSampleBackup(now: number, days = 30): Promise<Backup>
   const developer: Actor = { id: 'D0001', username: 'sample-setup', role: 'DEVELOPER' };
   setSetting(ctx.db, 'pricePerLoad', 16000);
   setSetting(ctx.db, 'dryOnlyPricePerLoad', 10000);
-  setSetting(ctx.db, 'orderTopUpPrices', { topUpPrice: 2000, topUpPrice10: 3500, topUpPrice15: 5000, topUpPrice20: 6500 });
+  // New dryers take these prices for their 5, 10, 15 and 20-minute top-ups.
+  setSetting(ctx.db, 'shopTopUps', [
+    { minutes: 5, price: 2000 },
+    { minutes: 10, price: 3500 },
+    { minutes: 15, price: 5000 },
+    { minutes: 20, price: 6500 },
+  ]);
   setSetting(ctx.db, 'receiptHeader', 'SAMPLE LAUNDRY (TEST DATA)');
 
   const fabcon = createInventoryItem(ctx, {
@@ -135,7 +134,7 @@ export async function buildSampleBackup(now: number, days = 30): Promise<Backup>
       const method = random.chance(0.7) ? 'FULL_PAYMENT' : random.chance(0.5) ? 'DOWN_PAYMENT' : 'PAY_LATER';
       const channel = random.chance(0.75) ? 'CASH' : 'GCASH';
       const addOns = random.chance(0.4) ? [{ itemId: random.chance(0.6) ? fabcon : bleach, quantity: random.int(1, 2) }] : [];
-      const topUpMinutes: TopUpMinutes | null = !dryOnly && random.chance(0.15) ? random.pick([5, 10, 15, 20] as const) : null;
+      const topUpMinutes: number | null = !dryOnly && random.chance(0.15) ? random.pick([5, 10, 15, 20] as const) : null;
       const order = createOrder(ctx, employee, {
         customerId: random.pick(customers).id,
         weightKg: loads * 7,
@@ -168,7 +167,9 @@ export async function buildSampleBackup(now: number, days = 30): Promise<Backup>
         const dryer = free(dryers);
         await startOrderOnMachine(ctx, controller, employee, order.id, dryer, receiptOf(order));
         if (random.chance(0.15)) {
-          await topUpDryer(ctx, controller, employee, dryer, random.pick([5, 10] as const));
+          const minutes = random.pick([5, 10] as const);
+          const topUp = listTopUps(ctx).find((row) => row.machineId === dryer && row.minutes === minutes);
+          if (topUp) await topUpDryer(ctx, controller, employee, dryer, topUp.id);
         }
         ctx.advance(random.int(1, 4) * MINUTE);
       }

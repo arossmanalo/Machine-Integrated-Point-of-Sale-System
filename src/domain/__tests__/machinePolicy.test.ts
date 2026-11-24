@@ -3,13 +3,10 @@ import {
   decideStart,
   decideTopUp,
   endAfterTopUp,
-  isTopUpMinutes,
-  NO_TOP_UP_PRICES,
-  topUpOptions,
-  topUpPulseCountFor,
   isRunning,
   machineAllowance,
   minutesLeft,
+  shopPriceFor,
   type AssignCheck,
 } from '../machinePolicy';
 
@@ -129,17 +126,14 @@ describe('machine runs', () => {
     expect(endAfterTopUp({ runEndsAt: NOW + 10 * MIN }, NOW, 20)).toBe(NOW + 30 * MIN);
   });
 
-  it('offers only the top-up lengths with a price, each with its own pulses', () => {
-    const prices = { topUpPrice: 2000, topUpPrice10: 0, topUpPrice15: 5000, topUpPrice20: 6000 };
-    expect(topUpOptions(prices)).toEqual([
+  it("reads the shop's new-order top-up price by minutes, 0 when the length is not listed", () => {
+    const list = [
       { minutes: 5, price: 2000 },
-      { minutes: 15, price: 5000 },
-      { minutes: 20, price: 6000 },
-    ]);
-    expect(topUpOptions(NO_TOP_UP_PRICES)).toEqual([]);
-    const pulses = { topUpPulseCount: 2, topUpPulses10: 5, topUpPulses15: 6, topUpPulses20: 9 };
-    expect([5, 10, 15, 20].map((m) => (isTopUpMinutes(m) ? topUpPulseCountFor(pulses, m) : null))).toEqual([2, 5, 6, 9]);
-    expect(isTopUpMinutes(7)).toBe(false);
+      { minutes: 30, price: 9000 },
+    ];
+    expect(shopPriceFor(list, 30)).toBe(9000);
+    expect(shopPriceFor(list, 10)).toBe(0);
+    expect(endAfterTopUp({ runEndsAt: NOW + 10 * MIN }, NOW, 30)).toBe(NOW + 40 * MIN);
   });
 });
 

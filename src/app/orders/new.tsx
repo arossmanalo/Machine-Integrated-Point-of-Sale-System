@@ -4,7 +4,6 @@ import { StyleSheet, View } from 'react-native';
 
 import { formatShopDate } from '@/domain/dates';
 import { LOADS_PER_FREE_LOAD } from '@/domain/loyalty';
-import { isTopUpMinutes, topUpOptions } from '@/domain/machinePolicy';
 import { centavosToInput, formatPeso, parsePesoInput } from '@/domain/money';
 import {
   changeDue,
@@ -21,6 +20,7 @@ import { getCustomer, listCustomers, matchesCustomer } from '@/services/customer
 import { listInventory } from '@/services/inventory';
 import { createOrder, quoteOrder } from '@/services/orders';
 import { getSetting } from '@/services/settings';
+import { orderTopUpChoices } from '@/services/topUps';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData } from '@/state/hooks';
 import { useToast } from '@/state/toast';
@@ -71,10 +71,10 @@ export default function NewOrder() {
   const addOnItems = useData((c) => listInventory(c).filter((item) => item.isAddOn));
   const selections = Object.entries(addOns).map(([itemId, quantity]) => ({ itemId, quantity }));
   const dryOnlyPrice = useData((c) => getSetting(c.db, 'dryOnlyPricePerLoad'));
-  const topUpChoices = useData((c) => topUpOptions(getSetting(c.db, 'orderTopUpPrices')));
+  const topUpChoices = useData((c) => orderTopUpChoices(c.db));
   const topUpMinutes = Number(topUpChoice);
   const topUp =
-    isTopUpMinutes(topUpMinutes) && topUpChoices.some((option) => option.minutes === topUpMinutes)
+    topUpChoices.some((option) => option.minutes === topUpMinutes)
       ? { minutes: topUpMinutes, loads: Math.min(Math.max(topUpLoadsWanted, 1), loads) }
       : null;
   const quote = useData(

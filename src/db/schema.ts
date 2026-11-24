@@ -217,6 +217,29 @@ export const machineCycles = sqliteTable(
   (t) => [index('machine_cycles_machine').on(t.machineId)],
 );
 
+/**
+ * A dryer's top-up types (2026-11-24): staff pick one while the dryer runs, or on its start
+ * screen, and it adds `minutes` to the countdown, sends `pulses` and costs `price`. Switched-off
+ * types are not offered. Replaces the fixed 5/10/15/20-minute columns on `machines`, which
+ * migration 0012 copied here and which are no longer read.
+ */
+export const dryerTopUps = sqliteTable(
+  'dryer_top_ups',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    machineId: integer('machine_id')
+      .notNull()
+      .references(() => machines.id),
+    name: text('name').notNull(),
+    minutes: integer('minutes').notNull(),
+    pulses: integer('pulses').notNull(),
+    price: integer('price').notNull(),
+    enabled: bool('enabled').notNull().default(true),
+    sortOrder: integer('sort_order').notNull().default(0),
+  },
+  (t) => [index('dryer_top_ups_machine').on(t.machineId)],
+);
+
 export const machineUnlocks = sqliteTable(
   'machine_unlocks',
   {
@@ -246,6 +269,7 @@ export const machineUnlocks = sqliteTable(
 
 export type UserRow = typeof users.$inferSelect;
 export type MachineCycleRow = typeof machineCycles.$inferSelect;
+export type DryerTopUpRow = typeof dryerTopUps.$inferSelect;
 export type CustomerRow = typeof customers.$inferSelect;
 export type InventoryItemRow = typeof inventoryItems.$inferSelect;
 export type OrderRow = typeof orders.$inferSelect;

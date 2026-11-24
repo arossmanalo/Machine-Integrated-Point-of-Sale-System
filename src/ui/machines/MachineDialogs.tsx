@@ -7,13 +7,10 @@ import { needsCyclePick } from '@/domain/cycles';
 import { UserFacingError, type ServiceContext } from '@/db/types';
 import {
   isRunning,
-  isTopUpMinutes,
   MACHINE_TYPE_LABELS,
   machineAllowance,
   minutesLeft,
-  topUpOptions,
   type MachineType,
-  type TopUpMinutes,
 } from '@/domain/machinePolicy';
 import type { Earned } from '@/domain/machineEarnings';
 import { formatPeso } from '@/domain/money';
@@ -35,6 +32,7 @@ import {
   type OverrideReason,
 } from '@/services/machines';
 import { listCycles } from '@/services/cycles';
+import { offeredTopUpsOf } from '@/services/topUps';
 import { getOrderDetail, listOrderSummaries } from '@/services/orders';
 import { getSetting } from '@/services/settings';
 import { useActor, useApp } from '@/state/AppProvider';
@@ -135,14 +133,16 @@ function ConfirmStart({
   cycles: readonly MachineCycleRow[];
   cycleId: number | null;
   onCycle: (cycleId: number) => void;
-  topUp: TopUpMinutes | null;
-  onTopUp: (minutes: TopUpMinutes | null) => void;
+  topUp: number | null;
+  onTopUp: (topUpId: number | null) => void;
 }) {
   // Dryers: a top-up paid with the order goes out with this start; otherwise staff may add one.
   const prepaid = useData((c) => prepaidTopUpForNextDryer(c, orderId), [orderId]);
   const dryer = machine.type === 'DRYER';
-  const options = dryer && prepaid === null ? topUpOptions(machine) : [];
-  const extra = dryer ? (prepaid ?? topUp ?? 0) : 0;
+  const offered = useData((c) => (dryer ? offeredTopUpsOf(c.db, machine.id) : []), [machine.id, dryer]);
+  const options = dryer && prepaid === null ? offered.filter((option) => option.price > 0) : [];
+  const chosenTopUp = options.find((option) => option.id === topUp) ?? null;
+  const extra = dryer ? (prepaid ?? chosenTopUp?.minutes ?? 0) : 0;
   const cycle = cycles.find((option) => option.id === cycleId) ?? null;
   const base = cycles.length > 0 ? (cycle?.minutes ?? null) : machine.runMinutes;
   const minutes = base === null ? null : base + extra;
@@ -166,15 +166,12 @@ function ConfirmStart({
         <Choice
           label="Top-up"
           value={topUp === null ? 'none' : String(topUp)}
-          onChange={(value) => {
-            const chosen = Number(value);
-            onTopUp(isTopUpMinutes(chosen) ? chosen : null);
-          }}
+          onChange={(value) => onTopUp(value === 'none' ? null : Number(value))}
           options={[
             { value: 'none', label: 'None' },
             ...options.map((option) => ({
-              value: String(option.minutes),
-              label: `${option.minutes} min · ${formatPeso(option.price)}`,
+              value: String(option.id),
+              label: `${option.name} · ${option.minutes} min · ${formatPeso(option.price)}`,
             })),
           ]}
         />
@@ -204,7 +201,7 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
   const scanOn = useData((c) => getSetting(c.db, 'requireReceiptScan'));
   const cyclesFor = useCyclePicker();
   const [cycleId, setCycleId] = useState<number | null>(null);
-  const [topUp, setTopUp] = useState<TopUpMinutes | null>(null);
+  const [topUp, setTopUp] = useState<number | null>(null);
   const [overriding, setOverriding] = useState<{ machine: MachineRow; code: string | null } | null>(null);
   const chosenCycles = chosen ? cyclesFor(chosen) : [];
   const usesCycles = chosenCycles.length > 0;
@@ -437,7 +434,7 @@ export function OrderPickerDialog({
   const scanOn = useData((c) => getSetting(c.db, 'requireReceiptScan'));
   const cyclesFor = useCyclePicker();
   const [cycleId, setCycleId] = useState<number | null>(null);
-  const [topUp, setTopUp] = useState<TopUpMinutes | null>(null);
+  const [topUp, setTopUp] = useState<number | null>(null);
   const machineCycles = cyclesFor(machine);
   const usesCycles = machineCycles.length > 0;
   const candidates = useData(

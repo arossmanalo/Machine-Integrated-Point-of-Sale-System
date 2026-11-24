@@ -9,17 +9,9 @@ import {
   isRunning,
   MACHINE_TYPES,
   RUN_MINUTES_LIMITS,
-  isTopUpMinutes,
-  TOP_UP_CHOICES,
-  topUpPriceFor,
-  topUpPulseCountFor,
   type MachineType,
-  type TopUpMinutes,
-  type TopUpPrices,
-  type TopUpPulses,
   type PolicyOrder,
 } from '@/domain/machinePolicy';
-import { formatPeso } from '@/domain/money';
 import { machineEarnings, type MachineEarnings } from '@/domain/machineEarnings';
 import { newReceiptToken, overrideCodeFor, parseReceiptCode, tokensMatch } from '@/domain/receiptCode';
 import { periodRange } from '@/domain/reports';
@@ -33,11 +25,13 @@ import {
 } from '@/machines/protocol';
 import type { MachineController, PulseSettings, StartResult } from '@/machines/MachineController';
 import {
+  dryerTopUps,
   machineCycles,
   machines,
   machineUnlocks,
   orderItems,
   orders,
+  type DryerTopUpRow,
   type MachineCycleRow,
   type MachineRow,
   type MachineUnlockRow,
@@ -50,6 +44,7 @@ import { UserFacingError, type Actor, type Db, type ServiceContext } from '@/db/
 import { checkOwnerPin } from './auth';
 import { addDefaultCycles, enabledCyclesOf, machineUsesCycles, requireCycle } from './cycles';
 import { getSetting, setSetting } from './settings';
+import { addDefaultTopUps, offeredTopUpWithMinutes, requireTopUp, saveTopUpEdits } from './topUps';
 
 /** A pending row younger than this still holds its allowance (the reply may be on its way). */
 const PENDING_HOLD_MS = 30 * 1000;
@@ -84,40 +79,10 @@ export function pulsesOf(machine: MachineRow): PulseSettings {
   return { count: machine.pulseCount, onMs: machine.pulseOnMs, offMs: machine.pulseOffMs };
 }
 
-type TopUpPulseFields = 'topUpPulseCount' | 'topUpPulses10' | 'topUpPulses15' | 'topUpPulses20';
-
-/** A top-up uses the dryer's own pulse length and gap, with the count set for that length. */
-export function topUpPulsesOf(
-  machine: Pick<MachineRow, TopUpPulseFields | 'pulseOnMs' | 'pulseOffMs'>,
-  minutes: TopUpMinutes,
-): PulseSettings {
-  return {
-    count: topUpPulseCountFor(machine, minutes),
-    onMs: machine.pulseOnMs,
-    offMs: machine.pulseOffMs,
-  };
+/** A top-up uses the dryer's own pulse length and gap, with the type's coin count. */
+export function topUpPulsesOf(machine: Pick<MachineRow, 'pulseOnMs' | 'pulseOffMs'>, topUp: DryerTopUpRow): PulseSettings {
+  return { count: topUp.pulses, onMs: machine.pulseOnMs, offMs: machine.pulseOffMs };
 }
-
-/** Problems with a dryer's top-up prices, or with the pulses each priced length would send. */
-function topUpProblem(
-  dryer: Pick<MachineRow, TopUpPulseFields | 'pulseOnMs' | 'pulseOffMs'>,
-  prices: TopUpPrices,
-): string | null {
-  for (const minutes of TOP_UP_CHOICES) {
-    const price = topUpPriceFor(prices, minutes);
-    if (!Number.isInteger(price) || price < 0 || price > MAX_TOP_UP_PRICE) {
-      return `The ${minutes}-minute top-up price must be from ${formatPeso(0)} to ${formatPeso(MAX_TOP_UP_PRICE)}.`;
-    }
-    if (price > 0) {
-      const problem = pulsesProblem(topUpPulsesOf(dryer, minutes));
-      if (problem) return `${minutes}-minute top-up: ${problem}`;
-    }
-  }
-  return null;
-}
-
-/** Top-ups cost at most this much, to catch a price typed in centavos by mistake. */
-const MAX_TOP_UP_PRICE = 100000;
 
 // ---------- Machine list ----------
 
@@ -130,15 +95,6 @@ export interface MachineInput {
   pulseOnMs: number;
   pulseOffMs: number;
   runMinutes: number;
-  /** Checked for dryers only; washers keep whatever is stored. */
-  topUpPulseCount: number;
-  topUpPulses10: number;
-  topUpPulses15: number;
-  topUpPulses20: number;
-  topUpPrice: number;
-  topUpPrice10: number;
-  topUpPrice15: number;
-  topUpPrice20: number;
 }
 
 export function listMachines(ctx: ServiceContext): MachineRow[] {
@@ -162,10 +118,6 @@ function checkMachine(db: Db, input: MachineInput, editingId: number | null): Ma
   if (!Number.isInteger(input.runMinutes) || input.runMinutes < min || input.runMinutes > max) {
     throw new UserFacingError(`Run time must be a whole number of minutes from ${min} to ${max}.`);
   }
-  if (input.type === 'DRYER') {
-    const priceProblem = topUpProblem(input, input);
-    if (priceProblem) throw new UserFacingError(priceProblem);
-  }
   const clash = db
     .select()
     .from(machines)
@@ -186,6 +138,7 @@ export function addMachine(ctx: ServiceContext, actor: Actor, input: MachineInpu
   return ctx.db.transaction((tx) => {
     const result = tx.insert(machines).values({ ...values, sortOrder }).returning().get();
     addDefaultCycles(tx, result);
+    addDefaultTopUps(tx, result);
     return result.id;
   });
 }
@@ -205,10 +158,8 @@ export interface OwnerMachineChanges {
   coins: number;
   /** The washer's cycles: whether each is offered, and its coins. */
   cycles: readonly { id: number; enabled: boolean; coins: number }[];
-  /** Dryers only; a price of 0 means that length is not offered. */
-  topUpPrices: TopUpPrices | null;
-  /** Dryers only: the coins each top-up length sends. */
-  topUpCoins: TopUpPulses | null;
+  /** The dryer's top-ups: whether each is offered, its coins and its price. Name and minutes stay. */
+  topUps: readonly { id: number; enabled: boolean; coins: number; price: number }[];
 }
 
 /** The owner's word for pulses is coins; the timing of each coin stays as the developer set it. */
@@ -255,29 +206,21 @@ export function saveOwnerMachineChanges(
         .where(eq(machineCycles.id, cycle.id))
         .run();
     }
-    let topUps = {};
-    if (changes.topUpPrices || changes.topUpCoins) {
+    if (changes.topUps.length > 0) {
       if (machine.type !== 'DRYER') throw new UserFacingError('Only dryers take top-ups.');
-      const coins = changes.topUpCoins ?? machine;
-      for (const minutes of TOP_UP_CHOICES) requireCoins(`${minutes}-minute top-up`, topUpPulseCountFor(coins, minutes));
-      const prices = changes.topUpPrices ?? machine;
-      const problem = topUpProblem({ ...machine, ...coins }, prices);
-      if (problem) throw new UserFacingError(problem);
-      topUps = {
-        topUpPrice: prices.topUpPrice,
-        topUpPrice10: prices.topUpPrice10,
-        topUpPrice15: prices.topUpPrice15,
-        topUpPrice20: prices.topUpPrice20,
-        topUpPulseCount: coins.topUpPulseCount,
-        topUpPulses10: coins.topUpPulses10,
-        topUpPulses15: coins.topUpPulses15,
-        topUpPulses20: coins.topUpPulses20,
-      };
+      const own = tx.select().from(dryerTopUps).where(eq(dryerTopUps.machineId, machineId)).all();
+      const edits = changes.topUps.map((change) => {
+        const topUp = own.find((row) => row.id === change.id);
+        if (!topUp) throw new UserFacingError(`That top-up is not on ${machine.name}.`);
+        requireCoins(topUp.name, change.coins);
+        return { ...topUp, enabled: change.enabled, pulses: change.coins, price: change.price };
+      });
+      saveTopUpEdits(tx, machineId, edits);
     }
     // A machine switched off cannot run the order waiting on it.
     const release = changes.enabled ? {} : { assignedOrderId: null, assignedAt: null, assignedByName: null };
     tx.update(machines)
-      .set({ enabled: changes.enabled, pulseCount: changes.coins, ...topUps, ...release })
+      .set({ enabled: changes.enabled, pulseCount: changes.coins, ...release })
       .where(eq(machines.id, machineId))
       .run();
   });
@@ -422,13 +365,22 @@ function washProgress(db: Db, now: number, orderId: string): { washedLoads: numb
  * The top-up paid for when the order was taken, if this dryer start is one of the loads it
  * covers: the first `prepaidTopUpLoads` dryer starts of the order get it.
  */
-function prepaidTopUpFor(db: Db, now: number, machine: MachineRow, order: OrderRow): TopUpMinutes | null {
-  return machine.type === 'DRYER' ? prepaidForNextDryer(db, now, order) : null;
+function prepaidTopUpFor(db: Db, now: number, machine: MachineRow, order: OrderRow): DryerTopUpRow | null {
+  if (machine.type !== 'DRYER') return null;
+  const minutes = prepaidForNextDryer(db, now, order);
+  if (minutes === null) return null;
+  const topUp = offeredTopUpWithMinutes(db, machine.id, minutes);
+  if (!topUp) {
+    throw new UserFacingError(
+      `${order.id} paid for a ${minutes}-minute top-up, which ${machine.name} does not offer. Run another dryer.`,
+    );
+  }
+  return topUp;
 }
 
-function prepaidForNextDryer(db: Db, now: number, order: OrderRow): TopUpMinutes | null {
+function prepaidForNextDryer(db: Db, now: number, order: OrderRow): number | null {
   const minutes = order.prepaidTopUpMinutes;
-  if (minutes === null || !isTopUpMinutes(minutes)) return null;
+  if (minutes === null) return null;
   const dryerStarts = countedStarts(db, now, order.id).filter((start) => start.type === 'DRYER').length;
   return dryerStarts < order.prepaidTopUpLoads ? minutes : null;
 }
@@ -660,7 +612,7 @@ export async function startMachine(
   controller: MachineController,
   actor: Actor,
   machineId: number,
-  extraTopUp: TopUpMinutes | null = null,
+  extraTopUpId: number | null = null,
 ): Promise<StartResult> {
   if (!isReady(controller)) return 'not-connected';
   const claimed = ctx.db.transaction((tx) => {
@@ -677,15 +629,14 @@ export async function startMachine(
     // A top-up paid with the order goes out with the start: its pulses follow the start's.
     const prepaid = prepaidTopUpFor(tx, ctx.now(), machine, order);
     // Otherwise staff may add one on the start screen; it is charged now, like a top-up while drying.
-    const added = prepaid === null && extraTopUp !== null && machine.type === 'DRYER' ? extraTopUp : null;
-    const addedPrice = added === null ? 0 : topUpPriceFor(machine, added);
-    if (added !== null && addedPrice <= 0) {
-      throw new UserFacingError(`A ${added}-minute top-up on ${machine.name} has no price. The owner sets it in Manage, Machines.`);
+    const added =
+      prepaid === null && extraTopUpId !== null && machine.type === 'DRYER' ? requireTopUp(tx, machine, extraTopUpId) : null;
+    if (added !== null && added.price <= 0) {
+      throw new UserFacingError(`The ${added.name} top-up on ${machine.name} has no price. The owner sets it in Manage, Machines.`);
     }
     const topUp = prepaid ?? added;
     const start = startPulsesFor(machine, cycle);
-    const pulses =
-      topUp === null ? start : { ...start, count: start.count + topUpPulsesOf(machine, topUp).count };
+    const pulses = topUp === null ? start : { ...start, count: start.count + topUp.pulses };
     const problem = pulsesProblem(pulses);
     if (problem) {
       throw new UserFacingError(`${machine.name} cannot send the start and the top-up together: ${problem}`);
@@ -693,7 +644,7 @@ export async function startMachine(
     const charge =
       added === null
         ? null
-        : chargeTopUp({ ...ctx, db: tx }, actor, machine, order.id, added, addedPrice);
+        : chargeTopUp({ ...ctx, db: tx }, actor, machine, order.id, added);
     const run = runFields(machine, machine.assignedOrderId, ctx.now(), cycle);
     tx.update(machines)
       .set({
@@ -701,7 +652,7 @@ export async function startMachine(
         assignedAt: null,
         assignedByName: null,
         ...run,
-        runEndsAt: run.runEndsAt + (topUp ?? 0) * 60000,
+        runEndsAt: run.runEndsAt + (topUp?.minutes ?? 0) * 60000,
       })
       .where(eq(machines.id, machineId))
       .run();
@@ -750,10 +701,13 @@ export async function startOrderOnMachine(
   machineId: number,
   receiptCode: string | null,
   pickedCycleId: number | null = null,
-  extraTopUp: TopUpMinutes | null = null,
+  extraTopUpId: number | null = null,
 ): Promise<StartResult> {
   if (getSetting(ctx.db, 'requireReceiptScan')) checkReceiptFor(ctx, receiptCode ?? '', orderId);
   const machine = requireMachine(ctx.db, machineId);
+  // Refuse a dryer that lacks the top-up the order paid for before it is assigned.
+  const order = ctx.db.select().from(orders).where(eq(orders.id, orderId)).get();
+  if (order) prepaidTopUpFor(ctx.db, ctx.now(), machine, order);
   const usesCycles = machineUsesCycles(ctx.db, machine);
   if (usesCycles && pickedCycleId === null) throw new UserFacingError(`Pick a cycle for ${machine.name}.`);
   const cycleId = usesCycles && pickedCycleId !== null ? requireCycle(ctx.db, machine, pickedCycleId).id : null;
@@ -776,12 +730,12 @@ export async function startOrderOnMachine(
       assignOrder({ ...ctx, db: tx }, actor, orderId, machineId, cycleId);
     });
   }
-  return startMachine(ctx, controller, actor, machineId, extraTopUp);
+  return startMachine(ctx, controller, actor, machineId, extraTopUpId);
 }
 
 /**
- * Adds 5, 10, 15 or 20 minutes to a running dryer for the order it is drying, sends the matching
- * top-up pulses and puts that length's price on the order's bill. The charge comes off again if
+ * Adds one of the dryer's top-ups to it while it dries an order: its minutes go on the countdown,
+ * its coins are sent and its price goes on the order's bill. The charge comes off again if
  * nothing was sent.
  */
 export async function topUpDryer(
@@ -789,7 +743,7 @@ export async function topUpDryer(
   controller: MachineController,
   actor: Actor,
   machineId: number,
-  minutes: TopUpMinutes,
+  topUpId: number,
 ): Promise<StartResult> {
   if (!isReady(controller)) return 'not-connected';
   const claimed = ctx.db.transaction((tx) => {
@@ -798,24 +752,25 @@ export async function topUpDryer(
       machine.runOrderId === null
         ? undefined
         : tx.select().from(orders).where(eq(orders.id, machine.runOrderId)).get();
-    const price = topUpPriceFor(machine, minutes);
-    const decision = decideTopUp(machine, policyOrder(order), price, ctx.now());
+    if (machine.type !== 'DRYER') throw new UserFacingError('Only dryers take top-ups.');
+    const topUp = requireTopUp(tx, machine, topUpId);
+    const decision = decideTopUp(machine, policyOrder(order), topUp.price, ctx.now());
     if (!decision.allowed || !order) {
       throw new UserFacingError(decision.allowed ? 'There is no order to top up.' : decision.message);
     }
-    const charge = chargeTopUp({ ...ctx, db: tx }, actor, machine, order.id, minutes, price);
+    const charge = chargeTopUp({ ...ctx, db: tx }, actor, machine, order.id, topUp);
     tx.update(machines)
-      .set({ runEndsAt: endAfterTopUp(machine, ctx.now(), minutes) })
+      .set({ runEndsAt: endAfterTopUp(machine, ctx.now(), topUp.minutes) })
       .where(eq(machines.id, machineId))
       .run();
-    return { machine, charge };
+    return { machine, charge, topUp };
   });
   const result = await sendAndRecord(
     ctx,
     controller,
     claimed.charge.logId,
     claimed.machine,
-    topUpPulsesOf(claimed.machine, minutes),
+    topUpPulsesOf(claimed.machine, claimed.topUp),
   );
   if (NOTHING_SENT.includes(result)) {
     ctx.db.transaction((tx) => {
@@ -839,15 +794,15 @@ function chargeTopUp(
   actor: Actor,
   machine: MachineRow,
   orderId: string,
-  minutes: TopUpMinutes,
-  price: number,
+  topUp: DryerTopUpRow,
 ): TopUpCharge {
+  const price = topUp.price;
   const item = ctx.db
     .insert(orderItems)
     .values({
       orderId,
       inventoryItemId: null,
-      name: `Dryer top-up ${minutes} min (${machine.name})`,
+      name: `Dryer top-up ${topUp.name} (${machine.name})`,
       quantity: 1,
       unitPrice: price,
     })
@@ -875,67 +830,9 @@ function undoTopUpCharge(db: Db, charge: TopUpCharge): void {
 }
 
 /** For the start screen: the top-up paid ahead for the order's next dryer load, if any. */
-export function prepaidTopUpForNextDryer(ctx: ServiceContext, orderId: string): TopUpMinutes | null {
+export function prepaidTopUpForNextDryer(ctx: ServiceContext, orderId: string): number | null {
   const order = ctx.db.select().from(orders).where(eq(orders.id, orderId)).get();
   return order ? prepaidForNextDryer(ctx.db, ctx.now(), order) : null;
-}
-
-/**
- * Owner only: gives these dryers the same top-up prices. Washers in the list are skipped, and each
- * dryer's own top-up pulses must still fit the pulse limits for every length it will offer.
- */
-export function applyTopUpPricesToDryers(
-  ctx: ServiceContext,
-  actor: Actor,
-  prices: TopUpPrices,
-  machineIds: readonly number[],
-): void {
-  requireDeveloper(actor);
-  setDryerTopUpPrices(ctx, prices, machineIds);
-}
-
-function setDryerTopUpPrices(ctx: ServiceContext, prices: TopUpPrices, machineIds: readonly number[]): void {
-  if (machineIds.length === 0) return;
-  ctx.db.transaction((tx) => {
-    const dryers = tx
-      .select()
-      .from(machines)
-      .where(and(inArray(machines.id, [...machineIds]), eq(machines.type, 'DRYER')))
-      .all();
-    for (const dryer of dryers) {
-      const problem = topUpProblem(dryer, prices);
-      if (problem) throw new UserFacingError(`${dryer.name}: ${problem}`);
-    }
-    if (dryers.length === 0) return;
-    tx.update(machines)
-      .set({
-        topUpPrice: prices.topUpPrice,
-        topUpPrice10: prices.topUpPrice10,
-        topUpPrice15: prices.topUpPrice15,
-        topUpPrice20: prices.topUpPrice20,
-      })
-      .where(inArray(machines.id, dryers.map((d) => d.id)))
-      .run();
-  });
-}
-
-/**
- * Owner only: the shop's top-up prices for new orders, copied to every dryer in the same step so
- * each dryer's own prices match. A dryer can still be given different prices afterwards.
- */
-export function saveShopTopUpPrices(ctx: ServiceContext, actor: Actor, prices: TopUpPrices): void {
-  if (!can.changeOwnerSettings(actor.role)) throw new UserFacingError('Only the owner can change these prices.');
-  ctx.db.transaction((tx) => {
-    const txCtx = { ...ctx, db: tx };
-    const dryerIds = tx
-      .select({ id: machines.id })
-      .from(machines)
-      .where(eq(machines.type, 'DRYER'))
-      .all()
-      .map((row) => row.id);
-    setDryerTopUpPrices(txCtx, prices, dryerIds);
-    setSetting(tx, 'orderTopUpPrices', prices);
-  });
 }
 
 /** Ends the timer early, for a machine that finished before its set run time. */
@@ -1063,14 +960,17 @@ export async function testTopUp(
   controller: MachineController,
   actor: Actor,
   machineId: number,
-  minutes: TopUpMinutes,
+  topUpId: number,
 ): Promise<StartResult> {
   requireDeveloper(actor);
   const machine = requireMachine(ctx.db, machineId);
   if (machine.type !== 'DRYER') throw new UserFacingError('Only dryers take top-ups.');
-  const pulses = topUpPulsesOf(machine, minutes);
+  // Tests may try a top-up that is not offered yet.
+  const topUp = ctx.db.select().from(dryerTopUps).where(eq(dryerTopUps.id, topUpId)).get();
+  if (!topUp || topUp.machineId !== machine.id) throw new UserFacingError(`That top-up is not on ${machine.name}.`);
+  const pulses = topUpPulsesOf(machine, topUp);
   const problem = pulsesProblem(pulses);
-  if (problem) throw new UserFacingError(`${minutes}-minute top-up: ${problem}`);
+  if (problem) throw new UserFacingError(`${topUp.name} top-up: ${problem}`);
   const ready = isReady(controller);
   const logId = writeLog(ctx, {
     machine,
@@ -1078,7 +978,7 @@ export async function testTopUp(
     kind: 'TEST',
     orderId: null,
     result: ready ? 'PENDING' : 'NOT_CONNECTED',
-    overrideNote: `${minutes}-minute top-up`,
+    overrideNote: `${topUp.name} top-up (${topUp.minutes} min)`,
   });
   if (!ready) return 'not-connected';
   return sendAndRecord(ctx, controller, logId, machine, pulses);

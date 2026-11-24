@@ -9,6 +9,7 @@ import {
   customers,
   expenses,
   inventoryItems,
+  dryerTopUps,
   machineCycles,
   machines,
   machineUnlocks,
@@ -29,7 +30,7 @@ import { DEVICE_ONLY_SETTINGS } from './settings';
 
 export const BACKUP_FORMAT = 'laundry-pos-backup';
 /** 2: machine run timers, dryer top-ups and the TOP_UP log kind. */
-export const BACKUP_VERSION = 10;
+export const BACKUP_VERSION = 11;
 
 function readAll(db: Db) {
   return {
@@ -45,6 +46,7 @@ function readAll(db: Db) {
     sequences: db.select().from(sequences).all(),
     machines: db.select().from(machines).all(),
     machineCycles: db.select().from(machineCycles).all(),
+    dryerTopUps: db.select().from(dryerTopUps).all(),
     machineUnlocks: db.select().from(machineUnlocks).all(),
   };
 }
@@ -208,6 +210,16 @@ const tableSchemas = {
     topUpPulses15: machine.topUpPulses15 ?? machine.topUpPulseCount * 3,
     topUpPulses20: machine.topUpPulses20 ?? machine.topUpPulseCount * 4,
   })),
+  dryerTopUps: z.object({
+    id: int,
+    machineId: int,
+    name: text,
+    minutes: int,
+    pulses: int,
+    price: int,
+    enabled: z.boolean(),
+    sortOrder: int,
+  }),
   machineCycles: z.object({
     id: int,
     machineId: int,
@@ -254,6 +266,8 @@ const backupSchema = z.object({
     machines: z.array(tableSchemas.machines),
     // Backups before version 9 had the four fixed cycles on each machine row instead.
     machineCycles: z.array(tableSchemas.machineCycles).optional(),
+    // Backups before version 11 had four fixed top-up lengths on each dryer row instead.
+    dryerTopUps: z.array(tableSchemas.dryerTopUps).optional(),
     machineUnlocks: z.array(tableSchemas.machineUnlocks),
   }),
 });
@@ -265,6 +279,59 @@ export interface RestoreSummary {
 }
 
 type BackupMachine = z.infer<typeof tableSchemas.machines>;
+
+/** The four fixed top-up lengths of a dryer in a backup from before version 11, as top-up rows. */
+function topUpsFromOldBackup(rows: readonly BackupMachine[]) {
+  return rows
+    .filter((machine) => machine.type === 'DRYER')
+    .flatMap((machine) =>
+      [
+        [5, machine.topUpPulseCount, machine.topUpPrice],
+        [10, machine.topUpPulses10, machine.topUpPrice10],
+        [15, machine.topUpPulses15, machine.topUpPrice15],
+        [20, machine.topUpPulses20, machine.topUpPrice20],
+      ].map(([minutes, pulses, price], sortOrder) => ({
+        machineId: machine.id,
+        name: `${minutes} min`,
+        minutes,
+        pulses,
+        price,
+        enabled: price > 0,
+        sortOrder,
+      })),
+    );
+}
+
+const LEGACY_SHOP_PRICES = z.object({
+  topUpPrice: int,
+  topUpPrice10: int,
+  topUpPrice15: int,
+  topUpPrice20: int,
+});
+
+/**
+ * Backups before version 11 kept the new-order top-up prices as four fixed lengths
+ * (`orderTopUpPrices`); restore turns them into the price list by minutes (`shopTopUps`).
+ */
+function withShopTopUps(rows: readonly { key: string; value: string }[]) {
+  if (rows.some((row) => row.key === 'shopTopUps')) return rows;
+  const legacy = rows.find((row) => row.key === 'orderTopUpPrices');
+  if (!legacy) return rows;
+  let parsed: z.infer<typeof LEGACY_SHOP_PRICES>;
+  try {
+    parsed = LEGACY_SHOP_PRICES.parse(JSON.parse(legacy.value));
+  } catch {
+    // An unreadable old price list is left out; the owner sets the prices again.
+    return rows;
+  }
+  const value = JSON.stringify([
+    { minutes: 5, price: parsed.topUpPrice },
+    { minutes: 10, price: parsed.topUpPrice10 },
+    { minutes: 15, price: parsed.topUpPrice15 },
+    { minutes: 20, price: parsed.topUpPrice20 },
+  ]);
+  return [...rows, { key: 'shopTopUps', value }];
+}
 
 /** The four fixed cycles of a washer in a backup from before version 9, as cycle rows. */
 function cyclesFromOldBackup(rows: readonly BackupMachine[]) {
@@ -292,6 +359,7 @@ export function restoreBackup(ctx: ServiceContext, actor: Actor, parsed: unknown
   ctx.db.transaction((tx) => {
     tx.delete(machineUnlocks).run();
     tx.delete(machineCycles).run();
+    tx.delete(dryerTopUps).run();
     // Machines can point at an order they are assigned to, so they go before orders.
     tx.delete(machines).run();
     tx.delete(payments).run();
@@ -315,11 +383,14 @@ export function restoreBackup(ctx: ServiceContext, actor: Actor, parsed: unknown
     for (const values of tables.orderItems) tx.insert(orderItems).values(values).run();
     for (const values of tables.payments) tx.insert(payments).values(values).run();
     for (const values of tables.expenses) tx.insert(expenses).values(values).run();
-    for (const values of tables.settings) tx.insert(settings).values(values).run();
+    for (const values of withShopTopUps(tables.settings)) tx.insert(settings).values(values).run();
     for (const values of tables.sequences) tx.insert(sequences).values(values).run();
     for (const values of tables.machines) tx.insert(machines).values(values).run();
     for (const values of tables.machineCycles ?? cyclesFromOldBackup(tables.machines)) {
       tx.insert(machineCycles).values(values).run();
+    }
+    for (const values of tables.dryerTopUps ?? topUpsFromOldBackup(tables.machines)) {
+      tx.insert(dryerTopUps).values(values).run();
     }
     for (const values of tables.machineUnlocks) tx.insert(machineUnlocks).values(values).run();
   });

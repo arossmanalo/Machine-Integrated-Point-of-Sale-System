@@ -10,7 +10,6 @@ import {
   type PaymentChannel,
   type PaymentMethod,
 } from '@/domain/payments';
-import { isTopUpMinutes, topUpPriceFor, type TopUpMinutes } from '@/domain/machinePolicy';
 import { can } from '@/domain/permissions';
 import {
   computeOrderTotal,
@@ -41,6 +40,7 @@ import { UserFacingError, type Actor, type Db, type ServiceContext } from '@/db/
 import { createCustomer } from './customers';
 import { takeNextId } from './sequences';
 import { getSetting } from './settings';
+import { orderTopUpChoices } from './topUps';
 
 const MAX_LOADS = 50;
 const FUTURE_TOLERANCE_MS = 60 * 1000;
@@ -79,7 +79,7 @@ export interface NewOrderInput {
 
 /** Extra drying time for some of the order's loads, chosen when the order is taken. */
 export interface PrepaidTopUpSelection {
-  minutes: TopUpMinutes;
+  minutes: number;
   loads: number;
 }
 
@@ -93,13 +93,14 @@ export interface OrderQuote extends OrderTotal {
 
 function resolveTopUp(db: Db, loads: number, topUp: PrepaidTopUpSelection | null): OrderQuote['topUp'] {
   if (topUp === null || topUp.loads === 0) return null;
-  if (!isTopUpMinutes(topUp.minutes)) throw new UserFacingError('Pick a top-up of 5, 10, 15 or 20 minutes.');
   if (!Number.isInteger(topUp.loads) || topUp.loads < 1 || topUp.loads > loads) {
     throw new UserFacingError(`The top-up can cover 1 to ${loads} load${loads === 1 ? '' : 's'}.`);
   }
-  const unitPrice = topUpPriceFor(getSetting(db, 'orderTopUpPrices'), topUp.minutes);
+  const unitPrice = orderTopUpChoices(db).find((choice) => choice.minutes === topUp.minutes)?.price ?? 0;
   if (unitPrice <= 0) {
-    throw new UserFacingError(`A ${topUp.minutes}-minute top-up has no price. Set it in Manage, Shop settings.`);
+    throw new UserFacingError(
+      `A ${topUp.minutes}-minute top-up is not offered on new orders. Set its price in Manage, Shop settings.`,
+    );
   }
   return { ...topUp, unitPrice, total: unitPrice * topUp.loads };
 }

@@ -26,51 +26,24 @@ export interface PolicyMachine {
   runEndsAt: number | null;
 }
 
-/** The dryer top-ups on offer. Each dryer has its own price for each; price 0 means not offered. */
-export const TOP_UP_CHOICES = [5, 10, 15, 20] as const;
-export type TopUpMinutes = (typeof TOP_UP_CHOICES)[number];
+/**
+ * Dryer top-ups are types the developer sets up on each dryer (name, minutes, coins, price).
+ * Every new dryer starts with these lengths; the shop's price list for top-ups taken with a new
+ * order is kept by minutes, because the dryer is not known yet.
+ */
+export const DEFAULT_TOP_UP_MINUTES = [5, 10, 15, 20] as const;
 
-/** A dryer's top-up prices in centavos. `topUpPrice` is the 5-minute price. */
-export interface TopUpPrices {
-  topUpPrice: number;
-  topUpPrice10: number;
-  topUpPrice15: number;
-  topUpPrice20: number;
+/** Top-ups cost at most this much, to catch a price typed in centavos by mistake. */
+export const MAX_TOP_UP_PRICE = 100000;
+
+/** One price on the shop's list for top-ups taken with a new order. */
+export interface ShopTopUpPrice {
+  minutes: number;
+  price: number;
 }
 
-export const NO_TOP_UP_PRICES: TopUpPrices = { topUpPrice: 0, topUpPrice10: 0, topUpPrice15: 0, topUpPrice20: 0 };
-
-export function topUpPriceFor(prices: TopUpPrices, minutes: TopUpMinutes): number {
-  if (minutes === 5) return prices.topUpPrice;
-  if (minutes === 10) return prices.topUpPrice10;
-  if (minutes === 15) return prices.topUpPrice15;
-  return prices.topUpPrice20;
-}
-
-/** The top-ups a dryer offers, shortest first. */
-export function topUpOptions(prices: TopUpPrices): { minutes: TopUpMinutes; price: number }[] {
-  return TOP_UP_CHOICES.map((minutes) => ({ minutes, price: topUpPriceFor(prices, minutes) })).filter(
-    (option) => option.price > 0,
-  );
-}
-
-/** A dryer's pulse count for each top-up length. `topUpPulseCount` is the 5-minute one. */
-export interface TopUpPulses {
-  topUpPulseCount: number;
-  topUpPulses10: number;
-  topUpPulses15: number;
-  topUpPulses20: number;
-}
-
-export function topUpPulseCountFor(pulses: TopUpPulses, minutes: TopUpMinutes): number {
-  if (minutes === 5) return pulses.topUpPulseCount;
-  if (minutes === 10) return pulses.topUpPulses10;
-  if (minutes === 15) return pulses.topUpPulses15;
-  return pulses.topUpPulses20;
-}
-
-export function isTopUpMinutes(value: number): value is TopUpMinutes {
-  return TOP_UP_CHOICES.some((choice) => choice === value);
+export function shopPriceFor(list: readonly ShopTopUpPrice[], minutes: number): number {
+  return list.find((entry) => entry.minutes === minutes)?.price ?? 0;
 }
 
 export const RUN_MINUTES_LIMITS = { min: 1, max: 240 } as const;
@@ -85,7 +58,7 @@ export function minutesLeft(machine: Pick<PolicyMachine, 'runEndsAt'>, now: numb
 }
 
 /** When a run ends after a top-up: the extra minutes go on the end of the running dryer. */
-export function endAfterTopUp(machine: Pick<PolicyMachine, 'runEndsAt'>, now: number, minutes: TopUpMinutes): number {
+export function endAfterTopUp(machine: Pick<PolicyMachine, 'runEndsAt'>, now: number, minutes: number): number {
   return Math.max(machine.runEndsAt ?? now, now) + minutes * 60000;
 }
 

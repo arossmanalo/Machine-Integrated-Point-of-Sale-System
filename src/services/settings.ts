@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { PIN_UNLOCKED } from '@/domain/secrets';
-import { NO_TOP_UP_PRICES } from '@/domain/machinePolicy';
+import { DEFAULT_TOP_UP_MINUTES } from '@/domain/machinePolicy';
 import { DEFAULT_DRY_ONLY_PRICE_PER_LOAD, DEFAULT_PRICE_PER_LOAD } from '@/domain/pricing';
 import { settings } from '@/db/schema';
 import type { Db } from '@/db/types';
@@ -33,13 +33,11 @@ const settingSchemas = {
   gcashQrFile: z.string().nullable(),
   /** Staff pick Delicates, Light, Medium or Heavy before a machine runs; each has its own pulses. */
   multiCycle: z.boolean(),
-  /** Prices for a dryer top-up added when the order is taken, before the dryer is known. */
-  orderTopUpPrices: z.object({
-    topUpPrice: z.number().int().nonnegative(),
-    topUpPrice10: z.number().int().nonnegative(),
-    topUpPrice15: z.number().int().nonnegative(),
-    topUpPrice20: z.number().int().nonnegative(),
-  }),
+  /**
+   * Prices for a dryer top-up taken with a new order, by minutes, before the dryer is known.
+   * Price 0 means not offered on new orders. Replaced `orderTopUpPrices` in migration 0012.
+   */
+  shopTopUps: z.array(z.object({ minutes: z.number().int().positive(), price: z.number().int().nonnegative() })),
 };
 
 export type SettingKey = keyof typeof settingSchemas;
@@ -63,7 +61,7 @@ export const DEFAULT_SETTINGS: Settings = {
   requireReceiptScan: true,
   employeesRecordExpenses: false,
   gcashQrFile: null,
-  orderTopUpPrices: NO_TOP_UP_PRICES,
+  shopTopUps: DEFAULT_TOP_UP_MINUTES.map((minutes) => ({ minutes, price: 0 })),
   multiCycle: false,
 };
 

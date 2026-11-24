@@ -3,18 +3,13 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
-import type { MachineRow } from '@/db/schema';
+import type { DryerTopUpRow, MachineRow } from '@/db/schema';
 import type { ServiceContext } from '@/db/types';
 import { formatShopTime } from '@/domain/dates';
 import {
   isRunning,
-  isTopUpMinutes,
   MACHINE_TYPE_LABELS,
-  TOP_UP_CHOICES,
-  topUpOptions,
-  topUpPulseCountFor,
   type MachineType,
-  type TopUpMinutes,
 } from '@/domain/machinePolicy';
 import { formatPeso } from '@/domain/money';
 import { can } from '@/domain/permissions';
@@ -31,6 +26,7 @@ import {
   unassignMachine,
 } from '@/services/machines';
 import { createTestOrder, listOrderSummaries, voidOrder } from '@/services/orders';
+import { listTopUps } from '@/services/topUps';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData, useNow } from '@/state/hooks';
 import { useToast } from '@/state/toast';
@@ -78,6 +74,7 @@ export default function Machines() {
   // so it is off again for the next login on this tablet.
   const [testingBy, setTestingBy] = useState<string | null>(null);
   const testing = developer && testingBy === actor.id;
+  const allTopUps = useData(listTopUps);
   const data = useData((c) => {
     const machines = listMachines(c);
     const summaries = listOrderSummaries(c);
@@ -131,7 +128,7 @@ export default function Machines() {
     machine.type === 'DRYER' &&
     machine.enabled &&
     isRunning(machine, now) &&
-    topUpOptions(machine).length > 0 &&
+    offeredTopUps(allTopUps, machine.id).length > 0 &&
     machine.runOrderId !== null &&
     data.openOrders.has(machine.runOrderId);
 
@@ -359,6 +356,7 @@ function TestMachineDialog({
   const action = useAction();
   const report = useReportStart();
   const cycles = useCyclePicker()(machine);
+  const topUps = useData(listTopUps).filter((topUp) => topUp.machineId === machine.id);
   const plural = (count: number) => `${count} pulse${count === 1 ? '' : 's'}`;
   const options: { value: string; label: string; send: (c: ServiceContext) => Promise<StartResult> }[] =
     machine.type === 'DRYER'
@@ -368,10 +366,10 @@ function TestMachineDialog({
             label: `Start · ${plural(machine.pulseCount)}`,
             send: (c) => testStart(c, controller, actor, machine.id),
           },
-          ...TOP_UP_CHOICES.map((minutes) => ({
-            value: String(minutes),
-            label: `Top-up ${minutes} min · ${plural(topUpPulseCountFor(machine, minutes))}`,
-            send: (c: ServiceContext) => testTopUp(c, controller, actor, machine.id, minutes),
+          ...topUps.map((topUp) => ({
+            value: `top-up-${topUp.id}`,
+            label: `Top-up ${topUp.name} · ${topUp.minutes} min · ${plural(topUp.pulses)}`,
+            send: (c: ServiceContext) => testTopUp(c, controller, actor, machine.id, topUp.id),
           })),
         ]
       : cycles.length > 0
@@ -428,17 +426,24 @@ function TestMachineDialog({
   );
 }
 
+/** The top-ups staff may add on this dryer: offered and priced. */
+function offeredTopUps(topUps: readonly DryerTopUpRow[], machineId: number): DryerTopUpRow[] {
+  return topUps.filter((topUp) => topUp.machineId === machineId && topUp.enabled && topUp.price > 0);
+}
+
 function TopUpDialog({ machine, customerName, onClose }: { machine: MachineRow; customerName: string; onClose: () => void }) {
   const actor = useActor();
   const { controller } = useApp();
   const action = useAction();
   const report = useReportStart();
-  const options = topUpOptions(machine);
-  const [minutes, setMinutes] = useState<TopUpMinutes>(options[0]?.minutes ?? 5);
-  const price = options.find((option) => option.minutes === minutes)?.price ?? 0;
+  const options = offeredTopUps(useData(listTopUps), machine.id);
+  const [topUpId, setTopUpId] = useState<number | null>(options[0]?.id ?? null);
+  const chosen = options.find((option) => option.id === topUpId) ?? null;
+  const price = chosen?.price ?? 0;
 
   async function topUp() {
-    const result = await action.run((c) => topUpDryer(c, controller, actor, machine.id, minutes));
+    if (!chosen) return;
+    const result = await action.run((c) => topUpDryer(c, controller, actor, machine.id, chosen.id));
     if (!result.ok) return;
     report(result.value, `${machine.name} top-up`);
     if (result.value === 'acked' || result.value === 'timeout') onClose();
@@ -453,7 +458,7 @@ function TopUpDialog({ machine, customerName, onClose }: { machine: MachineRow; 
         <>
           <Button label="Cancel" kind="secondary" onPress={onClose} />
           <Button
-            label={`Add ${minutes} min · ${formatPeso(price)}`}
+            label={chosen ? `Add ${chosen.minutes} min · ${formatPeso(price)}` : 'Add'}
             icon="timer-plus-outline"
             onPress={() => void topUp()}
             busy={action.busy}
@@ -464,21 +469,20 @@ function TopUpDialog({ machine, customerName, onClose }: { machine: MachineRow; 
     >
       <Text>{`${machine.runOrderId ?? ''} · ${customerName}`}</Text>
       <Choice
-        label="Extra drying time"
-        value={String(minutes)}
-        onChange={(value) => {
-          const chosen = Number(value);
-          if (isTopUpMinutes(chosen)) setMinutes(chosen);
-        }}
+        label="Top-up"
+        value={topUpId === null ? '' : String(topUpId)}
+        onChange={(value) => setTopUpId(Number(value))}
         options={options.map((option) => ({
-          value: String(option.minutes),
-          label: `${option.minutes} min · ${formatPeso(option.price)}`,
+          value: String(option.id),
+          label: `${option.name} · ${option.minutes} min · ${formatPeso(option.price)}`,
         }))}
       />
-      <Text tone="muted">
-        {`Adds ${minutes} minutes to the countdown and ${formatPeso(price)} to this order's bill. ` +
-          'The charge comes off again if the top-up does not reach the dryer.'}
-      </Text>
+      {chosen && (
+        <Text tone="muted">
+          {`Adds ${chosen.minutes} minutes to the countdown and ${formatPeso(price)} to this order's bill. ` +
+            'The charge comes off again if the top-up does not reach the dryer.'}
+        </Text>
+      )}
       {action.error && <Notice tone="danger">{action.error}</Notice>}
     </Dialog>
   );

@@ -1,28 +1,20 @@
 import { useState } from 'react';
-import { StyleSheet, View } from 'react-native';
 
-import type { MachineCycleRow, MachineRow } from '@/db/schema';
+import type { DryerTopUpRow, MachineCycleRow, MachineRow } from '@/db/schema';
 import { can } from '@/domain/permissions';
 import {
   MACHINE_TYPE_LABELS,
   MACHINE_TYPES,
   RUN_MINUTES_LIMITS,
-  TOP_UP_CHOICES,
-  topUpOptions,
-  topUpPulseCountFor,
   type MachineType,
-  type TopUpMinutes,
-  type TopUpPrices,
-  type TopUpPulses,
 } from '@/domain/machinePolicy';
-import { centavosToInput, formatPeso, parsePesoInput } from '@/domain/money';
+import { formatPeso } from '@/domain/money';
 import { STATUS_LABELS } from '@/machines/MachineController';
 import { channelTerminal, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress, pulsesProblem } from '@/machines/protocol';
 import { changeOwnerPin } from '@/services/auth';
 import {
   addMachine,
   applyPulsesToMachines,
-  applyTopUpPricesToDryers,
   listMachines,
   RESULT_MESSAGES,
   saveLockController,
@@ -34,6 +26,7 @@ import {
 } from '@/services/machines';
 import { listCycles, updateCycles } from '@/services/cycles';
 import { getSetting } from '@/services/settings';
+import { listTopUps, updateTopUps } from '@/services/topUps';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData } from '@/state/hooks';
 import { useToast } from '@/state/toast';
@@ -43,35 +36,44 @@ import { EmptyState, ListRow, Notice, Panel, Row, Screen, Section } from '@/ui/l
 import { AddCycleDialog, CycleTable, draftsProblem, toDraft, toEdits, type CycleDraft } from '@/ui/machines/CycleSettings';
 import { useCyclePicker } from '@/ui/machines/MachineDialogs';
 import { MachineOverview } from '@/ui/machines/MachineOverview';
+import {
+  AddTopUpDialog,
+  TopUpTable,
+  topUpDraftsProblem,
+  toTopUpDraft,
+  toTopUpEdits,
+  type TopUpDraft,
+} from '@/ui/machines/TopUpSettings';
 import { ManageScreen } from '@/ui/ManagerGate';
 import { Text } from '@/ui/Text';
 import { TextField } from '@/ui/TextField';
-import { space } from '@/ui/theme';
 
 function pulseSummary(machine: MachineRow): string {
   return `${machine.pulseCount} × ${machine.pulseOnMs} ms on, ${machine.pulseOffMs} ms off`;
 }
 
-function topUpSummary(prices: TopUpPrices): string {
-  const options = topUpOptions(prices);
-  return options.length === 0
+function topUpSummary(topUps: readonly DryerTopUpRow[]): string {
+  const offered = topUps.filter((topUp) => topUp.enabled);
+  return offered.length === 0
     ? 'no top-ups'
-    : `top-ups ${options.map((o) => `${o.minutes} min ${formatPeso(o.price)}`).join(', ')}`;
+    : `top-ups ${offered.map((t) => `${t.name} ${t.minutes} min ${t.pulses}× ${formatPeso(t.price)}`).join(', ')}`;
 }
 
-/** `cycles`: the washer's cycles that are switched on, when Multi-cycle is on; empty otherwise. */
-function machineSummary(machine: MachineRow, cycles: readonly MachineCycleRow[]): string {
-  const topUp = machine.type === 'DRYER' ? ` · ${topUpSummary(machine)}` : '';
+/**
+ * `cycles`: the washer's cycles that are switched on, when Multi-cycle is on; empty otherwise.
+ * `topUps`: the dryer's top-ups.
+ */
+function machineSummary(
+  machine: MachineRow,
+  cycles: readonly MachineCycleRow[],
+  topUps: readonly DryerTopUpRow[],
+): string {
+  const topUp = machine.type === 'DRYER' ? ` · ${topUpSummary(topUps)}` : '';
   if (cycles.length > 0) {
     const list = cycles.map((cycle) => `${cycle.name} ${cycle.pulses}× ${cycle.minutes} min`).join(', ');
     return `${list} · ${machine.pulseOnMs} ms on, ${machine.pulseOffMs} ms off${topUp}`;
   }
   return `${machine.runMinutes} min run · ${pulseSummary(machine)}${topUp}`;
-}
-
-/** Blank means 0, which switches that top-up length off. */
-function priceInput(text: string): number | null {
-  return text.trim() === '' ? 0 : parsePesoInput(text);
 }
 
 export default function MachineSettings() {
@@ -102,6 +104,8 @@ function MachineSetup() {
   const receiptScan = useData((c) => getSetting(c.db, 'requireReceiptScan'));
   const multiCycle = useData((c) => getSetting(c.db, 'multiCycle'));
   const cyclesFor = useCyclePicker();
+  const allTopUps = useData(listTopUps);
+  const topUpsFor = (machine: MachineRow) => allTopUps.filter((topUp) => topUp.machineId === machine.id);
   const saved = useData((c) => ({
     address: getSetting(c.db, 'lockControllerAddress'),
     key: getSetting(c.db, 'lockControllerKey'),
@@ -210,7 +214,7 @@ function MachineSetup() {
                 title={machine.name}
                 subtitle={`${MACHINE_TYPE_LABELS[machine.type]} · channel ${machine.hardwareChannel} (${
                   channelTerminal(machine.hardwareChannel) ?? 'not on the board'
-                }) · ${machineSummary(machine, cyclesFor(machine))}`}
+                }) · ${machineSummary(machine, cyclesFor(machine), topUpsFor(machine))}`}
                 right={
                   <Row>
                     {!machine.enabled && <Badge label="Off" tone="warning" />}
@@ -274,18 +278,15 @@ function MachineDialog({
   // With every cycle unticked the washer starts with its own pulse count and run time.
   const usesOwnStart = !cyclesOn || !drafts.some((draft) => draft.enabled);
   const [addingCycle, setAddingCycle] = useState(false);
-  const [pulseTexts, setPulseTexts] = useState<Record<TopUpMinutes, string>>(() => ({
-    5: String(machine?.topUpPulseCount ?? 1),
-    10: String(machine?.topUpPulses10 ?? 2),
-    15: String(machine?.topUpPulses15 ?? 3),
-    20: String(machine?.topUpPulses20 ?? 4),
-  }));
-  const [priceTexts, setPriceTexts] = useState<Record<TopUpMinutes, string>>(() => ({
-    5: centavosToInput(machine?.topUpPrice ?? 0),
-    10: centavosToInput(machine?.topUpPrice10 ?? 0),
-    15: centavosToInput(machine?.topUpPrice15 ?? 0),
-    20: centavosToInput(machine?.topUpPrice20 ?? 0),
-  }));
+  // Top-ups are set on a saved dryer: a new one gets 5, 10, 15 and 20 minutes when it is added.
+  const topUpsOn = type === 'DRYER' && machine !== null && machine.type === 'DRYER';
+  const storedTopUps = useData(
+    (c) => (machine ? listTopUps(c).filter((topUp) => topUp.machineId === machine.id) : []),
+    [machine?.id],
+  );
+  const [topUpEdits, setTopUpEdits] = useState<Record<number, TopUpDraft>>({});
+  const topUpDrafts = storedTopUps.map((topUp) => topUpEdits[topUp.id] ?? toTopUpDraft(topUp));
+  const [addingTopUp, setAddingTopUp] = useState(false);
   const pulses = { count: Number(countText), onMs: Number(onText), offMs: Number(offText) };
   const pulseError = pulsesProblem(pulses);
   const runMinutes = Number(runText);
@@ -293,61 +294,18 @@ function MachineDialog({
     Number.isInteger(runMinutes) && runMinutes >= RUN_MINUTES_LIMITS.min && runMinutes <= RUN_MINUTES_LIMITS.max
       ? null
       : `Enter ${RUN_MINUTES_LIMITS.min} to ${RUN_MINUTES_LIMITS.max} minutes.`;
-  const dryer = type === 'DRYER';
-  const parsedPrices = TOP_UP_CHOICES.map((minutes) => priceInput(priceTexts[minutes]));
-  const topUpPrices: TopUpPrices = {
-    topUpPrice: parsedPrices[0] ?? 0,
-    topUpPrice10: parsedPrices[1] ?? 0,
-    topUpPrice15: parsedPrices[2] ?? 0,
-    topUpPrice20: parsedPrices[3] ?? 0,
-  };
-  const topUpPriceError =
-    dryer && parsedPrices.some((price) => price === null) ? 'Enter prices like 20 or 20.50, or leave blank.' : null;
-  const topUpPulses: TopUpPulses = {
-    topUpPulseCount: Number(pulseTexts[5]),
-    topUpPulses10: Number(pulseTexts[10]),
-    topUpPulses15: Number(pulseTexts[15]),
-    topUpPulses20: Number(pulseTexts[20]),
-  };
-  // Only the lengths on offer (with a price) have to send a valid number of pulses.
-  const topUpPulseError = !dryer
-    ? null
-    : (topUpOptions(topUpPrices)
-        .map((option) => {
-          const problem = pulsesProblem({ ...pulses, count: topUpPulseCountFor(topUpPulses, option.minutes) });
-          return problem ? `${option.minutes} minutes: ${problem}` : null;
-        })
-        .find((problem) => problem !== null) ?? null);
+  const topUpError = topUpsOn ? topUpDraftsProblem(topUpDrafts, pulses.onMs, pulses.offMs) : null;
   const cycleError = cyclesOn ? draftsProblem(drafts, pulses.onMs, pulses.offMs) : null;
   const invalid =
     cycleError !== null ||
     (usesOwnStart && (pulseError !== null || runError !== null)) ||
     pulsesProblem({ ...pulses, count: 1 }) !== null ||
-    topUpPulseError !== null ||
-    topUpPriceError !== null;
+    topUpError !== null;
   const digits = (set: (value: string) => void) => (text: string) => set(text.replace(/\D/g, ''));
   const others = machines.filter((m) => m.id !== machine?.id);
   const [targets, setTargets] = useState<PulseTargets>('this');
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   const copyTo = targets === 'all' ? others.map((m) => m.id) : targets === 'selected' ? [...selected] : [];
-  const otherDryers = others.filter((m) => m.type === 'DRYER');
-  const [priceTargets, setPriceTargets] = useState<PulseTargets>('this');
-  const [priceSelected, setPriceSelected] = useState<ReadonlySet<number>>(new Set());
-  const priceCopyTo = !dryer
-    ? []
-    : priceTargets === 'all'
-      ? otherDryers.map((m) => m.id)
-      : priceTargets === 'selected'
-        ? [...priceSelected]
-        : [];
-
-  function togglePriceSelected(id: number, on: boolean) {
-    const next = new Set(priceSelected);
-    if (on) next.add(id);
-    else next.delete(id);
-    setPriceSelected(next);
-  }
-
   function toggleSelected(id: number, on: boolean) {
     const next = new Set(selected);
     if (on) next.add(id);
@@ -365,8 +323,6 @@ function MachineDialog({
       pulseOnMs: pulses.onMs,
       pulseOffMs: pulses.offMs,
       runMinutes,
-      ...topUpPulses,
-      ...topUpPrices,
     };
     const result = await action.run((c) =>
       c.db.transaction((tx) => {
@@ -375,7 +331,7 @@ function MachineDialog({
         else addMachine(txCtx, actor, input);
         applyPulsesToMachines(txCtx, actor, pulses, copyTo);
         if (cyclesOn && machine) updateCycles(txCtx, actor, machine.id, toEdits(drafts));
-        applyTopUpPricesToDryers(txCtx, actor, topUpPrices, priceCopyTo);
+        if (topUpsOn && machine) updateTopUps(txCtx, actor, machine.id, toTopUpEdits(topUpDrafts));
       }),
     );
     if (result.ok) onClose();
@@ -471,77 +427,25 @@ function MachineDialog({
           error={runText !== '' ? runError : null}
         />
       )}
-      {dryer && (
+      {topUpsOn && (
         <>
           <Text variant="label">Top-ups</Text>
           <Text tone="muted">
-            {"For damp laundry, while the dryer is running: staff pick 5, 10, 15 or 20 more minutes and the price goes on the order's bill. Each length sends its own number of pulses (same length and gap as a start). Leave a price blank or 0 to not offer that length."}
+            {"For damp laundry: staff add one of these while the dryer runs, or on its start screen, and the price goes on the order's bill. Each sends its own number of pulses (same length and gap as a start). Unticked top-ups are kept but not offered; an offered one needs a price."}
           </Text>
-          <View style={styles.cycleTable}>
-            <Row>
-              <Text variant="label" style={styles.cycleName}>
-                Extra time
-              </Text>
-              <Text variant="label" style={styles.flex}>
-                Pulses
-              </Text>
-              <Text variant="label" style={styles.flex}>
-                Price
-              </Text>
-            </Row>
-            {TOP_UP_CHOICES.map((minutes) => (
-              <Row key={minutes}>
-                <Text style={styles.cycleName}>{`${minutes} minutes`}</Text>
-                <TextField
-                  label={`${minutes} minute top-up pulses`}
-                  hideLabel
-                  value={pulseTexts[minutes]}
-                  onChangeText={(text) => setPulseTexts({ ...pulseTexts, [minutes]: text.replace(/\D/g, '') })}
-                  keyboardType="number-pad"
-                  style={styles.flex}
-                />
-                <TextField
-                  label={`${minutes} minute top-up price`}
-                  hideLabel
-                  value={priceTexts[minutes]}
-                  onChangeText={(text) => setPriceTexts({ ...priceTexts, [minutes]: text })}
-                  keyboardType="decimal-pad"
-                  prefix="₱"
-                  style={styles.flex}
-                />
-              </Row>
-            ))}
-          </View>
-          {topUpPulseError && <Text tone="danger">{`Top-up: ${topUpPulseError}`}</Text>}
-          {topUpPriceError && <Text tone="danger">{topUpPriceError}</Text>}
-          {otherDryers.length > 0 && (
-            <Choice
-              label="Use these top-up prices on"
-              value={priceTargets}
-              onChange={setPriceTargets}
-              options={[
-                { value: 'this', label: 'This dryer only' },
-                { value: 'all', label: `All dryers (${otherDryers.length + 1})` },
-                { value: 'selected', label: 'Selected dryers' },
-              ]}
-            />
-          )}
-          {priceTargets === 'selected' &&
-            otherDryers.map((other) => (
-              <Toggle
-                key={other.id}
-                label={other.name}
-                description={`Now ${topUpSummary(other)}`}
-                value={priceSelected.has(other.id)}
-                onChange={(on) => togglePriceSelected(other.id, on)}
-              />
-            ))}
-          {priceCopyTo.length > 0 && (
-            <Text tone="muted">
-              {`Saving also gives ${priceCopyTo.length} other dryer${priceCopyTo.length === 1 ? '' : 's'} these top-up prices. Their top-up pulses stay as they are.`}
-            </Text>
-          )}
+          <TopUpTable
+            drafts={topUpDrafts}
+            onChange={(draft) => setTopUpEdits({ ...topUpEdits, [draft.id]: draft })}
+            onAdd={() => setAddingTopUp(true)}
+          />
+          {topUpError && <Text tone="danger">{topUpError}</Text>}
         </>
+      )}
+      {type === 'DRYER' && !machine && (
+        <Text tone="muted">
+          A new dryer gets 5, 10, 15 and 20-minute top-ups at the shop prices. Open it again after adding to change them or
+          add your own.
+        </Text>
       )}
       <Toggle
         label="In use"
@@ -550,6 +454,13 @@ function MachineDialog({
         onChange={setEnabled}
       />
       {action.error && <Notice tone="danger">{action.error}</Notice>}
+      {addingTopUp && machine && (
+        <AddTopUpDialog
+          machine={machine}
+          dryers={machines.filter((m) => m.type === 'DRYER')}
+          onClose={() => setAddingTopUp(false)}
+        />
+      )}
       {addingCycle && machine && (
         <AddCycleDialog
           machine={machine}
@@ -596,9 +507,3 @@ function PinDialog({ onClose }: { onClose: () => void }) {
     </Dialog>
   );
 }
-
-const styles = StyleSheet.create({
-  cycleTable: { gap: space.sm },
-  cycleName: { width: 110 },
-  flex: { flex: 1 },
-});

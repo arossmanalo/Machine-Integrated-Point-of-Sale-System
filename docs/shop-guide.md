@@ -41,13 +41,13 @@ If Multi-cycle is on, the **Run Washer 1 for T0012?** window asks for one of tha
 
 ### Dryer top-ups
 
-When you run a dryer for an order, the **Run Dryer 1 for T0012?** window also offers a **Top-up** (None, or a length with its price). A chosen top-up goes out with the start and is added to the bill. If a top-up was paid ahead with the order, the window says so instead.
+When you run a dryer for an order, the **Run Dryer 1 for T0012?** window also offers a **Top-up** (None, or one of that dryer's top-ups, such as 10 min or Extra dry, with its minutes and price). A chosen top-up goes out with the start and is added to the bill. If a top-up was paid ahead with the order, the window says so instead.
 
-If the laundry is still damp, tap **Top up** on the dryer in **Machines** while it is still running. Pick 5, 10, 15 or 20 minutes (only the lengths the owner has priced show), then tap **Add**. The minutes go on the countdown and the price is added to the order's bill. Once the countdown ends or someone taps **Mark as done**, the Top up button is gone. If the top-up does not reach the dryer, the charge comes off again.
+If the laundry is still damp, tap **Top up** on the dryer in **Machines** while it is still running. Pick one of the dryer's top-ups (only the ones on offer show), then tap **Add**. The minutes go on the countdown and the price is added to the order's bill. Once the countdown ends or someone taps **Mark as done**, the Top up button is gone. If the top-up does not reach the dryer, the charge comes off again.
 
-**Adding a top-up when taking the order:** if you can already tell the laundry will need longer, pick a length under **Dryer top-up** (below the add-ons) on the new order and how many loads get it. It is charged with the order and shows on the receipt. When each of those loads starts in a dryer, the extra minutes go out with the start; there is nothing more to tap.
+**Adding a top-up when taking the order:** if you can already tell the laundry will need longer, pick a length under **Dryer top-up** (below the add-ons) on the new order and how many loads get it. Each of those loads must go in a dryer that offers the same length; the app says so if a dryer does not. It is charged with the order and shows on the receipt. When each of those loads starts in a dryer, the extra minutes go out with the start; there is nothing more to tap.
 
-**Owner:** prices for top-ups added on new orders are in **Manage › Shop settings › Dryer top-ups on new orders** (one list for the shop, since the dryer is not known yet). Saving them also gives every dryer the same prices for top-ups while drying. **Manage › Machines** shows each dryer's top-up lengths, coins and prices; to give one dryer different prices, change them on that dryer in **Manage › Machines**.
+**Owner:** prices for top-ups added on new orders are in **Manage › Shop settings › Dryer top-ups on new orders**: one price per length, since the dryer is not known yet. A length the dryers do not have is not listed. Saving also gives each dryer's offered top-up of that length the same price. **Manage › Machines** shows each dryer's top-up lengths, coins and prices; to give one dryer different prices, change them on that dryer in **Manage › Machines**.
 
 ### Payments later
 
@@ -144,6 +144,6 @@ Tap a machine to:
 - switch it off with **In use** while it is broken, so nobody can start it (an order waiting on it is taken off);
 - change its **coins** (how many coins one start counts as), and each cycle's coins;
 - tick which of a washer's cycles staff are offered (with none ticked, staff are not asked and it runs its normal time);
-- for a dryer, tick which top-up lengths are offered and set each one's coins and price.
+- for a dryer, tick which of its top-ups are offered and set each one's coins and price. An unticked top-up keeps its price for later.
 
 Then tap **Save changes**. Each coin count is 1 to 50. To add machines or change run times or cycles, contact support. The owner PIN is changed on the same screen.

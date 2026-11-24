@@ -1,5 +1,4 @@
 import { createTestContext, receiptOf, testDeveloperLogin, testEmployee } from '@/db/testing';
-import { NO_TOP_UP_PRICES } from '@/domain/machinePolicy';
 import { receiptCodeFor, TEST_RECEIPT_CODE } from '@/domain/receiptCode';
 import { machineUnlocks } from '@/db/schema';
 import { MockMachineController } from '@/machines/MockMachineController';
@@ -9,7 +8,6 @@ import { createCustomer } from '../customers';
 import {
   addMachine,
   applyPulsesToMachines,
-  applyTopUpPricesToDryers,
   assignOrder,
   listMachineLog,
   listMachines,
@@ -21,7 +19,6 @@ import {
   readReceiptCode,
   saveLockController,
   saveOwnerMachineChanges,
-  saveShopTopUpPrices,
   setMultiCycle,
   setReceiptScanRequired,
   setSimulateMachines,
@@ -37,8 +34,9 @@ import {
 import { addCycle, listCycles, updateCycles } from '../cycles';
 import { createOrder, getOrderDetail, updateOrderStatus, voidOrder } from '../orders';
 import { getSetting, setSetting } from '../settings';
+import { addTopUp, listTopUps, orderTopUpChoices, saveShopTopUpPrices, updateTopUps } from '../topUps';
 
-const PULSES = { pulseCount: 1, pulseOnMs: 500, pulseOffMs: 500, runMinutes: 30, topUpPulseCount: 1, topUpPulses10: 2, topUpPulses15: 3, topUpPulses20: 4, ...NO_TOP_UP_PRICES };
+const PULSES = { pulseCount: 1, pulseOnMs: 500, pulseOffMs: 500, runMinutes: 30 };
 const MIN = 60 * 1000;
 const DAY = 24 * 60 * MIN;
 
@@ -57,9 +55,28 @@ async function setup() {
   const washer1 = addMachine(ctx, developer, { ...machine('Washer 1', 'WASHER', 1), pulseCount: 3 });
   const washer2 = addMachine(ctx, developer, machine('Washer 2', 'WASHER', 2));
   const washer3 = addMachine(ctx, developer, machine('Washer 3', 'WASHER', 3));
-  const dryer1 = addMachine(ctx, developer, { ...machine('Dryer 1', 'DRYER', 4), topUpPulseCount: 2, topUpPulses10: 4, topUpPulses15: 7, topUpPrice: 2000, topUpPrice15: 5000 });
+  const dryer1 = addMachine(ctx, developer, machine('Dryer 1', 'DRYER', 4));
   const dryer2 = addMachine(ctx, developer, machine('Dryer 2', 'DRYER', 5));
   const dryer3 = addMachine(ctx, developer, machine('Dryer 3', 'DRYER', 6));
+  /** A dryer's top-up of this length (every dryer starts with 5, 10, 15 and 20 minutes). */
+  const topUpId = (machineId: number, minutes: number) => {
+    const topUp = listTopUps(ctx).find((row) => row.machineId === machineId && row.minutes === minutes);
+    if (!topUp) throw new Error(`No ${minutes}-minute top-up`);
+    return topUp.id;
+  };
+  // Dryer 1 offers 5 minutes (2 pulses, ₱20) and 15 minutes (7 pulses, ₱50); the others offer none.
+  updateTopUps(
+    ctx,
+    developer,
+    dryer1,
+    listTopUps(ctx)
+      .filter((row) => row.machineId === dryer1)
+      .map((row) => {
+        const settings: Record<number, [number, number]> = { 5: [2, 2000], 10: [4, 0], 15: [7, 5000], 20: [4, 0] };
+        const [pulses, price] = settings[row.minutes] ?? [1, 0];
+        return { ...row, pulses, price, enabled: price > 0 };
+      }),
+  );
   const customer = createCustomer(ctx, { name: 'Juan', phone: '', address: '', notes: '' });
   const controller = new MockMachineController(0);
   await controller.connect();
@@ -120,6 +137,7 @@ async function setup() {
     washers: [washer1, washer2, washer3],
     dryers: [dryer1, dryer2, dryer3],
     machineById,
+    topUpId,
     log,
     markWashed,
   };
@@ -363,9 +381,11 @@ describe('machine settings', () => {
     const keep = (id: number) => {
       const m = machineById(id);
       if (!m) throw new Error('No machine');
-      return { enabled: true, coins: m.pulseCount, cycles: [], topUpPrices: null, topUpCoins: null };
+      return { enabled: true, coins: m.pulseCount, cycles: [], topUps: [] };
     };
     const before = machineById(dryers[0]);
+    const dryerTopUps = listTopUps(ctx).filter((t) => t.machineId === dryers[0]);
+    const [five, ten] = dryerTopUps;
 
     assignOrder(ctx, testEmployee, order.id, washers[0]);
     saveOwnerMachineChanges(ctx, owner, washers[0], {
@@ -377,16 +397,22 @@ describe('machine settings', () => {
     expect(machineById(washers[0])).toMatchObject({ enabled: false, assignedOrderId: null, pulseCount: 5 });
     expect(listCycles(ctx).find((c) => c.id === washerCycles[0].id)).toMatchObject({ enabled: false, pulses: 7 });
 
-    const prices = { topUpPrice: 0, topUpPrice10: 3000, topUpPrice15: 0, topUpPrice20: 6000 };
-    const topUpCoins = { topUpPulseCount: 1, topUpPulses10: 6, topUpPulses15: 8, topUpPulses20: 9 };
-    saveOwnerMachineChanges(ctx, owner, dryers[0], { ...keep(dryers[0]), coins: 4, topUpPrices: prices, topUpCoins });
-    expect(machineById(dryers[0])).toMatchObject({
-      ...prices,
-      ...topUpCoins,
-      pulseCount: 4,
-      pulseOnMs: before?.pulseOnMs,
-      runMinutes: before?.runMinutes,
+    // Switch off 5 minutes (its price stays for later) and offer 10 minutes at ₱30 with 6 coins.
+    saveOwnerMachineChanges(ctx, owner, dryers[0], {
+      ...keep(dryers[0]),
+      coins: 4,
+      topUps: [
+        { id: five.id, enabled: false, coins: five.pulses, price: five.price },
+        { id: ten.id, enabled: true, coins: 6, price: 3000 },
+      ],
     });
+    expect(machineById(dryers[0])).toMatchObject({ pulseCount: 4, pulseOnMs: before?.pulseOnMs, runMinutes: before?.runMinutes });
+    expect(listTopUps(ctx).filter((t) => t.machineId === dryers[0]).map((t) => [t.name, t.enabled, t.pulses, t.price])).toEqual([
+      ['5 min', false, 2, 2000],
+      ['10 min', true, 6, 3000],
+      ['15 min', true, 7, 5000],
+      ['20 min', false, 4, 0],
+    ]);
     // The new coins are what a start sends.
     markWashed(order.id);
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
@@ -408,15 +434,22 @@ describe('machine settings', () => {
         cycles: [{ id: washerCycles[1].id, enabled: false, coins: 1 }],
       }),
     ).toThrow('not on Washer 2');
-    expect(() => saveOwnerMachineChanges(ctx, owner, washers[1], { ...keep(washers[1]), topUpPrices: prices })).toThrow(
+    const change = (coins: number, price: number, enabled = true) => [{ id: ten.id, enabled, coins, price }];
+    expect(() => saveOwnerMachineChanges(ctx, owner, washers[1], { ...keep(washers[1]), topUps: change(1, 3000) })).toThrow(
       'Only dryers',
     );
-    expect(() =>
-      saveOwnerMachineChanges(ctx, owner, dryers[0], { ...keep(dryers[0]), topUpCoins: { ...topUpCoins, topUpPulses20: 0 } }),
-    ).toThrow('20-minute top-up: enter 1 to 50 coins');
-    expect(() =>
-      saveOwnerMachineChanges(ctx, owner, dryers[0], { ...keep(dryers[0]), topUpPrices: { ...prices, topUpPrice: -100 } }),
-    ).toThrow('5-minute');
+    expect(() => saveOwnerMachineChanges(ctx, owner, dryers[1], { ...keep(dryers[1]), topUps: change(1, 3000) })).toThrow(
+      'not on Dryer 2',
+    );
+    expect(() => saveOwnerMachineChanges(ctx, owner, dryers[0], { ...keep(dryers[0]), topUps: change(0, 3000) })).toThrow(
+      '10 min: enter 1 to 50 coins',
+    );
+    expect(() => saveOwnerMachineChanges(ctx, owner, dryers[0], { ...keep(dryers[0]), topUps: change(2, -100) })).toThrow(
+      'price must be from',
+    );
+    expect(() => saveOwnerMachineChanges(ctx, owner, dryers[0], { ...keep(dryers[0]), topUps: change(2, 0) })).toThrow(
+      'needs a price',
+    );
   });
 
   it('copies start pulses to chosen machines only, for the developer, after checking them', async () => {
@@ -426,7 +459,7 @@ describe('machine settings', () => {
     expect(() => applyPulsesToMachines(ctx, developer, { ...pulses, onMs: 5 }, washers)).toThrow('Pulse length');
     applyPulsesToMachines(ctx, developer, pulses, [washers[1], dryers[0]]);
     expect(machineById(washers[1])).toMatchObject({ pulseCount: 12, pulseOnMs: 80, pulseOffMs: 70 });
-    expect(machineById(dryers[0])).toMatchObject({ pulseCount: 12, pulseOnMs: 80, pulseOffMs: 70, topUpPulseCount: 2 });
+    expect(machineById(dryers[0])).toMatchObject({ pulseCount: 12, pulseOnMs: 80, pulseOffMs: 70 });
     expect(machineById(washers[0])).toMatchObject({ pulseCount: 3, pulseOnMs: 500 });
     expect(machineById(dryers[1])).toMatchObject({ pulseCount: 1, pulseOnMs: 500 });
   });
@@ -510,15 +543,15 @@ describe('assigning starts the machine', () => {
 
 describe('dryer top-ups', () => {
   it('adds the chosen minutes, sends pulses for them and charges that price', async () => {
-    const { ctx, controller, order, dryers, machineById, log, markWashed } = await setup();
+    const { ctx, controller, order, dryers, machineById, topUpId, log, markWashed } = await setup();
     markWashed(order.id, 2);
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     const endsAt = machineById(dryers[0])?.runEndsAt ?? 0;
-    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).resolves.toBe('acked');
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], topUpId(dryers[0], 5))).resolves.toBe('acked');
     expect(controller.starts[1]).toEqual({ channel: 4, pulses: { count: 2, onMs: 500, offMs: 500 } });
     expect(machineById(dryers[0])?.runEndsAt).toBe(endsAt + 5 * MIN);
 
-    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 15)).resolves.toBe('acked');
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], topUpId(dryers[0], 15))).resolves.toBe('acked');
     expect(controller.starts[2]).toEqual({ channel: 4, pulses: { count: 7, onMs: 500, offMs: 500 } });
     expect(machineById(dryers[0])?.runEndsAt).toBe(endsAt + 20 * MIN);
 
@@ -534,98 +567,137 @@ describe('dryer top-ups', () => {
   });
 
   it('can be added on the start screen: sent with the start and charged, undone if nothing went out', async () => {
-    const { ctx, controller, order, dryers, machineById, log, markWashed } = await setup();
+    const { ctx, controller, order, dryers, machineById, topUpId, log, markWashed } = await setup();
     markWashed(order.id, 2);
-    const run = (dryer: number) =>
-      startOrderOnMachine(ctx, controller, testEmployee, order.id, dryer, receiptOf(order), null, 15);
+    const fifteen = topUpId(dryers[0], 15);
+    const run = (dryer: number, topUp: number) =>
+      startOrderOnMachine(ctx, controller, testEmployee, order.id, dryer, receiptOf(order), null, topUp);
 
     controller.failNextStart('failed');
-    await expect(run(dryers[0])).resolves.toBe('failed');
+    await expect(run(dryers[0], fifteen)).resolves.toBe('failed');
     expect(getOrderDetail(ctx, order.id)?.order.total).toBe(order.total);
     expect(log().find((row) => row.kind === 'TOP_UP')).toMatchObject({ result: 'FAILED', charge: null });
 
-    await expect(startMachine(ctx, controller, testEmployee, dryers[0], 15)).resolves.toBe('acked');
+    await expect(startMachine(ctx, controller, testEmployee, dryers[0], fifteen)).resolves.toBe('acked');
     // Dryer 1: 1 start pulse + 7 pulses for 15 minutes, in one go.
     expect(controller.starts[0]).toEqual({ channel: 4, pulses: { count: 8, onMs: 500, offMs: 500 } });
     expect(machineById(dryers[0])?.runEndsAt).toBe(ctx.now() + 45 * MIN);
     expect(getOrderDetail(ctx, order.id)?.order.total).toBe(order.total + 5000);
     expect(log().find((row) => row.kind === 'TOP_UP' && row.result === 'ACKED')).toMatchObject({ charge: 5000 });
 
-    await expect(run(dryers[1])).rejects.toThrow('has no price');
+    // Dryer 2 does not offer its 15 minutes, and Dryer 1's top-up is not Dryer 2's.
+    await expect(run(dryers[1], topUpId(dryers[1], 15))).rejects.toThrow('switched off');
+    await expect(run(dryers[1], fifteen)).rejects.toThrow('not on Dryer 2');
   });
 
   it('is gone once the dryer finishes or is marked as done', async () => {
-    const { ctx, controller, order, newOrder, dryers, markWashed } = await setup();
+    const { ctx, controller, order, newOrder, dryers, topUpId, markWashed } = await setup();
+    const five = topUpId(dryers[0], 5);
     markWashed(order.id, 2);
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     markRunDone(ctx, dryers[0]);
-    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).rejects.toThrow('not running');
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], five)).rejects.toThrow('not running');
 
     const other = newOrder();
     markWashed(other.id);
     await startOrderOnMachine(ctx, controller, testEmployee, other.id, dryers[0], receiptOf(other));
     ctx.advance(31 * MIN);
-    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).rejects.toThrow('not running');
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], five)).rejects.toThrow('not running');
   });
 
-  it('refuses a length the dryer does not offer', async () => {
-    const { ctx, controller, order, dryers, markWashed } = await setup();
+  it('refuses a top-up the dryer does not offer', async () => {
+    const { ctx, controller, order, dryers, topUpId, markWashed } = await setup();
     markWashed(order.id, 2);
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
-    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 10)).rejects.toThrow('no price');
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], topUpId(dryers[0], 10))).rejects.toThrow(
+      'switched off',
+    );
   });
 
   it('takes the charge off again when nothing was sent', async () => {
-    const { ctx, controller, order, dryers, machineById, log, markWashed } = await setup();
+    const { ctx, controller, order, dryers, machineById, topUpId, log, markWashed } = await setup();
     markWashed(order.id, 2);
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     const endsAt = machineById(dryers[0])?.runEndsAt;
     controller.failNextStart('busy');
-    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).resolves.toBe('busy');
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], topUpId(dryers[0], 5))).resolves.toBe('busy');
     expect(getOrderDetail(ctx, order.id)?.order.total).toBe(order.total);
     expect(getOrderDetail(ctx, order.id)?.items).toEqual([]);
     expect(machineById(dryers[0])?.runEndsAt).toBe(endsAt);
     expect(log()[0]).toMatchObject({ kind: 'TOP_UP', result: 'BUSY', charge: null });
   });
 
-  it('refuses washers, dryers without a price, and closed orders', async () => {
-    const { ctx, owner, controller, order, washers, dryers, markWashed } = await setup();
+  it('refuses washers, top-ups that are switched off, and closed orders', async () => {
+    const { ctx, owner, controller, order, washers, dryers, topUpId, markWashed } = await setup();
+    const five = topUpId(dryers[0], 5);
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
     markRunDone(ctx, washers[0]);
     markWashed(order.id);
-    await expect(topUpDryer(ctx, controller, testEmployee, washers[0], 5)).rejects.toThrow('Only dryers');
+    await expect(topUpDryer(ctx, controller, testEmployee, washers[0], five)).rejects.toThrow('Only dryers');
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[1], receiptOf(order));
-    await expect(topUpDryer(ctx, controller, testEmployee, dryers[1], 5)).rejects.toThrow('no price');
-    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).rejects.toThrow('not running');
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[1], topUpId(dryers[1], 5))).rejects.toThrow(
+      'switched off',
+    );
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], five)).rejects.toThrow('not running');
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     updateOrderStatus(ctx, owner, order.id, 'COMPLETED');
-    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).rejects.toThrow('completed');
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], five)).rejects.toThrow('completed');
   });
 
-  it('the developer can test each top-up length on a dryer, with no order or charge', async () => {
-    const { ctx, developer, controller, washers, dryers, log, machineById } = await setup();
-    await expect(testTopUp(ctx, controller, testEmployee, dryers[0], 10)).rejects.toThrow('managed by support');
-    await expect(testTopUp(ctx, controller, developer, washers[0], 10)).rejects.toThrow('Only dryers');
-    await expect(testTopUp(ctx, controller, developer, dryers[0], 15)).resolves.toBe('acked');
-    expect(controller.starts[0]).toEqual({ channel: 4, pulses: { count: 7, onMs: 500, offMs: 500 } });
-    expect(log()[0]).toMatchObject({ kind: 'TEST', orderId: null, charge: null, overrideNote: '15-minute top-up' });
+  it('the developer can test each top-up on a dryer, even one not offered, with no order or charge', async () => {
+    const { ctx, developer, controller, washers, dryers, topUpId, log, machineById } = await setup();
+    await expect(testTopUp(ctx, controller, testEmployee, dryers[0], topUpId(dryers[0], 10))).rejects.toThrow(
+      'managed by support',
+    );
+    await expect(testTopUp(ctx, controller, developer, washers[0], topUpId(dryers[0], 10))).rejects.toThrow('Only dryers');
+    await expect(testTopUp(ctx, controller, developer, dryers[0], topUpId(dryers[1], 10))).rejects.toThrow('not on Dryer 1');
+    await expect(testTopUp(ctx, controller, developer, dryers[0], topUpId(dryers[0], 10))).resolves.toBe('acked');
+    expect(controller.starts[0]).toEqual({ channel: 4, pulses: { count: 4, onMs: 500, offMs: 500 } });
+    expect(log()[0]).toMatchObject({ kind: 'TEST', orderId: null, charge: null, overrideNote: '10 min top-up (10 min)' });
     expect(machineById(dryers[0])?.runEndsAt).toBeNull();
   });
 
-  it('the developer can give all or some dryers the same top-up prices', async () => {
-    const { ctx, developer, washers, dryers, machineById } = await setup();
-    const prices = { topUpPrice: 2500, topUpPrice10: 4500, topUpPrice15: 6500, topUpPrice20: 8000 };
-    expect(() => applyTopUpPricesToDryers(ctx, testEmployee, prices, [dryers[1]])).toThrow('managed by support');
+  it('the developer adds a top-up type to one, all or selected dryers, all or nothing', async () => {
+    const { ctx, developer, controller, order, washers, dryers, machineById, markWashed } = await setup();
+    const extra = { name: 'Extra dry', minutes: 30, pulses: 6, price: 9000 };
+    expect(() => addTopUp(ctx, testEmployee, extra, [dryers[0]])).toThrow('managed by support');
+    expect(() => addTopUp(ctx, developer, extra, [dryers[0], washers[0]])).toThrow('Washer 1 is a washer');
+    expect(() => addTopUp(ctx, developer, { ...extra, pulses: 51 }, [dryers[0]])).toThrow('Dryer 1');
+    expect(() => addTopUp(ctx, developer, { ...extra, name: '5 MIN' }, [dryers[1], dryers[0]])).toThrow(
+      'already has a top-up called 5 MIN',
+    );
+    expect(listTopUps(ctx).some((t) => t.name === 'Extra dry')).toBe(false);
 
-    applyTopUpPricesToDryers(ctx, developer, prices, [dryers[1], washers[0]]);
-    expect(machineById(dryers[1])).toMatchObject(prices);
-    expect(machineById(dryers[2])).toMatchObject(NO_TOP_UP_PRICES);
-    expect(machineById(washers[0])).toMatchObject(NO_TOP_UP_PRICES);
+    addTopUp(ctx, developer, extra, [dryers[0], dryers[2]]);
+    expect(listTopUps(ctx).filter((t) => t.name === 'Extra dry').map((t) => [t.machineId, t.enabled])).toEqual([
+      [dryers[0], true],
+      [dryers[2], true],
+    ]);
+    // Without a price it is added switched off.
+    addTopUp(ctx, developer, { ...extra, name: 'Cool down', price: 0 }, [dryers[1]]);
+    expect(listTopUps(ctx).find((t) => t.name === 'Cool down')).toMatchObject({ enabled: false, price: 0 });
 
-    // Dryer 3's 20-minute top-up sends 51 pulses, over the limit of 50.
-    updateMachine(ctx, developer, dryers[2], { ...machine('Dryer 3', 'DRYER', 6), topUpPulses20: 51 });
-    expect(() => applyTopUpPricesToDryers(ctx, developer, prices, [dryers[1], dryers[2]])).toThrow('Dryer 3: 20-minute');
-    expect(machineById(dryers[1])).toMatchObject(prices);
+    markWashed(order.id, 2);
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
+    const endsAt = machineById(dryers[0])?.runEndsAt ?? 0;
+    const extraDry = listTopUps(ctx).find((t) => t.machineId === dryers[0] && t.name === 'Extra dry');
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], extraDry?.id ?? 0)).resolves.toBe('acked');
+    expect(controller.starts[1].pulses.count).toBe(6);
+    expect(machineById(dryers[0])?.runEndsAt).toBe(endsAt + 30 * MIN);
+    expect(getOrderDetail(ctx, order.id)?.items.map((i) => i.name)).toEqual(['Dryer top-up Extra dry (Dryer 1)']);
+  });
+
+  it("checks each top-up's name, minutes, pulses and price when the dryer is saved", async () => {
+    const { ctx, developer, dryers } = await setup();
+    const own = listTopUps(ctx).filter((t) => t.machineId === dryers[0]);
+    const edit = (change: Partial<(typeof own)[number]>) => own.map((t, i) => ({ ...t, ...(i === 0 ? change : {}) }));
+    expect(() => updateTopUps(ctx, developer, dryers[0], edit({ pulses: 51 }))).toThrow('5 min');
+    expect(() => updateTopUps(ctx, developer, dryers[0], edit({ minutes: 0 }))).toThrow('Minutes');
+    expect(() => updateTopUps(ctx, developer, dryers[0], edit({ price: 0, enabled: true }))).toThrow('needs a price');
+    expect(() => updateTopUps(ctx, developer, dryers[0], edit({ name: '10 min' }))).toThrow('two top-ups called 10 min');
+    expect(() => updateTopUps(ctx, developer, dryers[1], own)).toThrow('not on Dryer 2');
+    updateTopUps(ctx, developer, dryers[0], edit({ name: 'Quick', minutes: 7 }));
+    expect(listTopUps(ctx).find((t) => t.id === own[0].id)).toMatchObject({ name: 'Quick', minutes: 7 });
   });
 });
 
@@ -774,11 +846,30 @@ describe('machine earnings', () => {
 });
 
 describe('top-ups paid with the order', () => {
-  const prices = { topUpPrice: 2000, topUpPrice10: 3500, topUpPrice15: 0, topUpPrice20: 6000 };
+  const prices = [
+    { minutes: 5, price: 2000 },
+    { minutes: 10, price: 3500 },
+    { minutes: 15, price: 0 },
+    { minutes: 20, price: 6000 },
+  ];
 
-  async function setupPrepaid(topUp: { minutes: 5 | 10 | 15 | 20; loads: number } | null) {
+  /** Every dryer offers its 10-minute top-up (Dryer 1: 4 pulses; the others: 2). */
+  function offerTenMinutes(env: Awaited<ReturnType<typeof setup>>) {
+    for (const dryer of env.dryers) {
+      const own = listTopUps(env.ctx).filter((t) => t.machineId === dryer);
+      updateTopUps(
+        env.ctx,
+        env.developer,
+        dryer,
+        own.map((t) => (t.minutes === 10 ? { ...t, enabled: true, price: 3500 } : t)),
+      );
+    }
+  }
+
+  async function setupPrepaid(topUp: { minutes: number; loads: number } | null) {
     const env = await setup();
-    setSetting(env.ctx.db, 'orderTopUpPrices', prices);
+    setSetting(env.ctx.db, 'shopTopUps', prices);
+    offerTenMinutes(env);
     const order = createOrder(env.ctx, testEmployee, {
       customerId: env.customer.id,
       weightKg: 24,
@@ -817,9 +908,11 @@ describe('top-ups paid with the order', () => {
     ]);
   });
 
-  it('refuses a length without a shop price, or more loads than the order has', async () => {
-    const { ctx, customer } = await setup();
-    setSetting(ctx.db, 'orderTopUpPrices', prices);
+  it('refuses a length without a shop price or that no dryer offers, or more loads than the order has', async () => {
+    const env = await setup();
+    const { ctx, customer } = env;
+    setSetting(ctx.db, 'shopTopUps', prices);
+    offerTenMinutes(env);
     const base = {
       customerId: customer.id,
       weightKg: 8,
@@ -832,17 +925,41 @@ describe('top-ups paid with the order', () => {
       cashReceived: null,
       placedAt: null,
     };
-    expect(() => createOrder(ctx, testEmployee, { ...base, topUp: { minutes: 15, loads: 1 } })).toThrow('no price');
+    expect(orderTopUpChoices(ctx.db)).toEqual([
+      { minutes: 5, price: 2000 },
+      { minutes: 10, price: 3500 },
+    ]);
+    expect(() => createOrder(ctx, testEmployee, { ...base, topUp: { minutes: 15, loads: 1 } })).toThrow('not offered');
+    // 20 minutes has a shop price, but no dryer offers it.
+    expect(() => createOrder(ctx, testEmployee, { ...base, topUp: { minutes: 20, loads: 1 } })).toThrow('not offered');
     expect(() => createOrder(ctx, testEmployee, { ...base, topUp: { minutes: 10, loads: 2 } })).toThrow('1 to 1 load');
   });
 
-  it('saving the shop prices gives every dryer the same prices (owner only)', async () => {
-    const { ctx, owner, washers, dryers, machineById } = await setup();
+  it("saving the shop prices gives every dryer's offered top-up of that length the price (owner only)", async () => {
+    const { ctx, owner, dryers } = await setup();
     expect(() => saveShopTopUpPrices(ctx, testEmployee, prices)).toThrow('Only the owner');
-    saveShopTopUpPrices(ctx, owner, prices);
-    expect(getSetting(ctx.db, 'orderTopUpPrices')).toEqual(prices);
-    for (const dryer of dryers) expect(machineById(dryer)).toMatchObject(prices);
-    expect(machineById(washers[0])).toMatchObject(NO_TOP_UP_PRICES);
+    saveShopTopUpPrices(ctx, owner, [...prices, { minutes: 15, price: 5500 }]);
+    expect(getSetting(ctx.db, 'shopTopUps')).toEqual([...prices, { minutes: 15, price: 5500 }]);
+    const price = (dryer: number, minutes: number) =>
+      listTopUps(ctx).find((t) => t.machineId === dryer && t.minutes === minutes)?.price;
+    // Dryer 1 offers 5 and 15 minutes; its switched-off 10 minutes, and the other dryers, keep their prices.
+    expect([5, 10, 15].map((m) => price(dryers[0], m))).toEqual([2000, 0, 5500]);
+    expect([5, 10, 15].map((m) => price(dryers[1], m))).toEqual([0, 0, 0]);
+  });
+
+  it('refuses a dryer that does not offer the length paid for, before it is assigned', async () => {
+    const { ctx, developer, order, run, washers, dryers, machineById, markWashed } = await setupPrepaid({
+      minutes: 10,
+      loads: 1,
+    });
+    await run(washers[0]);
+    markRunDone(ctx, washers[0]);
+    markWashed(order.id);
+    const own = listTopUps(ctx).filter((t) => t.machineId === dryers[2]);
+    updateTopUps(ctx, developer, dryers[2], own.map((t) => ({ ...t, enabled: false })));
+    await expect(run(dryers[2])).rejects.toThrow('does not offer');
+    expect(machineById(dryers[2])?.assignedOrderId).toBeNull();
+    await expect(run(dryers[1])).resolves.toBe('acked');
   });
 
   it('adds the minutes and pulses to the first dryer starts it covers, and not to washers', async () => {

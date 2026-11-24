@@ -1,11 +1,11 @@
 import { createTestContext, receiptOf, testDeveloper, testDeveloperLogin, testEmployee } from '@/db/testing';
-import { NO_TOP_UP_PRICES } from '@/domain/machinePolicy';
 import { MockMachineController } from '@/machines/MockMachineController';
 
 import { completeFirstRunSetup, listStaff, logIn } from '../auth';
 import { createCustomer, listCustomers } from '../customers';
 import { detectBackupKind, exportBackup, importLegacyExport, restoreBackup } from '../backup';
 import { listCycles } from '../cycles';
+import { listTopUps } from '../topUps';
 import { listExpenses } from '../expenses';
 import { listInventory } from '../inventory';
 import { addMachine, listMachineLog, listMachines, startOrderOnMachine, topUpDryer } from '../machines';
@@ -141,7 +141,11 @@ describe('full backup', () => {
     const { ctx, owner } = await setup();
     importLegacyExport(ctx, owner, legacyExport);
     setSetting(ctx.db, 'pricePerLoad', 25000);
-    const pulses = { pulseCount: 2, pulseOnMs: 300, pulseOffMs: 400, runMinutes: 35, topUpPulseCount: 2, topUpPulses10: 4, topUpPulses15: 6, topUpPulses20: 8, topUpPrice: 2000, topUpPrice10: 3500, topUpPrice15: 0, topUpPrice20: 0 };
+    setSetting(ctx.db, 'shopTopUps', [
+      { minutes: 5, price: 2000 },
+      { minutes: 10, price: 3500 },
+    ]);
+    const pulses = { pulseCount: 2, pulseOnMs: 300, pulseOffMs: 400, runMinutes: 35 };
     const machineId = addMachine(ctx, testDeveloper, { name: 'Washer 1', type: 'WASHER', hardwareChannel: 1, enabled: true, ...pulses });
     const dryerId = addMachine(ctx, testDeveloper, { name: 'Dryer 1', type: 'DRYER', hardwareChannel: 2, enabled: true, ...pulses });
     const order = createOrder(ctx, testEmployee, {
@@ -161,7 +165,8 @@ describe('full backup', () => {
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, machineId, receiptOf(order));
     ctx.advance(35 * 60 * 1000);
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryerId, receiptOf(order));
-    await topUpDryer(ctx, controller, testEmployee, dryerId, 10);
+    const tenMinutes = listTopUps(ctx).find((t) => t.machineId === dryerId && t.minutes === 10);
+    await topUpDryer(ctx, controller, testEmployee, dryerId, tenMinutes?.id ?? 0);
 
     const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
     expect(detectBackupKind(backup)).toBe('backup');
@@ -174,11 +179,10 @@ describe('full backup', () => {
       listMachineLog(ctx, { start: 0, end: Number.MAX_SAFE_INTEGER }),
     );
     expect(listMachines(fresh)).toEqual(listMachines(ctx));
-    expect(listMachines(fresh).find((m) => m.id === dryerId)).toMatchObject({
-      runOrderId: order.id,
-      runMinutes: 35,
-      topUpPrice: 2000,
-    });
+    expect(listMachines(fresh).find((m) => m.id === dryerId)).toMatchObject({ runOrderId: order.id, runMinutes: 35 });
+    expect(listTopUps(fresh)).toEqual(listTopUps(ctx));
+    expect(listTopUps(fresh).find((t) => t.minutes === 10)).toMatchObject({ price: 3500, enabled: true });
+    expect(getSetting(fresh.db, 'shopTopUps')).toEqual(getSetting(ctx.db, 'shopTopUps'));
 
     // Restoring over data whose machines point at orders must also work.
     expect(() => restoreBackup(fresh, owner, backup)).not.toThrow();
@@ -197,11 +201,6 @@ describe('full backup', () => {
       pulseOnMs: 100,
       pulseOffMs: 100,
       runMinutes: 30,
-      topUpPulseCount: 1,
-      topUpPulses10: 2,
-      topUpPulses15: 3,
-      topUpPulses20: 4,
-      ...NO_TOP_UP_PRICES,
     });
     const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
     for (const row of backup.tables.machines) {
@@ -244,7 +243,6 @@ describe('full backup', () => {
       pulseOffMs: 500,
       assignedOrderId: null,
       runMinutes: 40,
-      ...NO_TOP_UP_PRICES,
       topUpPulses10: 2,
       topUpPulses20: 4,
       runEndsAt: null,
@@ -264,6 +262,53 @@ describe('full backup', () => {
     await expect(logIn(fresh, 'sneaky', 'secret123', null)).rejects.toThrow('Incorrect');
   });
 
+  it('rebuilds top-ups and the new-order prices of a backup from before top-up types', async () => {
+    const { ctx, owner } = await setup();
+    const dryer = addMachine(ctx, testDeveloper, {
+      name: 'Dryer 1',
+      type: 'DRYER',
+      hardwareChannel: 2,
+      enabled: true,
+      pulseCount: 1,
+      pulseOnMs: 500,
+      pulseOffMs: 500,
+      runMinutes: 30,
+    });
+    const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
+    backup.version = 10;
+    delete backup.tables.dryerTopUps;
+    backup.tables.settings = backup.tables.settings.filter((row: { key: string }) => row.key !== 'shopTopUps');
+    backup.tables.settings.push({
+      key: 'orderTopUpPrices',
+      value: JSON.stringify({ topUpPrice: 2000, topUpPrice10: 0, topUpPrice15: 5000, topUpPrice20: 0 }),
+    });
+    Object.assign(backup.tables.machines[0], {
+      topUpPulseCount: 2,
+      topUpPulses10: 3,
+      topUpPulses15: 5,
+      topUpPulses20: 7,
+      topUpPrice: 2500,
+      topUpPrice10: 0,
+      topUpPrice15: 6000,
+      topUpPrice20: 0,
+    });
+
+    const fresh = createTestContext();
+    restoreBackup(fresh, owner, backup);
+    expect(listTopUps(fresh).map((t) => [t.machineId, t.name, t.minutes, t.pulses, t.price, t.enabled])).toEqual([
+      [dryer, '5 min', 5, 2, 2500, true],
+      [dryer, '10 min', 10, 3, 0, false],
+      [dryer, '15 min', 15, 5, 6000, true],
+      [dryer, '20 min', 20, 7, 0, false],
+    ]);
+    expect(getSetting(fresh.db, 'shopTopUps')).toEqual([
+      { minutes: 5, price: 2000 },
+      { minutes: 10, price: 0 },
+      { minutes: 15, price: 5000 },
+      { minutes: 20, price: 0 },
+    ]);
+  });
+
   it('rebuilds the four fixed cycles of a backup from before cycles had their own table', async () => {
     const { ctx, owner } = await setup();
     const washer = addMachine(ctx, testDeveloper, {
@@ -275,11 +320,6 @@ describe('full backup', () => {
       pulseOnMs: 500,
       pulseOffMs: 500,
       runMinutes: 30,
-      topUpPulseCount: 1,
-      topUpPulses10: 2,
-      topUpPulses15: 3,
-      topUpPulses20: 4,
-      ...NO_TOP_UP_PRICES,
     });
     const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
     backup.version = 8;
