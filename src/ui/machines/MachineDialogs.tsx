@@ -2,8 +2,8 @@ import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
-import type { MachineRow } from '@/db/schema';
-import { CYCLE_LABELS, CYCLES, cycleMinutes, hasCycles, isCycle, type Cycle } from '@/domain/cycles';
+import type { MachineCycleRow, MachineRow } from '@/db/schema';
+import { needsCyclePick } from '@/domain/cycles';
 import { UserFacingError, type ServiceContext } from '@/db/types';
 import {
   isRunning,
@@ -33,6 +33,7 @@ import {
   startOrderOnMachine,
   type OverrideReason,
 } from '@/services/machines';
+import { listCycles } from '@/services/cycles';
 import { getOrderDetail, listOrderSummaries } from '@/services/orders';
 import { getSetting } from '@/services/settings';
 import { useActor, useApp } from '@/state/AppProvider';
@@ -47,6 +48,19 @@ import { TextField } from '../TextField';
 import { colors, MIN_TOUCH, radius, space } from '../theme';
 
 import { ReceiptScanner } from './ReceiptScanner';
+
+/**
+ * The cycles staff pick from on a machine: a Multi-cycle washer's cycles that are switched on,
+ * or none (the machine then starts with its own pulses and run time).
+ */
+export function useCyclePicker(): (machine: MachineRow) => MachineCycleRow[] {
+  const multiCycle = useData((c) => getSetting(c.db, 'multiCycle'));
+  const cycles = useData((c) => listCycles(c));
+  return (machine) => {
+    const enabled = cycles.filter((cycle) => cycle.machineId === machine.id && cycle.enabled);
+    return needsCyclePick(multiCycle, machine.type, enabled.length) ? enabled : [];
+  };
+}
 
 export function useReportStart() {
   const toast = useToast();
@@ -103,13 +117,13 @@ function machineIcon(type: MachineType) {
 }
 
 /** The one question before pulses go out (after the receipt scan), so a stray tap cannot start the wrong machine. */
-/** With Multi-cycle on, the cycle is picked here; null until staff pick one. */
+/** With Multi-cycle on, a washer's cycle is picked here; null until staff pick one. */
 function ConfirmStart({
   machine,
   orderId,
   customerName,
-  multiCycle,
-  cycle,
+  cycles,
+  cycleId,
   onCycle,
   topUp,
   onTopUp,
@@ -117,9 +131,9 @@ function ConfirmStart({
   machine: MachineRow;
   orderId: string;
   customerName: string;
-  multiCycle: boolean;
-  cycle: Cycle | null;
-  onCycle: (cycle: Cycle) => void;
+  cycles: readonly MachineCycleRow[];
+  cycleId: number | null;
+  onCycle: (cycleId: number) => void;
   topUp: TopUpMinutes | null;
   onTopUp: (minutes: TopUpMinutes | null) => void;
 }) {
@@ -128,24 +142,20 @@ function ConfirmStart({
   const dryer = machine.type === 'DRYER';
   const options = dryer && prepaid === null ? topUpOptions(machine) : [];
   const extra = dryer ? (prepaid ?? topUp ?? 0) : 0;
-  const base = multiCycle ? (cycle ? cycleMinutes(machine, cycle) : null) : machine.runMinutes;
+  const cycle = cycles.find((option) => option.id === cycleId) ?? null;
+  const base = cycles.length > 0 ? (cycle?.minutes ?? null) : machine.runMinutes;
   const minutes = base === null ? null : base + extra;
   return (
     <View style={styles.confirm}>
       <MaterialCommunityIcons name={machineIcon(machine.type)} size={40} color={colors.accent} />
       <Text variant="heading">{`Run ${machine.name} for ${orderId}?`}</Text>
       <Text>{customerName}</Text>
-      {multiCycle && (
+      {cycles.length > 0 && (
         <Choice
           label="Cycle"
-          value={cycle ?? ''}
-          onChange={(value) => {
-            if (isCycle(value)) onCycle(value);
-          }}
-          options={CYCLES.map((option) => ({
-            value: option,
-            label: `${CYCLE_LABELS[option]} · ${cycleMinutes(machine, option)} min`,
-          }))}
+          value={cycleId === null ? '' : String(cycleId)}
+          onChange={(value) => onCycle(Number(value))}
+          options={cycles.map((option) => ({ value: String(option.id), label: `${option.name} · ${option.minutes} min` }))}
         />
       )}
       {dryer && prepaid !== null && (
@@ -191,10 +201,11 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
   const [chosen, setChosen] = useState<MachineRow | null>(null);
   const [receiptCode, setReceiptCode] = useState<string | null>(null);
   const scanOn = useData((c) => getSetting(c.db, 'requireReceiptScan'));
-  const multiCycle = useData((c) => getSetting(c.db, 'multiCycle'));
-  const [cycle, setCycle] = useState<Cycle | null>(null);
+  const cyclesFor = useCyclePicker();
+  const [cycleId, setCycleId] = useState<number | null>(null);
   const [topUp, setTopUp] = useState<TopUpMinutes | null>(null);
-  const usesCycles = chosen !== null && hasCycles(multiCycle, chosen.type);
+  const chosenCycles = chosen ? cyclesFor(chosen) : [];
+  const usesCycles = chosenCycles.length > 0;
   const needScan = scanOn && receiptCode === null;
   const data = useData(
     (c) => {
@@ -214,7 +225,7 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
 
   function back() {
     action.clearError();
-    setCycle(null);
+    setCycleId(null);
     setTopUp(null);
     setChosen(null);
     setReceiptCode(null);
@@ -222,7 +233,7 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
 
   async function start(machine: MachineRow) {
     const result = await action.run((c) =>
-      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode, usesCycles ? cycle : null, topUp),
+      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode, usesCycles ? cycleId : null, topUp),
     );
     if (!result.ok) return;
     report(result.value, machine.name);
@@ -239,7 +250,7 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
           icon="play"
           onPress={() => void start(chosen)}
           busy={action.busy}
-          disabled={usesCycles && cycle === null}
+          disabled={usesCycles && cycleId === null}
         />
       )}
     </>
@@ -260,9 +271,9 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
           machine={chosen}
           orderId={orderId}
           customerName={data.customerName}
-          multiCycle={usesCycles}
-          cycle={cycle}
-          onCycle={setCycle}
+          cycles={chosenCycles}
+          cycleId={cycleId}
+          onCycle={setCycleId}
           topUp={topUp}
           onTopUp={setTopUp}
         />
@@ -385,10 +396,11 @@ export function OrderPickerDialog({
   const [chosen, setChosen] = useState<{ orderId: string; customerName: string } | null>(null);
   const [receiptCode, setReceiptCode] = useState<string | null>(null);
   const scanOn = useData((c) => getSetting(c.db, 'requireReceiptScan'));
-  const multiCycle = useData((c) => getSetting(c.db, 'multiCycle'));
-  const [cycle, setCycle] = useState<Cycle | null>(null);
+  const cyclesFor = useCyclePicker();
+  const [cycleId, setCycleId] = useState<number | null>(null);
   const [topUp, setTopUp] = useState<TopUpMinutes | null>(null);
-  const usesCycles = hasCycles(multiCycle, machine.type);
+  const machineCycles = cyclesFor(machine);
+  const usesCycles = machineCycles.length > 0;
   const candidates = useData(
     (c) =>
       listOrderSummaries(c)
@@ -406,7 +418,7 @@ export function OrderPickerDialog({
 
   function back() {
     action.clearError();
-    setCycle(null);
+    setCycleId(null);
     setTopUp(null);
     setChosen(null);
     setReceiptCode(null);
@@ -435,7 +447,7 @@ export function OrderPickerDialog({
 
   async function start(orderId: string) {
     const result = await action.run((c) =>
-      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode, usesCycles ? cycle : null, topUp),
+      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode, usesCycles ? cycleId : null, topUp),
     );
     if (!result.ok) return;
     report(result.value, machine.name);
@@ -451,7 +463,7 @@ export function OrderPickerDialog({
         icon="play"
         onPress={() => void start(chosen.orderId)}
         busy={action.busy}
-        disabled={usesCycles && cycle === null}
+        disabled={usesCycles && cycleId === null}
       />
     </>
   ) : (
@@ -468,9 +480,9 @@ export function OrderPickerDialog({
           machine={machine}
           orderId={chosen.orderId}
           customerName={chosen.customerName}
-          multiCycle={usesCycles}
-          cycle={cycle}
-          onCycle={setCycle}
+          cycles={machineCycles}
+          cycleId={cycleId}
+          onCycle={setCycleId}
           topUp={topUp}
           onTopUp={setTopUp}
         />
@@ -540,10 +552,12 @@ export function OverrideDialog({
   const [reason, setReason] = useState<OverrideReason>('Rewash');
   const [note, setNote] = useState('');
   const [pin, setPin] = useState('');
+  const cycles = useCyclePicker()(machine);
+  const [cycleId, setCycleId] = useState<number | null>(cycles[0]?.id ?? null);
 
   async function submit() {
     const result = await action.run((c) =>
-      overrideStart(c, controller, actor, { machineId: machine.id, pin, reason, note, orderId }),
+      overrideStart(c, controller, actor, { machineId: machine.id, pin, reason, note, orderId, cycleId }),
     );
     setPin('');
     if (result.ok) {
@@ -574,6 +588,14 @@ export function OverrideDialog({
         onChange={setReason}
         options={OVERRIDE_REASONS.map((r) => ({ value: r, label: r }))}
       />
+      {cycles.length > 0 && (
+        <Choice
+          label="Cycle"
+          value={cycleId === null ? '' : String(cycleId)}
+          onChange={(value) => setCycleId(Number(value))}
+          options={cycles.map((cycle) => ({ value: String(cycle.id), label: `${cycle.name} · ${cycle.minutes} min` }))}
+        />
+      )}
       <TextField
         label={reason === 'Other' ? 'What happened?' : 'Note (optional)'}
         value={note}

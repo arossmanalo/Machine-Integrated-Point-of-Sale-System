@@ -1,11 +1,11 @@
 import { createTestContext, receiptOf, testEmployee } from '@/db/testing';
-import { sameForEveryCycle } from '@/domain/cycles';
 import { NO_TOP_UP_PRICES } from '@/domain/machinePolicy';
 import { MockMachineController } from '@/machines/MockMachineController';
 
 import { completeFirstRunSetup, listStaff, logIn } from '../auth';
 import { createCustomer, listCustomers } from '../customers';
 import { detectBackupKind, exportBackup, importLegacyExport, restoreBackup } from '../backup';
+import { listCycles } from '../cycles';
 import { listExpenses } from '../expenses';
 import { listInventory } from '../inventory';
 import { addMachine, listMachineLog, listMachines, startOrderOnMachine, topUpDryer } from '../machines';
@@ -141,7 +141,7 @@ describe('full backup', () => {
     const { ctx, owner } = await setup();
     importLegacyExport(ctx, owner, legacyExport);
     setSetting(ctx.db, 'pricePerLoad', 25000);
-    const pulses = { pulseCount: 2, pulseOnMs: 300, pulseOffMs: 400, runMinutes: 35, topUpPulseCount: 2, topUpPulses10: 4, topUpPulses15: 6, topUpPulses20: 8, topUpPrice: 2000, topUpPrice10: 3500, topUpPrice15: 0, topUpPrice20: 0, ...sameForEveryCycle(2, 35) };
+    const pulses = { pulseCount: 2, pulseOnMs: 300, pulseOffMs: 400, runMinutes: 35, topUpPulseCount: 2, topUpPulses10: 4, topUpPulses15: 6, topUpPulses20: 8, topUpPrice: 2000, topUpPrice10: 3500, topUpPrice15: 0, topUpPrice20: 0 };
     const machineId = addMachine(ctx, owner, { name: 'Washer 1', type: 'WASHER', hardwareChannel: 1, enabled: true, ...pulses });
     const dryerId = addMachine(ctx, owner, { name: 'Dryer 1', type: 'DRYER', hardwareChannel: 2, enabled: true, ...pulses });
     const order = createOrder(ctx, testEmployee, {
@@ -202,7 +202,6 @@ describe('full backup', () => {
       topUpPulses15: 3,
       topUpPulses20: 4,
       ...NO_TOP_UP_PRICES,
-      ...sameForEveryCycle(4, 30),
     });
     const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
     for (const row of backup.tables.machines) {
@@ -246,11 +245,51 @@ describe('full backup', () => {
       assignedOrderId: null,
       runMinutes: 40,
       ...NO_TOP_UP_PRICES,
-      ...sameForEveryCycle(1, 40),
       topUpPulses10: 2,
       topUpPulses20: 4,
       runEndsAt: null,
     });
+  });
+
+  it('rebuilds the four fixed cycles of a backup from before cycles had their own table', async () => {
+    const { ctx, owner } = await setup();
+    const washer = addMachine(ctx, owner, {
+      name: 'Washer 1',
+      type: 'WASHER',
+      hardwareChannel: 1,
+      enabled: true,
+      pulseCount: 1,
+      pulseOnMs: 500,
+      pulseOffMs: 500,
+      runMinutes: 30,
+      topUpPulseCount: 1,
+      topUpPulses10: 2,
+      topUpPulses15: 3,
+      topUpPulses20: 4,
+      ...NO_TOP_UP_PRICES,
+    });
+    const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
+    backup.version = 8;
+    delete backup.tables.machineCycles;
+    Object.assign(backup.tables.machines[0], {
+      delicatesPulses: 2,
+      delicatesMinutes: 25,
+      lightPulses: 3,
+      lightMinutes: 30,
+      mediumPulses: 4,
+      mediumMinutes: 40,
+      heavyPulses: 6,
+      heavyMinutes: 55,
+    });
+
+    const fresh = createTestContext();
+    restoreBackup(fresh, owner, backup);
+    expect(listCycles(fresh).map((c) => [c.machineId, c.name, c.pulses, c.minutes, c.enabled])).toEqual([
+      [washer, 'Delicates', 2, 25, true],
+      [washer, 'Light', 3, 30, true],
+      [washer, 'Medium', 4, 40, true],
+      [washer, 'Heavy', 6, 55, true],
+    ]);
   });
 
   it('treats priced items in a backup from before the add-on switch as add-ons', async () => {

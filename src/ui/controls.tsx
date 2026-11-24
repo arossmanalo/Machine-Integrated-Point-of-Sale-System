@@ -90,15 +90,19 @@ export function Checkbox({
   description,
   value,
   onChange,
+  accessibilityLabel,
 }: {
+  /** Empty for a box whose column heading already says what it is (give accessibilityLabel then). */
   label: string;
   description?: string;
   value: boolean;
   onChange: (value: boolean) => void;
+  accessibilityLabel?: string;
 }) {
   return (
     <Pressable
       accessibilityRole="checkbox"
+      accessibilityLabel={accessibilityLabel ?? label}
       accessibilityState={{ checked: value }}
       onPress={() => onChange(!value)}
       style={({ pressed }) => [styles.checkbox, pressed && { opacity: 0.7 }]}
@@ -109,7 +113,7 @@ export function Checkbox({
         color={value ? colors.accent : colors.textMuted}
       />
       <View>
-        <Text variant="bodyStrong">{label}</Text>
+        {label !== '' && <Text variant="bodyStrong">{label}</Text>}
         {description !== undefined && (
           <Text variant="caption" tone="muted">
             {description}

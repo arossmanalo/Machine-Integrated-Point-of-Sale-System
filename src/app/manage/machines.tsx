@@ -1,17 +1,7 @@
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import type { MachineRow } from '@/db/schema';
-import {
-  CYCLE_LABELS,
-  CYCLES,
-  cycleMinutes,
-  cyclePulses,
-  hasCycles,
-  sameForEveryCycle,
-  type Cycle,
-  type CycleSettings,
-} from '@/domain/cycles';
+import type { MachineCycleRow, MachineRow } from '@/db/schema';
 import { can } from '@/domain/permissions';
 import {
   MACHINE_TYPE_LABELS,
@@ -41,6 +31,7 @@ import {
   testStart,
   updateMachine,
 } from '@/services/machines';
+import { listCycles, updateCycles } from '@/services/cycles';
 import { getSetting, setSetting } from '@/services/settings';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData } from '@/state/hooks';
@@ -48,6 +39,8 @@ import { useToast } from '@/state/toast';
 import { Button } from '@/ui/Button';
 import { Badge, Choice, Dialog, Toggle } from '@/ui/controls';
 import { EmptyState, ListRow, Notice, Panel, Row, Screen, Section } from '@/ui/layout';
+import { AddCycleDialog, CycleTable, draftsProblem, toDraft, toEdits, type CycleDraft } from '@/ui/machines/CycleSettings';
+import { useCyclePicker } from '@/ui/machines/MachineDialogs';
 import { ManageScreen } from '@/ui/ManagerGate';
 import { Text } from '@/ui/Text';
 import { TextField } from '@/ui/TextField';
@@ -64,13 +57,12 @@ function topUpSummary(prices: TopUpPrices): string {
     : `top-ups ${options.map((o) => `${o.minutes} min ${formatPeso(o.price)}`).join(', ')}`;
 }
 
-function machineSummary(machine: MachineRow, multiCycle: boolean): string {
+/** `cycles`: the washer's cycles that are switched on, when Multi-cycle is on; empty otherwise. */
+function machineSummary(machine: MachineRow, cycles: readonly MachineCycleRow[]): string {
   const topUp = machine.type === 'DRYER' ? ` · ${topUpSummary(machine)}` : '';
-  if (hasCycles(multiCycle, machine.type)) {
-    const cycles = CYCLES.map(
-      (cycle) => `${CYCLE_LABELS[cycle]} ${cyclePulses(machine, cycle)}× ${cycleMinutes(machine, cycle)} min`,
-    ).join(', ');
-    return `${cycles} · ${machine.pulseOnMs} ms on, ${machine.pulseOffMs} ms off${topUp}`;
+  if (cycles.length > 0) {
+    const list = cycles.map((cycle) => `${cycle.name} ${cycle.pulses}× ${cycle.minutes} min`).join(', ');
+    return `${list} · ${machine.pulseOnMs} ms on, ${machine.pulseOffMs} ms off${topUp}`;
   }
   return `${machine.runMinutes} min run · ${pulseSummary(machine)}${topUp}`;
 }
@@ -91,6 +83,7 @@ export default function MachineSettings() {
   const simulate = useData((c) => getSetting(c.db, 'simulateMachines'));
   const receiptScan = useData((c) => getSetting(c.db, 'requireReceiptScan'));
   const multiCycle = useData((c) => getSetting(c.db, 'multiCycle'));
+  const cyclesFor = useCyclePicker();
   const saved = useData((c) => ({
     address: getSetting(c.db, 'lockControllerAddress'),
     key: getSetting(c.db, 'lockControllerKey'),
@@ -184,8 +177,8 @@ export default function MachineSettings() {
             label="Multi-cycle"
             description={
               multiCycle
-                ? 'Staff pick Delicates, Light, Medium or Heavy before a washer runs. Set the pulses and minutes of each cycle on each washer. Dryers keep one start and their top-ups.'
-                : 'Off: every start sends the machine\'s one pulse count. Turn on to give each washer Delicates, Light, Medium and Heavy cycles.'
+                ? 'Staff pick a cycle before a washer runs. Each washer\'s settings list its cycles: tick the ones to offer, change their pulses and minutes, or add your own. Dryers keep one start and their top-ups.'
+                : 'Off: every start sends the machine\'s one pulse count. Turn on to give each washer cycles (Delicates, Light, Medium, Heavy and any you add).'
             }
             value={multiCycle}
             onChange={(value) => void action.run((c) => setMultiCycle(c, actor, value))}
@@ -200,7 +193,7 @@ export default function MachineSettings() {
                   title={machine.name}
                   subtitle={`${MACHINE_TYPE_LABELS[machine.type]} · channel ${machine.hardwareChannel} (${
                     channelTerminal(machine.hardwareChannel) ?? 'not on the board'
-                  }) · ${machineSummary(machine, multiCycle)}`}
+                  }) · ${machineSummary(machine, cyclesFor(machine))}`}
                   right={
                     <Row>
                       {!machine.enabled && <Badge label="Off" tone="warning" />}
@@ -236,31 +229,6 @@ export default function MachineSettings() {
 
 type PulseTargets = 'this' | 'all' | 'selected';
 
-type CycleTexts = Record<Cycle, { pulses: string; minutes: string }>;
-
-function cycleTexts(settings: CycleSettings): CycleTexts {
-  const texts: Partial<CycleTexts> = {};
-  for (const cycle of CYCLES) {
-    texts[cycle] = { pulses: String(cyclePulses(settings, cycle)), minutes: String(cycleMinutes(settings, cycle)) };
-  }
-  return { DELICATES: texts.DELICATES ?? EMPTY, LIGHT: texts.LIGHT ?? EMPTY, MEDIUM: texts.MEDIUM ?? EMPTY, HEAVY: texts.HEAVY ?? EMPTY };
-}
-
-const EMPTY = { pulses: '', minutes: '' };
-
-function cycleSettings(texts: CycleTexts): CycleSettings {
-  return {
-    delicatesPulses: Number(texts.DELICATES.pulses),
-    delicatesMinutes: Number(texts.DELICATES.minutes),
-    lightPulses: Number(texts.LIGHT.pulses),
-    lightMinutes: Number(texts.LIGHT.minutes),
-    mediumPulses: Number(texts.MEDIUM.pulses),
-    mediumMinutes: Number(texts.MEDIUM.minutes),
-    heavyPulses: Number(texts.HEAVY.pulses),
-    heavyMinutes: Number(texts.HEAVY.minutes),
-  };
-}
-
 function MachineDialog({
   machine,
   machines,
@@ -284,8 +252,17 @@ function MachineDialog({
   const [onText, setOnText] = useState(String(machine?.pulseOnMs ?? 500));
   const [offText, setOffText] = useState(String(machine?.pulseOffMs ?? 500));
   const [runText, setRunText] = useState(String(machine?.runMinutes ?? 40));
-  const cyclesOn = hasCycles(multiCycle, type);
-  const [cycles, setCycles] = useState<CycleTexts>(() => cycleTexts(machine ?? sameForEveryCycle(1, 40)));
+  // Cycles are set on a saved washer: a new one gets the four starting cycles when it is added.
+  const cyclesOn = multiCycle && type === 'WASHER' && machine !== null && machine.type === 'WASHER';
+  const storedCycles = useData(
+    (c) => (machine ? listCycles(c).filter((cycle) => cycle.machineId === machine.id) : []),
+    [machine?.id],
+  );
+  const [cycleEdits, setCycleEdits] = useState<Record<number, CycleDraft>>({});
+  const drafts = storedCycles.map((cycle) => cycleEdits[cycle.id] ?? toDraft(cycle));
+  // With every cycle unticked the washer starts with its own pulse count and run time.
+  const usesOwnStart = !cyclesOn || !drafts.some((draft) => draft.enabled);
+  const [addingCycle, setAddingCycle] = useState(false);
   const [pulseTexts, setPulseTexts] = useState<Record<TopUpMinutes, string>>(() => ({
     5: String(machine?.topUpPulseCount ?? 1),
     10: String(machine?.topUpPulses10 ?? 2),
@@ -330,21 +307,10 @@ function MachineDialog({
           return problem ? `${option.minutes} minutes: ${problem}` : null;
         })
         .find((problem) => problem !== null) ?? null);
-  const cycleValues = cycleSettings(cycles);
-  // Without Multi-cycle a new machine's cycles simply copy its one pulse count and run time.
-  const savedCycles = cyclesOn || machine ? cycleValues : sameForEveryCycle(pulses.count, runMinutes);
-  const cycleError = !cyclesOn
-    ? null
-    : (CYCLES.map((cycle) => {
-        const problem = pulsesProblem({ ...pulses, count: cyclePulses(cycleValues, cycle) });
-        if (problem) return `${CYCLE_LABELS[cycle]}: ${problem}`;
-        const minutes = cycleMinutes(cycleValues, cycle);
-        return Number.isInteger(minutes) && minutes >= RUN_MINUTES_LIMITS.min && minutes <= RUN_MINUTES_LIMITS.max
-          ? null
-          : `${CYCLE_LABELS[cycle]}: enter ${RUN_MINUTES_LIMITS.min} to ${RUN_MINUTES_LIMITS.max} minutes.`;
-      }).find((problem) => problem !== null) ?? null);
+  const cycleError = cyclesOn ? draftsProblem(drafts, pulses.onMs, pulses.offMs) : null;
   const invalid =
-    (cyclesOn ? cycleError !== null : pulseError !== null || runError !== null) ||
+    cycleError !== null ||
+    (usesOwnStart && (pulseError !== null || runError !== null)) ||
     pulsesProblem({ ...pulses, count: 1 }) !== null ||
     topUpPulseError !== null ||
     topUpPriceError !== null;
@@ -390,14 +356,14 @@ function MachineDialog({
       runMinutes,
       ...topUpPulses,
       ...topUpPrices,
-      ...savedCycles,
     };
     const result = await action.run((c) =>
       c.db.transaction((tx) => {
         const txCtx = { ...c, db: tx };
         if (machine) updateMachine(txCtx, actor, machine.id, input);
         else addMachine(txCtx, actor, input);
-        applyPulsesToMachines(txCtx, actor, pulses, copyTo, cyclesOn ? cycleValues : null);
+        applyPulsesToMachines(txCtx, actor, pulses, copyTo);
+        if (cyclesOn && machine) updateCycles(txCtx, actor, machine.id, toEdits(drafts));
         applyTopUpPricesToDryers(txCtx, actor, topUpPrices, priceCopyTo);
       }),
     );
@@ -436,50 +402,27 @@ function MachineDialog({
           : `A start sends ${pulses.count || '?'} pulse${pulses.count === 1 ? '' : 's'} of ${pulses.onMs || '?'} ms with ${pulses.offMs || '?'} ms between them, like coins in the slot.`}
       </Text>
       {cyclesOn && (
-        <View style={styles.cycleTable}>
-          <Row>
-            <Text variant="label" style={styles.cycleName}>
-              Cycle
-            </Text>
-            <Text variant="label" style={styles.flex}>
-              Pulses
-            </Text>
-            <Text variant="label" style={styles.flex}>
-              Minutes
-            </Text>
-          </Row>
-          {CYCLES.map((cycle) => (
-            <Row key={cycle}>
-              <Text style={styles.cycleName}>{CYCLE_LABELS[cycle]}</Text>
-              <TextField
-                label={`${CYCLE_LABELS[cycle]} pulses`}
-                hideLabel
-                value={cycles[cycle].pulses}
-                onChangeText={(text) => setCycles({ ...cycles, [cycle]: { ...cycles[cycle], pulses: text.replace(/\D/g, '') } })}
-                keyboardType="number-pad"
-                style={styles.flex}
-              />
-              <TextField
-                label={`${CYCLE_LABELS[cycle]} minutes`}
-                hideLabel
-                value={cycles[cycle].minutes}
-                onChangeText={(text) => setCycles({ ...cycles, [cycle]: { ...cycles[cycle], minutes: text.replace(/\D/g, '') } })}
-                keyboardType="number-pad"
-                style={styles.flex}
-              />
-            </Row>
-          ))}
-          {cycleError && <Text tone="danger">{cycleError}</Text>}
-        </View>
+        <CycleTable
+          drafts={drafts}
+          onChange={(draft) => setCycleEdits({ ...cycleEdits, [draft.id]: draft })}
+          onAdd={() => setAddingCycle(true)}
+        />
+      )}
+      {cycleError && <Text tone="danger">{cycleError}</Text>}
+      {multiCycle && type === 'WASHER' && !machine && (
+        <Text tone="muted">
+          A new washer gets Delicates, Light, Medium and Heavy with the pulses and run time below. Open it again after
+          adding to change them or add your own.
+        </Text>
       )}
       <Row wrap style={{ alignItems: 'flex-start' }}>
-        {!cyclesOn && (
+        {usesOwnStart && (
           <TextField label="Number of pulses" value={countText} onChangeText={digits(setCountText)} keyboardType="number-pad" style={{ flex: 1 }} />
         )}
         <TextField label="Pulse length (ms)" value={onText} onChangeText={digits(setOnText)} keyboardType="number-pad" style={{ flex: 1 }} />
         <TextField label="Gap (ms)" value={offText} onChangeText={digits(setOffText)} keyboardType="number-pad" style={{ flex: 1 }} />
       </Row>
-      {!cyclesOn && pulseError && <Text tone="danger">{pulseError}</Text>}
+      {usesOwnStart && pulseError && <Text tone="danger">{pulseError}</Text>}
       {others.length > 0 && (
         <Choice
           label="Use these pulses on"
@@ -504,10 +447,10 @@ function MachineDialog({
         ))}
       {copyTo.length > 0 && (
         <Text tone="muted">
-          {`Saving also gives ${copyTo.length} other machine${copyTo.length === 1 ? '' : 's'} these start pulses${cyclesOn ? ' for every cycle' : ''}. Their run times and top-up settings stay as they are.`}
+          {`Saving also gives ${copyTo.length} other machine${copyTo.length === 1 ? '' : 's'} these start pulses. Their cycles, run times and top-up settings stay as they are.`}
         </Text>
       )}
-      {!cyclesOn && (
+      {usesOwnStart && (
         <TextField
           label="Run time (minutes)"
           value={runText}
@@ -596,6 +539,13 @@ function MachineDialog({
         onChange={setEnabled}
       />
       {action.error && <Notice tone="danger">{action.error}</Notice>}
+      {addingCycle && machine && (
+        <AddCycleDialog
+          machine={machine}
+          washers={machines.filter((m) => m.type === 'WASHER')}
+          onClose={() => setAddingCycle(false)}
+        />
+      )}
     </Dialog>
   );
 }

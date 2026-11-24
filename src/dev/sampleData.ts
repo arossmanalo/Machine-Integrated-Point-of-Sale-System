@@ -75,14 +75,6 @@ function machineInput(name: string, type: 'WASHER' | 'DRYER', hardwareChannel: n
     topUpPrice10: dryer ? 3500 : 0,
     topUpPrice15: dryer ? 5000 : 0,
     topUpPrice20: dryer ? 6500 : 0,
-    delicatesPulses: 1,
-    delicatesMinutes: 30,
-    lightPulses: 1,
-    lightMinutes: 32,
-    mediumPulses: 1,
-    mediumMinutes: 35,
-    heavyPulses: 2,
-    heavyMinutes: 45,
   };
 }
 

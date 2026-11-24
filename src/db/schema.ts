@@ -168,7 +168,10 @@ export const machines = sqliteTable('machines', {
   topUpPrice10: integer('top_up_price_10').notNull().default(0),
   topUpPrice15: integer('top_up_price_15').notNull().default(0),
   topUpPrice20: integer('top_up_price_20').notNull().default(0),
-  /** Multi-cycle: pulses and run minutes for each cycle (pulse length and gap as above). */
+  /**
+   * Legacy (migration 0008): the four fixed cycles. Since migration 0010 cycles live in
+   * `machine_cycles`; these columns are kept, unread, so an older app version can still run.
+   */
   delicatesPulses: integer('cycle_delicates_pulses').notNull().default(1),
   delicatesMinutes: integer('cycle_delicates_minutes').notNull().default(40),
   lightPulses: integer('cycle_light_pulses').notNull().default(1),
@@ -177,8 +180,10 @@ export const machines = sqliteTable('machines', {
   mediumMinutes: integer('cycle_medium_minutes').notNull().default(40),
   heavyPulses: integer('cycle_heavy_pulses').notNull().default(1),
   heavyMinutes: integer('cycle_heavy_minutes').notNull().default(40),
-  /** The cycle picked for the waiting assignment, so Run machine can retry it. */
+  /** Legacy, unread since migration 0010 (see `assignedCycleId`). */
   assignedCycle: text('assigned_cycle'),
+  /** The cycle (`machine_cycles.id`) picked for the waiting assignment, so Run machine can retry it. */
+  assignedCycleId: integer('assigned_cycle_id'),
   /** Order of the latest run, kept after the run ends so a dryer top-up can follow it. */
   runOrderId: text('run_order_id').references(() => orders.id),
   /** When the latest run ends. The machine is in use while this is in the future. */
@@ -186,6 +191,27 @@ export const machines = sqliteTable('machines', {
 });
 
 /** Append-only. Nothing in the app edits or deletes these rows except the result update. */
+/**
+ * Multi-cycle: a washer's cycles (Delicates, Light, Medium, Heavy to start with, plus any the
+ * owner adds). Each sends its own pulses (with the washer's pulse length and gap) and counts
+ * down its own minutes. Switched-off cycles are not offered.
+ */
+export const machineCycles = sqliteTable(
+  'machine_cycles',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    machineId: integer('machine_id')
+      .notNull()
+      .references(() => machines.id),
+    name: text('name').notNull(),
+    pulses: integer('pulses').notNull(),
+    minutes: integer('minutes').notNull(),
+    enabled: bool('enabled').notNull().default(true),
+    sortOrder: integer('sort_order').notNull().default(0),
+  },
+  (t) => [index('machine_cycles_machine').on(t.machineId)],
+);
+
 export const machineUnlocks = sqliteTable(
   'machine_unlocks',
   {
@@ -207,13 +233,14 @@ export const machineUnlocks = sqliteTable(
     resolvedAt: integer('resolved_at'),
     /** Top-ups: centavos added to the order's bill, kept here so the daily report can tally them. */
     charge: integer('charge'),
-    /** Multi-cycle: the cycle that was run. */
+    /** Multi-cycle: the name of the cycle that was run (stored as text so renames keep history). */
     cycle: text('cycle'),
   },
   (t) => [index('unlocks_order').on(t.orderId), index('unlocks_at').on(t.at)],
 );
 
 export type UserRow = typeof users.$inferSelect;
+export type MachineCycleRow = typeof machineCycles.$inferSelect;
 export type CustomerRow = typeof customers.$inferSelect;
 export type InventoryItemRow = typeof inventoryItems.$inferSelect;
 export type OrderRow = typeof orders.$inferSelect;

@@ -2,7 +2,6 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 
 import type { MachineUnlockRow } from '@/db/schema';
-import { CYCLE_LABELS, isCycle } from '@/domain/cycles';
 import { formatShopDateTime } from '@/domain/dates';
 import { can } from '@/domain/permissions';
 import { ALL_TIME, periodRange, type ReportPeriod } from '@/domain/reports';
@@ -94,7 +93,7 @@ export default function MachineLog() {
                     key={row.id}
                     title={`${row.machineName} · ${KIND_LABELS[row.kind]}`}
                     subtitle={`${formatShopDateTime(row.at)} · ${row.employeeName}${row.orderId ? ` · ${row.orderId}` : ''}${
-                      row.cycle && isCycle(row.cycle) ? ` · ${CYCLE_LABELS[row.cycle]} cycle` : ''
+                      row.cycle ? ` · ${row.cycle} cycle` : ''
                     }`}
                     meta={
                       <Row wrap>

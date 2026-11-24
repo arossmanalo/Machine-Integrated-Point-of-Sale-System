@@ -1,5 +1,4 @@
 import { createTestContext, receiptOf, testEmployee } from '@/db/testing';
-import { sameForEveryCycle } from '@/domain/cycles';
 import { NO_TOP_UP_PRICES } from '@/domain/machinePolicy';
 import { receiptCodeFor, TEST_RECEIPT_CODE } from '@/domain/receiptCode';
 import { machineUnlocks } from '@/db/schema';
@@ -32,10 +31,11 @@ import {
   updateMachine,
   type MachineInput,
 } from '../machines';
+import { addCycle, listCycles, updateCycles } from '../cycles';
 import { createOrder, getOrderDetail, updateOrderStatus, voidOrder } from '../orders';
 import { getSetting, setSetting } from '../settings';
 
-const PULSES = { pulseCount: 1, pulseOnMs: 500, pulseOffMs: 500, runMinutes: 30, topUpPulseCount: 1, topUpPulses10: 2, topUpPulses15: 3, topUpPulses20: 4, ...NO_TOP_UP_PRICES, ...sameForEveryCycle(1, 30) };
+const PULSES = { pulseCount: 1, pulseOnMs: 500, pulseOffMs: 500, runMinutes: 30, topUpPulseCount: 1, topUpPulses10: 2, topUpPulses15: 3, topUpPulses20: 4, ...NO_TOP_UP_PRICES };
 const MIN = 60 * 1000;
 const DAY = 24 * 60 * MIN;
 
@@ -740,92 +740,139 @@ describe('top-ups paid with the order', () => {
 });
 
 describe('multi-cycle', () => {
-  const cycles = {
-    delicatesPulses: 2,
-    delicatesMinutes: 25,
-    lightPulses: 3,
-    lightMinutes: 30,
-    mediumPulses: 4,
-    mediumMinutes: 40,
-    heavyPulses: 6,
-    heavyMinutes: 55,
-  };
-
+  /** Turns Multi-cycle on and gives Washer 1 cycles with distinct pulses and minutes. */
   async function setupCycles() {
     const env = await setup();
-    updateMachine(env.ctx, env.owner, env.washers[0], { ...machine('Washer 1', 'WASHER', 1), ...cycles });
+    const cycles = listCycles(env.ctx).filter((cycle) => cycle.machineId === env.washers[0]);
+    const byName = (name: string) => {
+      const cycle = cycles.find((c) => c.name === name);
+      if (!cycle) throw new Error(`No ${name} cycle`);
+      return cycle.id;
+    };
+    updateCycles(env.ctx, env.owner, env.washers[0], [
+      { id: byName('Delicates'), name: 'Delicates', pulses: 2, minutes: 25, enabled: true },
+      { id: byName('Light'), name: 'Light', pulses: 3, minutes: 30, enabled: true },
+      { id: byName('Medium'), name: 'Medium', pulses: 4, minutes: 40, enabled: true },
+      { id: byName('Heavy'), name: 'Heavy', pulses: 6, minutes: 55, enabled: true },
+    ]);
     setMultiCycle(env.ctx, env.owner, true);
-    return env;
+    return { ...env, byName };
   }
+
+  it('gives every new washer the four starting cycles, and dryers none', async () => {
+    const { ctx, washers, dryers } = await setup();
+    const names = (id: number) => listCycles(ctx).filter((c) => c.machineId === id).map((c) => c.name);
+    expect(names(washers[1])).toEqual(['Delicates', 'Light', 'Medium', 'Heavy']);
+    expect(names(dryers[0])).toEqual([]);
+  });
 
   it('only the owner turns it on, and while off a start ignores cycles', async () => {
     const { ctx, owner, controller, order, washers } = await setup();
     expect(() => setMultiCycle(ctx, testEmployee, true)).toThrow('Only the owner');
-    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order), 'HEAVY');
+    const heavy = listCycles(ctx).find((c) => c.machineId === washers[0] && c.name === 'Heavy')?.id ?? null;
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order), heavy);
     expect(controller.starts[0].pulses.count).toBe(3);
     setMultiCycle(ctx, owner, true);
     expect(getSetting(ctx.db, 'multiCycle')).toBe(true);
   });
 
   it("needs a cycle, then sends that cycle's pulses and counts down its minutes", async () => {
-    const { ctx, controller, order, washers, machineById, log } = await setupCycles();
-    const run = (cycle: 'DELICATES' | 'HEAVY' | null) =>
-      startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order), cycle);
+    const { ctx, controller, order, washers, machineById, log, byName } = await setupCycles();
+    const run = (cycleId: number | null) =>
+      startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order), cycleId);
     await expect(run(null)).rejects.toThrow('Pick a cycle');
     expect(controller.starts).toEqual([]);
 
-    await expect(run('HEAVY')).resolves.toBe('acked');
+    await expect(run(byName('Heavy'))).resolves.toBe('acked');
     expect(controller.starts[0]).toEqual({ channel: 1, pulses: { count: 6, onMs: 500, offMs: 500 } });
     expect(machineById(washers[0])?.runEndsAt).toBe(ctx.now() + 55 * MIN);
-    expect(log()[0]).toMatchObject({ kind: 'ORDER', cycle: 'HEAVY' });
+    expect(log()[0]).toMatchObject({ kind: 'ORDER', cycle: 'Heavy' });
+  });
+
+  it("refuses a switched-off cycle or another washer's cycle", async () => {
+    const { ctx, owner, controller, order, washers, byName } = await setupCycles();
+    const all = listCycles(ctx).filter((c) => c.machineId === washers[0]);
+    updateCycles(ctx, owner, washers[0], all.map((c) => ({ ...c, enabled: c.name !== 'Heavy' })));
+    const run = (machineId: number, cycleId: number) =>
+      startOrderOnMachine(ctx, controller, testEmployee, order.id, machineId, receiptOf(order), cycleId);
+    await expect(run(washers[0], byName('Heavy'))).rejects.toThrow('switched off');
+    await expect(run(washers[1], byName('Light'))).rejects.toThrow('not on Washer 2');
+    expect(controller.starts).toEqual([]);
+  });
+
+  it('a washer with every cycle switched off starts with its own pulses', async () => {
+    const { ctx, owner, controller, order, washers } = await setupCycles();
+    const all = listCycles(ctx).filter((c) => c.machineId === washers[0]);
+    updateCycles(ctx, owner, washers[0], all.map((c) => ({ ...c, enabled: false })));
+    await expect(
+      startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order)),
+    ).resolves.toBe('acked');
+    expect(controller.starts[0].pulses.count).toBe(3);
   });
 
   it('dryers have no cycles: they start with their own pulses and run time', async () => {
-    const { ctx, owner, controller, order, washers, dryers, machineById } = await setupCycles();
-    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order), 'LIGHT');
+    const { ctx, owner, controller, order, washers, dryers, machineById, byName } = await setupCycles();
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order), byName('Light'));
     markRunDone(ctx, washers[0]);
     await expect(
       startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order)),
     ).resolves.toBe('acked');
     expect(controller.starts[1].pulses.count).toBe(1);
     expect(machineById(dryers[0])?.runEndsAt).toBe(ctx.now() + 30 * MIN);
-    await testStart(ctx, controller, owner, dryers[1], 'HEAVY');
+    await testStart(ctx, controller, owner, dryers[1]);
     expect(controller.starts[2].pulses.count).toBe(1);
   });
 
   it('a retry after a start that sent nothing runs the cycle that was picked', async () => {
-    const { ctx, controller, order, washers } = await setupCycles();
+    const { ctx, controller, order, washers, byName } = await setupCycles();
     controller.failNextStart('failed');
     await expect(
-      startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order), 'DELICATES'),
+      startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order), byName('Delicates')),
     ).resolves.toBe('failed');
     await expect(startMachine(ctx, controller, testEmployee, washers[0])).resolves.toBe('acked');
     expect(controller.starts[0].pulses.count).toBe(2);
   });
 
-  it('owner overrides and test starts run the Medium cycle unless a test picks another', async () => {
-    const { ctx, owner, controller, washers, log } = await setupCycles();
+  it('tests and overrides run the cycle picked, or the first one switched on', async () => {
+    const { ctx, owner, controller, washers, log, byName } = await setupCycles();
     await testStart(ctx, controller, owner, washers[0]);
-    expect(controller.starts[0].pulses.count).toBe(4);
-    for (const cycle of ['DELICATES', 'LIGHT', 'HEAVY'] as const) await testStart(ctx, controller, owner, washers[0], cycle);
-    expect(controller.starts.map((start) => start.pulses.count)).toEqual([4, 2, 3, 6]);
-    expect(log().map((row) => row.cycle)).toEqual(['HEAVY', 'LIGHT', 'DELICATES', 'MEDIUM']);
+    await testStart(ctx, controller, owner, washers[0], byName('Heavy'));
+    expect(controller.starts.map((start) => start.pulses.count)).toEqual([2, 6]);
+    expect(log().map((row) => row.cycle)).toEqual(['Heavy', 'Delicates']);
   });
 
-  it("checks each cycle's pulses and minutes, and copies cycle pulses to other machines", async () => {
-    const { ctx, owner, washers, machineById } = await setupCycles();
-    expect(() =>
-      updateMachine(ctx, owner, washers[1], { ...machine('Washer 2', 'WASHER', 2), ...cycles, heavyPulses: 51 }),
-    ).toThrow('Heavy');
-    expect(() =>
-      updateMachine(ctx, owner, washers[1], { ...machine('Washer 2', 'WASHER', 2), ...cycles, lightMinutes: 0 }),
-    ).toThrow('Light: run time');
-    applyPulsesToMachines(ctx, owner, { count: 1, onMs: 300, offMs: 300 }, [washers[1]], {
-      delicatesPulses: 2,
-      lightPulses: 3,
-      mediumPulses: 4,
-      heavyPulses: 6,
-    });
-    expect(machineById(washers[1])).toMatchObject({ pulseOnMs: 300, heavyPulses: 6, heavyMinutes: 30 });
+  it('the owner adds a cycle to one, all or selected washers, all or nothing', async () => {
+    const { ctx, owner, washers, dryers } = await setupCycles();
+    const quick = { name: 'Quick wash', pulses: 1, minutes: 20 };
+    expect(() => addCycle(ctx, testEmployee, quick, [washers[0]])).toThrow('Only the owner');
+    expect(() => addCycle(ctx, owner, quick, [washers[0], dryers[0]])).toThrow('Dryer 1 is a dryer');
+    expect(() => addCycle(ctx, owner, { ...quick, pulses: 51 }, [washers[0]])).toThrow('Washer 1');
+    expect(() => addCycle(ctx, owner, { ...quick, name: 'heavy' }, [washers[1], washers[0]])).toThrow(
+      'already has a cycle called heavy',
+    );
+    expect(listCycles(ctx).some((c) => c.name === 'Quick wash')).toBe(false);
+
+    addCycle(ctx, owner, quick, [washers[0], washers[2]]);
+    const withQuick = listCycles(ctx).filter((c) => c.name === 'Quick wash').map((c) => c.machineId);
+    expect(withQuick).toEqual([washers[0], washers[2]]);
+    expect(listCycles(ctx).filter((c) => c.machineId === washers[0]).map((c) => c.name)).toEqual([
+      'Delicates',
+      'Light',
+      'Medium',
+      'Heavy',
+      'Quick wash',
+    ]);
+  });
+
+  it("checks each cycle's pulses, minutes and name when the washer is saved", async () => {
+    const { ctx, owner, washers } = await setupCycles();
+    const all = listCycles(ctx).filter((c) => c.machineId === washers[0]);
+    const edit = (change: Partial<(typeof all)[number]>) =>
+      all.map((c, i) => ({ ...c, ...(i === 0 ? change : {}) }));
+    expect(() => updateCycles(ctx, owner, washers[0], edit({ pulses: 51 }))).toThrow('Delicates');
+    expect(() => updateCycles(ctx, owner, washers[0], edit({ minutes: 0 }))).toThrow('Run time');
+    expect(() => updateCycles(ctx, owner, washers[0], edit({ name: 'Light' }))).toThrow('two cycles called Light');
+    expect(() => updateCycles(ctx, owner, washers[1], all)).toThrow('not on Washer 2');
   });
 });
+

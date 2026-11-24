@@ -18,17 +18,6 @@ import {
   type TopUpPrices,
   type PolicyOrder,
 } from '@/domain/machinePolicy';
-import {
-  CYCLE_LABELS,
-  CYCLES,
-  cycleMinutes,
-  cyclePulses,
-  DEFAULT_CYCLE,
-  hasCycles,
-  isCycle,
-  type Cycle,
-  type CycleSettings,
-} from '@/domain/cycles';
 import { formatPeso } from '@/domain/money';
 import { machineEarnings, type MachineEarnings } from '@/domain/machineEarnings';
 import { parseReceiptCode, tokensMatch } from '@/domain/receiptCode';
@@ -40,6 +29,7 @@ import {
   machineUnlocks,
   orderItems,
   orders,
+  type MachineCycleRow,
   type MachineRow,
   type MachineUnlockRow,
   type OrderRow,
@@ -49,6 +39,7 @@ import {
 import { UserFacingError, type Actor, type Db, type ServiceContext } from '@/db/types';
 
 import { checkOwnerPin } from './auth';
+import { addDefaultCycles, enabledCyclesOf, machineUsesCycles, requireCycle } from './cycles';
 import { getSetting, setSetting } from './settings';
 
 /** A pending row younger than this still holds its allowance (the reply may be on its way). */
@@ -139,15 +130,6 @@ export interface MachineInput {
   topUpPrice10: number;
   topUpPrice15: number;
   topUpPrice20: number;
-  /** Multi-cycle pulses and minutes, for both washers and dryers. */
-  delicatesPulses: number;
-  delicatesMinutes: number;
-  lightPulses: number;
-  lightMinutes: number;
-  mediumPulses: number;
-  mediumMinutes: number;
-  heavyPulses: number;
-  heavyMinutes: number;
 }
 
 export function listMachines(ctx: ServiceContext): MachineRow[] {
@@ -171,14 +153,6 @@ function checkMachine(db: Db, input: MachineInput, editingId: number | null): Ma
   if (!Number.isInteger(input.runMinutes) || input.runMinutes < min || input.runMinutes > max) {
     throw new UserFacingError(`Run time must be a whole number of minutes from ${min} to ${max}.`);
   }
-  for (const cycle of CYCLES) {
-    const problem = pulsesProblem({ count: cyclePulses(input, cycle), onMs: input.pulseOnMs, offMs: input.pulseOffMs });
-    if (problem) throw new UserFacingError(`${CYCLE_LABELS[cycle]}: ${problem}`);
-    const cycleRun = cycleMinutes(input, cycle);
-    if (!Number.isInteger(cycleRun) || cycleRun < min || cycleRun > max) {
-      throw new UserFacingError(`${CYCLE_LABELS[cycle]}: run time must be a whole number of minutes from ${min} to ${max}.`);
-    }
-  }
   if (input.type === 'DRYER') {
     const priceProblem = topUpProblem(input, input);
     if (priceProblem) throw new UserFacingError(priceProblem);
@@ -200,8 +174,11 @@ export function addMachine(ctx: ServiceContext, actor: Actor, input: MachineInpu
   requireOwner(actor);
   const values = checkMachine(ctx.db, input, null);
   const sortOrder = listMachines(ctx).length;
-  const result = ctx.db.insert(machines).values({ ...values, sortOrder }).returning().get();
-  return result.id;
+  return ctx.db.transaction((tx) => {
+    const result = tx.insert(machines).values({ ...values, sortOrder }).returning().get();
+    addDefaultCycles(tx, result);
+    return result.id;
+  });
 }
 
 export function updateMachine(ctx: ServiceContext, actor: Actor, id: number, input: MachineInput): void {
@@ -212,38 +189,20 @@ export function updateMachine(ctx: ServiceContext, actor: Actor, id: number, inp
   ctx.db.update(machines).set({ ...values, ...release }).where(eq(machines.id, id)).run();
 }
 
-export type CyclePulses = Pick<CycleSettings, 'delicatesPulses' | 'lightPulses' | 'mediumPulses' | 'heavyPulses'>;
-
-/**
- * Gives several machines the same start pulses (count, length and gap) in one step, and with
- * Multi-cycle the same pulse count per cycle. Run times are left as they are.
- */
+/** Gives several machines the same start pulses (count, length and gap) in one step. */
 export function applyPulsesToMachines(
   ctx: ServiceContext,
   actor: Actor,
   pulses: PulseSettings,
   machineIds: readonly number[],
-  cycles: CyclePulses | null = null,
 ): void {
   requireOwner(actor);
   const problem = pulsesProblem(pulses);
   if (problem) throw new UserFacingError(problem);
-  if (cycles) {
-    const counts: [Cycle, number][] = [
-      ['DELICATES', cycles.delicatesPulses],
-      ['LIGHT', cycles.lightPulses],
-      ['MEDIUM', cycles.mediumPulses],
-      ['HEAVY', cycles.heavyPulses],
-    ];
-    for (const [cycle, count] of counts) {
-      const cycleProblem = pulsesProblem({ ...pulses, count });
-      if (cycleProblem) throw new UserFacingError(`${CYCLE_LABELS[cycle]}: ${cycleProblem}`);
-    }
-  }
   if (machineIds.length === 0) return;
   ctx.db
     .update(machines)
-    .set({ pulseCount: pulses.count, pulseOnMs: pulses.onMs, pulseOffMs: pulses.offMs, ...(cycles ?? {}) })
+    .set({ pulseCount: pulses.count, pulseOnMs: pulses.onMs, pulseOffMs: pulses.offMs })
     .where(inArray(machines.id, [...machineIds]))
     .run();
 }
@@ -412,7 +371,7 @@ export function assignOrder(
   actor: Actor,
   orderId: string,
   machineId: number,
-  cycle: Cycle | null = null,
+  cycleId: number | null = null,
 ): void {
   ctx.db.transaction((tx) => {
     const txCtx = { ...ctx, db: tx };
@@ -427,7 +386,7 @@ export function assignOrder(
     });
     if (!decision.allowed) throw new UserFacingError(decision.message);
     tx.update(machines)
-      .set({ assignedOrderId: orderId, assignedAt: ctx.now(), assignedByName: actor.username, assignedCycle: cycle })
+      .set({ assignedOrderId: orderId, assignedAt: ctx.now(), assignedByName: actor.username, assignedCycleId: cycleId })
       .where(eq(machines.id, machineId))
       .run();
   });
@@ -454,7 +413,8 @@ interface LogEntry {
   overrideReason?: string | null;
   overrideNote?: string | null;
   charge?: number | null;
-  cycle?: Cycle | null;
+  /** Name of the cycle run (Multi-cycle washers). */
+  cycle?: string | null;
 }
 
 function writeLog(ctx: ServiceContext, entry: LogEntry): number {
@@ -510,29 +470,34 @@ function isReady(controller: MachineController): boolean {
 }
 
 /** In use from now for the machine's run time, for this order (null for an override without one). */
-function runFields(machine: MachineRow, orderId: string | null, now: number, cycle: Cycle | null = null) {
-  const minutes = cycle === null ? machine.runMinutes : cycleMinutes(machine, cycle);
+function runFields(machine: MachineRow, orderId: string | null, now: number, cycle: MachineCycleRow | null = null) {
+  const minutes = cycle === null ? machine.runMinutes : cycle.minutes;
   return { runOrderId: orderId, runEndsAt: now + minutes * 60000 };
 }
 
 /** The pulses that start a machine: its cycle's count when Multi-cycle is on, else its own. */
-function startPulsesFor(machine: MachineRow, cycle: Cycle | null): PulseSettings {
+function startPulsesFor(machine: MachineRow, cycle: MachineCycleRow | null): PulseSettings {
   const pulses = pulsesOf(machine);
-  return cycle === null ? pulses : { ...pulses, count: cyclePulses(machine, cycle) };
+  return cycle === null ? pulses : { ...pulses, count: cycle.pulses };
 }
 
 /** The cycle an order start runs: the one picked when it was assigned (Multi-cycle only). */
-function cycleForStart(db: Db, machine: MachineRow): Cycle | null {
-  if (!hasCycles(getSetting(db, 'multiCycle'), machine.type)) return null;
-  if (machine.assignedCycle === null || !isCycle(machine.assignedCycle)) {
+function cycleForStart(db: Db, machine: MachineRow): MachineCycleRow | null {
+  if (!machineUsesCycles(db, machine)) return null;
+  if (machine.assignedCycleId === null) {
     throw new UserFacingError(`No cycle was picked for ${machine.name}. Tap Remove, then assign the order again.`);
   }
-  return machine.assignedCycle;
+  return requireCycle(db, machine, machine.assignedCycleId);
 }
 
-/** Owner overrides have no cycle picked, so a washer runs Medium with Multi-cycle on. */
-function plainCycle(db: Db, machine: MachineRow): Cycle | null {
-  return hasCycles(getSetting(db, 'multiCycle'), machine.type) ? DEFAULT_CYCLE : null;
+/**
+ * The cycle for an owner override or a test: the one picked, else the washer's first cycle that
+ * is switched on. Null when the machine does not use cycles.
+ */
+function chosenOrFirstCycle(db: Db, machine: MachineRow, cycleId: number | null): MachineCycleRow | null {
+  if (!machineUsesCycles(db, machine)) return null;
+  if (cycleId !== null) return requireCycle(db, machine, cycleId);
+  return enabledCyclesOf(db, machine.id)[0] ?? null;
 }
 
 /** Owner only: turns cycle choices on or off for every machine. */
@@ -606,7 +571,7 @@ export async function startMachine(
       .run();
     const logId = writeLog(
       { ...ctx, db: tx },
-      { machine, actor, kind: 'ORDER', orderId: machine.assignedOrderId, result: 'PENDING', cycle },
+      { machine, actor, kind: 'ORDER', orderId: machine.assignedOrderId, result: 'PENDING', cycle: cycle?.name },
     );
     return { machine, logId, pulses, charge };
   });
@@ -648,17 +613,15 @@ export async function startOrderOnMachine(
   orderId: string,
   machineId: number,
   receiptCode: string | null,
-  pickedCycle: Cycle | null = null,
+  pickedCycleId: number | null = null,
   extraTopUp: TopUpMinutes | null = null,
 ): Promise<StartResult> {
   if (getSetting(ctx.db, 'requireReceiptScan')) checkReceiptFor(ctx, receiptCode ?? '', orderId);
   const machine = requireMachine(ctx.db, machineId);
-  const usesCycles = hasCycles(getSetting(ctx.db, 'multiCycle'), machine.type);
-  if (usesCycles && pickedCycle === null) {
-    throw new UserFacingError('Pick a cycle: Delicates, Light, Medium or Heavy.');
-  }
-  const cycle = usesCycles ? pickedCycle : null;
-  if (machine.assignedOrderId !== orderId || machine.assignedCycle !== cycle) {
+  const usesCycles = machineUsesCycles(ctx.db, machine);
+  if (usesCycles && pickedCycleId === null) throw new UserFacingError(`Pick a cycle for ${machine.name}.`);
+  const cycleId = usesCycles && pickedCycleId !== null ? requireCycle(ctx.db, machine, pickedCycleId).id : null;
+  if (machine.assignedOrderId !== orderId || machine.assignedCycleId !== cycleId) {
     ctx.db.transaction((tx) => {
       // A start that sent nothing left the order waiting on another machine; staff chose this one instead.
       tx.update(machines)
@@ -674,7 +637,7 @@ export async function startOrderOnMachine(
           .where(eq(machines.id, machineId))
           .run();
       }
-      assignOrder({ ...ctx, db: tx }, actor, orderId, machineId, cycle);
+      assignOrder({ ...ctx, db: tx }, actor, orderId, machineId, cycleId);
     });
   }
   return startMachine(ctx, controller, actor, machineId, extraTopUp);
@@ -848,6 +811,8 @@ export interface OverrideInput {
   reason: OverrideReason;
   note: string;
   orderId: string | null;
+  /** Multi-cycle washers: the cycle to run (the first one switched on if not given). */
+  cycleId?: number | null;
 }
 
 /** Owner-PIN start outside an order's allowance. Wrong PINs are logged too. */
@@ -875,8 +840,13 @@ export async function overrideStart(
     throw new UserFacingError('Wrong owner PIN.');
   }
   const ready = isReady(controller);
-  const cycle = plainCycle(ctx.db, machine);
-  const logId = writeLog(ctx, { ...base, kind: 'OVERRIDE', result: ready ? 'PENDING' : 'NOT_CONNECTED', cycle });
+  const cycle = chosenOrFirstCycle(ctx.db, machine, input.cycleId ?? null);
+  const logId = writeLog(ctx, {
+    ...base,
+    kind: 'OVERRIDE',
+    result: ready ? 'PENDING' : 'NOT_CONNECTED',
+    cycle: cycle?.name,
+  });
   if (!ready) return 'not-connected';
   ctx.db
     .update(machines)
@@ -891,26 +861,26 @@ export async function overrideStart(
 /** Owner test start from the machine settings or the Machines tab, logged as TEST. */
 /**
  * Owner only: sends a machine's pulses without an order and logs it as a test. With Multi-cycle
- * on, the owner picks which cycle to test (Medium when none is given).
+ * on, the owner picks which of a washer's cycles to test (its first one when none is given).
  */
 export async function testStart(
   ctx: ServiceContext,
   controller: MachineController,
   actor: Actor,
   machineId: number,
-  testCycle: Cycle | null = null,
+  testCycleId: number | null = null,
 ): Promise<StartResult> {
   requireOwner(actor);
   const machine = requireMachine(ctx.db, machineId);
   const ready = isReady(controller);
-  const cycle = hasCycles(getSetting(ctx.db, 'multiCycle'), machine.type) ? (testCycle ?? DEFAULT_CYCLE) : null;
+  const cycle = chosenOrFirstCycle(ctx.db, machine, testCycleId);
   const logId = writeLog(ctx, {
     machine,
     actor,
     kind: 'TEST',
     orderId: null,
     result: ready ? 'PENDING' : 'NOT_CONNECTED',
-    cycle,
+    cycle: cycle?.name,
   });
   if (!ready) return 'not-connected';
   return sendAndRecord(ctx, controller, logId, machine, startPulsesFor(machine, cycle));

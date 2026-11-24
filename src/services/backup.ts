@@ -9,6 +9,7 @@ import {
   customers,
   expenses,
   inventoryItems,
+  machineCycles,
   machines,
   machineUnlocks,
   orderItems,
@@ -28,7 +29,7 @@ import { DEVICE_ONLY_SETTINGS } from './settings';
 
 export const BACKUP_FORMAT = 'laundry-pos-backup';
 /** 2: machine run timers, dryer top-ups and the TOP_UP log kind. */
-export const BACKUP_VERSION = 8;
+export const BACKUP_VERSION = 9;
 
 function readAll(db: Db) {
   return {
@@ -42,6 +43,7 @@ function readAll(db: Db) {
     settings: db.select().from(settings).where(notInArray(settings.key, [...DEVICE_ONLY_SETTINGS])).all(),
     sequences: db.select().from(sequences).all(),
     machines: db.select().from(machines).all(),
+    machineCycles: db.select().from(machineCycles).all(),
     machineUnlocks: db.select().from(machineUnlocks).all(),
   };
 }
@@ -187,6 +189,8 @@ const tableSchemas = {
     heavyPulses: int.optional(),
     heavyMinutes: int.optional(),
     assignedCycle: maybeText.default(null),
+    // Backups before version 9 named the waiting cycle (assignedCycle) instead of pointing at it.
+    assignedCycleId: maybeInt.default(null),
   }).transform((machine) => ({
     ...machine,
     delicatesPulses: machine.delicatesPulses ?? machine.pulseCount,
@@ -201,6 +205,15 @@ const tableSchemas = {
     topUpPulses15: machine.topUpPulses15 ?? machine.topUpPulseCount * 3,
     topUpPulses20: machine.topUpPulses20 ?? machine.topUpPulseCount * 4,
   })),
+  machineCycles: z.object({
+    id: int,
+    machineId: int,
+    name: text,
+    pulses: int,
+    minutes: int,
+    enabled: z.boolean(),
+    sortOrder: int,
+  }),
   machineUnlocks: z.object({
     id: int,
     at: int,
@@ -236,6 +249,8 @@ const backupSchema = z.object({
     settings: z.array(tableSchemas.settings),
     sequences: z.array(tableSchemas.sequences),
     machines: z.array(tableSchemas.machines),
+    // Backups before version 9 had the four fixed cycles on each machine row instead.
+    machineCycles: z.array(tableSchemas.machineCycles).optional(),
     machineUnlocks: z.array(tableSchemas.machineUnlocks),
   }),
 });
@@ -244,6 +259,22 @@ export interface RestoreSummary {
   orders: number;
   customers: number;
   unlocks: number;
+}
+
+type BackupMachine = z.infer<typeof tableSchemas.machines>;
+
+/** The four fixed cycles of a washer in a backup from before version 9, as cycle rows. */
+function cyclesFromOldBackup(rows: readonly BackupMachine[]) {
+  return rows
+    .filter((machine) => machine.type === 'WASHER')
+    .flatMap((machine) =>
+      [
+        { name: 'Delicates', pulses: machine.delicatesPulses, minutes: machine.delicatesMinutes },
+        { name: 'Light', pulses: machine.lightPulses, minutes: machine.lightMinutes },
+        { name: 'Medium', pulses: machine.mediumPulses, minutes: machine.mediumMinutes },
+        { name: 'Heavy', pulses: machine.heavyPulses, minutes: machine.heavyMinutes },
+      ].map((cycle, sortOrder) => ({ ...cycle, machineId: machine.id, enabled: true, sortOrder })),
+    );
 }
 
 /**
@@ -257,6 +288,7 @@ export function restoreBackup(ctx: ServiceContext, actor: Actor, parsed: unknown
   const { tables } = result.data;
   ctx.db.transaction((tx) => {
     tx.delete(machineUnlocks).run();
+    tx.delete(machineCycles).run();
     // Machines can point at an order they are assigned to, so they go before orders.
     tx.delete(machines).run();
     tx.delete(payments).run();
@@ -281,6 +313,9 @@ export function restoreBackup(ctx: ServiceContext, actor: Actor, parsed: unknown
     for (const values of tables.settings) tx.insert(settings).values(values).run();
     for (const values of tables.sequences) tx.insert(sequences).values(values).run();
     for (const values of tables.machines) tx.insert(machines).values(values).run();
+    for (const values of tables.machineCycles ?? cyclesFromOldBackup(tables.machines)) {
+      tx.insert(machineCycles).values(values).run();
+    }
     for (const values of tables.machineUnlocks) tx.insert(machineUnlocks).values(values).run();
   });
   return { orders: tables.orders.length, customers: tables.customers.length, unlocks: tables.machineUnlocks.length };

@@ -37,7 +37,7 @@ The washers and dryers only start for an order, and only with that order's recei
 
 ### Cycles (when Multi-cycle is on)
 
-If the owner has turned on Multi-cycle, the **Run Washer 1 for T0012?** window asks for a cycle: **Delicates**, **Light**, **Medium** or **Heavy**, each with its minutes. Pick one, then tap **Run machine**. The machine gets that cycle's pulses and the countdown uses its minutes. The machine log shows the cycle.
+If the owner has turned on Multi-cycle, the **Run Washer 1 for T0012?** window asks for one of that washer's cycles (such as **Delicates**, **Light**, **Medium**, **Heavy** or one the owner added), each with its minutes. Pick one, then tap **Run machine**. The machine gets that cycle's pulses and the countdown uses its minutes. The machine log shows the cycle.
 
 ### Dryer top-ups
 
@@ -131,7 +131,7 @@ Everything lives only on this tablet. Go to **Manage › Backup and import › S
 
 ### Multi-cycle
 
-In **Manage › Machines**, turn on **Multi-cycle** to make staff pick Delicates, Light, Medium or Heavy before a machine runs. Each machine's settings then show a table with the pulses and minutes of each cycle in place of the single pulse count and run time; pulse length and gap stay the same for all cycles. **Use these pulses on** also copies the cycle pulses. Owner overrides run the Medium cycle. In Testing mode, **Test start** on a washer asks which cycle to send, and on a dryer asks for **Start** or a 5, 10, 15 or 20-minute top-up, so you can test each one in turn. Tests charge nothing and set no countdown. When you first turn it on, every cycle has the machine's current pulses and run time, so set each one.
+In **Manage › Machines**, turn on **Multi-cycle** to make staff pick a cycle before a washer runs. Each washer starts with Delicates, Light, Medium and Heavy. Its settings show a table of its cycles: the tick box (**On**) decides whether staff are offered that cycle, and you can change each cycle's name, pulses and minutes; pulse length and gap stay the washer's. **Add cycle** creates your own (for example "Quick wash") on this washer only, all washers, or the washers you pick. A washer with every cycle unticked starts with its own pulse count and run time. Dryers have no cycles. The owner override asks for the cycle too. In Testing mode, **Test start** on a washer asks which cycle to send, and on a dryer asks for **Start** or a 5, 10, 15 or 20-minute top-up, so you can test each one in turn. Tests charge nothing and set no countdown. When you first turn it on, every cycle has the machine's current pulses and run time, so set each one.
 
 ### Setting up machines
 

@@ -5,7 +5,6 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { MachineRow } from '@/db/schema';
 import type { ServiceContext } from '@/db/types';
-import { CYCLE_LABELS, CYCLES, cyclePulses, hasCycles } from '@/domain/cycles';
 import { formatShopTime } from '@/domain/dates';
 import {
   isRunning,
@@ -32,14 +31,19 @@ import {
   unassignMachine,
 } from '@/services/machines';
 import { createTestOrder, listOrderSummaries, voidOrder } from '@/services/orders';
-import { getSetting } from '@/services/settings';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData, useNow } from '@/state/hooks';
 import { useToast } from '@/state/toast';
 import { Button } from '@/ui/Button';
 import { Badge, Choice, Dialog, Toggle } from '@/ui/controls';
 import { EmptyState, Notice, Panel, Row, Screen, Section } from '@/ui/layout';
-import { MachineEarningsDialog, OrderPickerDialog, OverrideDialog, useReportStart } from '@/ui/machines/MachineDialogs';
+import {
+  MachineEarningsDialog,
+  OrderPickerDialog,
+  OverrideDialog,
+  useCyclePicker,
+  useReportStart,
+} from '@/ui/machines/MachineDialogs';
 import { Text } from '@/ui/Text';
 import { colors, MIN_TOUCH, radius, space } from '@/ui/theme';
 
@@ -59,7 +63,7 @@ export default function Machines() {
   const [overriding, setOverriding] = useState<MachineRow | null>(null);
   const [toppingUp, setToppingUp] = useState<MachineRow | null>(null);
   const [testingCycles, setTestingCycles] = useState<MachineRow | null>(null);
-  const multiCycle = useData((c) => getSetting(c.db, 'multiCycle'));
+  const cyclesFor = useCyclePicker();
   const [viewingEarnings, setViewingEarnings] = useState<MachineRow | null>(null);
   const [testOrderId, setTestOrderId] = useState<string | null>(null);
   const action = useAction();
@@ -89,7 +93,7 @@ export default function Machines() {
 
   async function test(machine: MachineRow) {
     // Dryers (start or a top-up) and multi-cycle washers ask what to send first.
-    if (machine.type === 'DRYER' || hasCycles(multiCycle, machine.type)) {
+    if (machine.type === 'DRYER' || cyclesFor(machine).length > 0) {
       setTestingCycles(machine);
       return;
     }
@@ -315,7 +319,7 @@ export default function Machines() {
       {viewingEarnings && <MachineEarningsDialog machine={viewingEarnings} onClose={() => setViewingEarnings(null)} />}
       {overriding && <OverrideDialog machine={overriding} onClose={() => setOverriding(null)} />}
       {testingCycles && (
-        <TestMachineDialog machine={testingCycles} multiCycle={multiCycle} onClose={() => setTestingCycles(null)} />
+        <TestMachineDialog machine={testingCycles} onClose={() => setTestingCycles(null)} />
       )}
       {toppingUp && (
         <TopUpDialog
@@ -336,17 +340,16 @@ export default function Machines() {
  */
 function TestMachineDialog({
   machine,
-  multiCycle,
   onClose,
 }: {
   machine: MachineRow;
-  multiCycle: boolean;
   onClose: () => void;
 }) {
   const actor = useActor();
   const { controller } = useApp();
   const action = useAction();
   const report = useReportStart();
+  const cycles = useCyclePicker()(machine);
   const plural = (count: number) => `${count} pulse${count === 1 ? '' : 's'}`;
   const options: { value: string; label: string; send: (c: ServiceContext) => Promise<StartResult> }[] =
     machine.type === 'DRYER'
@@ -362,11 +365,11 @@ function TestMachineDialog({
             send: (c: ServiceContext) => testTopUp(c, controller, actor, machine.id, minutes),
           })),
         ]
-      : hasCycles(multiCycle, machine.type)
-        ? CYCLES.map((cycle) => ({
-            value: cycle,
-            label: `${CYCLE_LABELS[cycle]} · ${plural(cyclePulses(machine, cycle))}`,
-            send: (c: ServiceContext) => testStart(c, controller, actor, machine.id, cycle),
+      : cycles.length > 0
+        ? cycles.map((cycle) => ({
+            value: String(cycle.id),
+            label: `${cycle.name} · ${plural(cycle.pulses)}`,
+            send: (c: ServiceContext) => testStart(c, controller, actor, machine.id, cycle.id),
           }))
         : [
             {
