@@ -41,6 +41,8 @@ If the owner has turned on Multi-cycle, the **Run Washer 1 for T0012?** window a
 
 ### Dryer top-ups
 
+When you run a dryer for an order, the **Run Dryer 1 for T0012?** window also offers a **Top-up** (None, or a length with its price). A chosen top-up goes out with the start and is added to the bill. If a top-up was paid ahead with the order, the window says so instead.
+
 If the laundry is still damp, tap **Top up** on the dryer in **Machines** while it is still running. Pick 5, 10, 15 or 20 minutes (only the lengths the owner has priced show), then tap **Add**. The minutes go on the countdown and the price is added to the order's bill. Once the countdown ends or someone taps **Mark as done**, the Top up button is gone. If the top-up does not reach the dryer, the charge comes off again.
 
 **Adding a top-up when taking the order:** if you can already tell the laundry will need longer, pick a length under **Dryer top-up** (below the add-ons) on the new order and how many loads get it. It is charged with the order and shows on the receipt. When each of those loads starts in a dryer, the extra minutes and pulses go out with the start; there is nothing more to tap.

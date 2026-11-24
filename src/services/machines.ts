@@ -357,8 +357,12 @@ function washProgress(db: Db, now: number, orderId: string): { washedLoads: numb
  * covers: the first `prepaidTopUpLoads` dryer starts of the order get it.
  */
 function prepaidTopUpFor(db: Db, now: number, machine: MachineRow, order: OrderRow): TopUpMinutes | null {
+  return machine.type === 'DRYER' ? prepaidForNextDryer(db, now, order) : null;
+}
+
+function prepaidForNextDryer(db: Db, now: number, order: OrderRow): TopUpMinutes | null {
   const minutes = order.prepaidTopUpMinutes;
-  if (machine.type !== 'DRYER' || minutes === null || !isTopUpMinutes(minutes)) return null;
+  if (minutes === null || !isTopUpMinutes(minutes)) return null;
   const dryerStarts = countedStarts(db, now, order.id).filter((start) => start.type === 'DRYER').length;
   return dryerStarts < order.prepaidTopUpLoads ? minutes : null;
 }
@@ -555,6 +559,7 @@ export async function startMachine(
   controller: MachineController,
   actor: Actor,
   machineId: number,
+  extraTopUp: TopUpMinutes | null = null,
 ): Promise<StartResult> {
   if (!isReady(controller)) return 'not-connected';
   const claimed = ctx.db.transaction((tx) => {
@@ -569,14 +574,25 @@ export async function startMachine(
     }
     const cycle = cycleForStart(tx, machine);
     // A top-up paid with the order goes out with the start: its pulses follow the start's.
-    const topUp = prepaidTopUpFor(tx, ctx.now(), machine, order);
+    const prepaid = prepaidTopUpFor(tx, ctx.now(), machine, order);
+    // Otherwise staff may add one on the start screen; it is charged now, like a top-up while drying.
+    const added = prepaid === null && extraTopUp !== null && machine.type === 'DRYER' ? extraTopUp : null;
+    const addedPrice = added === null ? 0 : topUpPriceFor(machine, added);
+    if (added !== null && addedPrice <= 0) {
+      throw new UserFacingError(`A ${added}-minute top-up on ${machine.name} has no price. The owner sets it in Manage, Machines.`);
+    }
+    const topUp = prepaid ?? added;
     const start = startPulsesFor(machine, cycle);
     const pulses =
       topUp === null ? start : { ...start, count: start.count + topUpPulsesOf(machine, topUp).count };
     const problem = pulsesProblem(pulses);
     if (problem) {
-      throw new UserFacingError(`${machine.name} cannot send the start and the paid top-up together: ${problem}`);
+      throw new UserFacingError(`${machine.name} cannot send the start and the top-up together: ${problem}`);
     }
+    const charge =
+      added === null
+        ? null
+        : chargeTopUp({ ...ctx, db: tx }, actor, machine, order.id, added, addedPrice);
     const run = runFields(machine, machine.assignedOrderId, ctx.now(), cycle);
     tx.update(machines)
       .set({
@@ -592,10 +608,19 @@ export async function startMachine(
       { ...ctx, db: tx },
       { machine, actor, kind: 'ORDER', orderId: machine.assignedOrderId, result: 'PENDING', cycle },
     );
-    return { machine, logId, pulses };
+    return { machine, logId, pulses, charge };
   });
   const result = await sendAndRecord(ctx, controller, claimed.logId, claimed.machine, claimed.pulses);
+  if (claimed.charge) {
+    // The top-up went out (or not) with the start, so its log row gets the same result.
+    ctx.db
+      .update(machineUnlocks)
+      .set({ result: RESULT_CODES[result], resolvedAt: ctx.now() })
+      .where(eq(machineUnlocks.id, claimed.charge.logId))
+      .run();
+  }
   if (NOTHING_SENT.includes(result)) {
+    if (claimed.charge) undoTopUpCharge(ctx.db, claimed.charge);
     // Nothing started, so the order goes back on the machine, unless someone reassigned it since.
     restoreRun(ctx.db, claimed.machine);
     ctx.db
@@ -624,6 +649,7 @@ export async function startOrderOnMachine(
   machineId: number,
   receiptCode: string | null,
   pickedCycle: Cycle | null = null,
+  extraTopUp: TopUpMinutes | null = null,
 ): Promise<StartResult> {
   if (getSetting(ctx.db, 'requireReceiptScan')) checkReceiptFor(ctx, receiptCode ?? '', orderId);
   const machine = requireMachine(ctx.db, machineId);
@@ -651,7 +677,7 @@ export async function startOrderOnMachine(
       assignOrder({ ...ctx, db: tx }, actor, orderId, machineId, cycle);
     });
   }
-  return startMachine(ctx, controller, actor, machineId);
+  return startMachine(ctx, controller, actor, machineId, extraTopUp);
 }
 
 /**
@@ -678,50 +704,81 @@ export async function topUpDryer(
     if (!decision.allowed || !order) {
       throw new UserFacingError(decision.allowed ? 'There is no order to top up.' : decision.message);
     }
-    const item = tx
-      .insert(orderItems)
-      .values({
-        orderId: order.id,
-        inventoryItemId: null,
-        name: `Dryer top-up ${minutes} min (${machine.name})`,
-        quantity: 1,
-        unitPrice: price,
-      })
-      .returning({ id: orderItems.id })
-      .get();
-    tx.update(orders)
-      .set({ total: sql`${orders.total} + ${price}` })
-      .where(eq(orders.id, order.id))
-      .run();
+    const charge = chargeTopUp({ ...ctx, db: tx }, actor, machine, order.id, minutes, price);
     tx.update(machines)
       .set({ runEndsAt: endAfterTopUp(machine, ctx.now(), minutes) })
       .where(eq(machines.id, machineId))
       .run();
-    const logId = writeLog(
-      { ...ctx, db: tx },
-      { machine, actor, kind: 'TOP_UP', orderId: order.id, result: 'PENDING', charge: price },
-    );
-    return { machine, logId, itemId: item.id, orderId: order.id, price };
+    return { machine, charge };
   });
   const result = await sendAndRecord(
     ctx,
     controller,
-    claimed.logId,
+    claimed.charge.logId,
     claimed.machine,
     topUpPulsesOf(claimed.machine, minutes),
   );
   if (NOTHING_SENT.includes(result)) {
     ctx.db.transaction((tx) => {
-      tx.delete(orderItems).where(eq(orderItems.id, claimed.itemId)).run();
-      tx.update(orders)
-        .set({ total: sql`${orders.total} - ${claimed.price}` })
-        .where(eq(orders.id, claimed.orderId))
-        .run();
-      tx.update(machineUnlocks).set({ charge: null }).where(eq(machineUnlocks.id, claimed.logId)).run();
+      undoTopUpCharge(tx, claimed.charge);
       restoreRun(tx, claimed.machine);
     });
   }
   return result;
+}
+
+interface TopUpCharge {
+  logId: number;
+  itemId: number;
+  orderId: string;
+  price: number;
+}
+
+/** Puts a top-up on the order's bill and logs it (result pending until the pulses are sent). */
+function chargeTopUp(
+  ctx: ServiceContext,
+  actor: Actor,
+  machine: MachineRow,
+  orderId: string,
+  minutes: TopUpMinutes,
+  price: number,
+): TopUpCharge {
+  const item = ctx.db
+    .insert(orderItems)
+    .values({
+      orderId,
+      inventoryItemId: null,
+      name: `Dryer top-up ${minutes} min (${machine.name})`,
+      quantity: 1,
+      unitPrice: price,
+    })
+    .returning({ id: orderItems.id })
+    .get();
+  ctx.db
+    .update(orders)
+    .set({ total: sql`${orders.total} + ${price}` })
+    .where(eq(orders.id, orderId))
+    .run();
+  const logId = writeLog(ctx, { machine, actor, kind: 'TOP_UP', orderId, result: 'PENDING', charge: price });
+  return { logId, itemId: item.id, orderId, price };
+}
+
+/** Takes a top-up off the bill again when its pulses never went out. */
+function undoTopUpCharge(db: Db, charge: TopUpCharge): void {
+  db.transaction((tx) => {
+    tx.delete(orderItems).where(eq(orderItems.id, charge.itemId)).run();
+    tx.update(orders)
+      .set({ total: sql`${orders.total} - ${charge.price}` })
+      .where(eq(orders.id, charge.orderId))
+      .run();
+    tx.update(machineUnlocks).set({ charge: null }).where(eq(machineUnlocks.id, charge.logId)).run();
+  });
+}
+
+/** For the start screen: the top-up paid ahead for the order's next dryer load, if any. */
+export function prepaidTopUpForNextDryer(ctx: ServiceContext, orderId: string): TopUpMinutes | null {
+  const order = ctx.db.select().from(orders).where(eq(orders.id, orderId)).get();
+  return order ? prepaidForNextDryer(ctx.db, ctx.now(), order) : null;
 }
 
 /**

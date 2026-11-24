@@ -5,7 +5,16 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import type { MachineRow } from '@/db/schema';
 import { CYCLE_LABELS, CYCLES, cycleMinutes, hasCycles, isCycle, type Cycle } from '@/domain/cycles';
 import { UserFacingError, type ServiceContext } from '@/db/types';
-import { isRunning, MACHINE_TYPE_LABELS, machineAllowance, minutesLeft, type MachineType } from '@/domain/machinePolicy';
+import {
+  isRunning,
+  isTopUpMinutes,
+  MACHINE_TYPE_LABELS,
+  machineAllowance,
+  minutesLeft,
+  topUpOptions,
+  type MachineType,
+  type TopUpMinutes,
+} from '@/domain/machinePolicy';
 import type { Earned } from '@/domain/machineEarnings';
 import { formatPeso } from '@/domain/money';
 import { can } from '@/domain/permissions';
@@ -18,6 +27,7 @@ import {
   machineUsage,
   OVERRIDE_REASONS,
   overrideStart,
+  prepaidTopUpForNextDryer,
   readReceiptCode,
   RESULT_MESSAGES,
   startOrderOnMachine,
@@ -101,6 +111,8 @@ function ConfirmStart({
   multiCycle,
   cycle,
   onCycle,
+  topUp,
+  onTopUp,
 }: {
   machine: MachineRow;
   orderId: string;
@@ -108,8 +120,16 @@ function ConfirmStart({
   multiCycle: boolean;
   cycle: Cycle | null;
   onCycle: (cycle: Cycle) => void;
+  topUp: TopUpMinutes | null;
+  onTopUp: (minutes: TopUpMinutes | null) => void;
 }) {
-  const minutes = multiCycle ? (cycle ? cycleMinutes(machine, cycle) : null) : machine.runMinutes;
+  // Dryers: a top-up paid with the order goes out with this start; otherwise staff may add one.
+  const prepaid = useData((c) => prepaidTopUpForNextDryer(c, orderId), [orderId]);
+  const dryer = machine.type === 'DRYER';
+  const options = dryer && prepaid === null ? topUpOptions(machine) : [];
+  const extra = dryer ? (prepaid ?? topUp ?? 0) : 0;
+  const base = multiCycle ? (cycle ? cycleMinutes(machine, cycle) : null) : machine.runMinutes;
+  const minutes = base === null ? null : base + extra;
   return (
     <View style={styles.confirm}>
       <MaterialCommunityIcons name={machineIcon(machine.type)} size={40} color={colors.accent} />
@@ -126,6 +146,26 @@ function ConfirmStart({
             value: option,
             label: `${CYCLE_LABELS[option]} · ${cycleMinutes(machine, option)} min`,
           }))}
+        />
+      )}
+      {dryer && prepaid !== null && (
+        <Text tone="success">{`Top-up paid ahead: ${prepaid} extra minutes go out with this start.`}</Text>
+      )}
+      {options.length > 0 && (
+        <Choice
+          label="Top-up"
+          value={topUp === null ? 'none' : String(topUp)}
+          onChange={(value) => {
+            const chosen = Number(value);
+            onTopUp(isTopUpMinutes(chosen) ? chosen : null);
+          }}
+          options={[
+            { value: 'none', label: 'None' },
+            ...options.map((option) => ({
+              value: String(option.minutes),
+              label: `${option.minutes} min · ${formatPeso(option.price)}`,
+            })),
+          ]}
         />
       )}
       <Text tone="muted">
@@ -153,6 +193,7 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
   const scanOn = useData((c) => getSetting(c.db, 'requireReceiptScan'));
   const multiCycle = useData((c) => getSetting(c.db, 'multiCycle'));
   const [cycle, setCycle] = useState<Cycle | null>(null);
+  const [topUp, setTopUp] = useState<TopUpMinutes | null>(null);
   const usesCycles = chosen !== null && hasCycles(multiCycle, chosen.type);
   const needScan = scanOn && receiptCode === null;
   const data = useData(
@@ -174,13 +215,14 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
   function back() {
     action.clearError();
     setCycle(null);
+    setTopUp(null);
     setChosen(null);
     setReceiptCode(null);
   }
 
   async function start(machine: MachineRow) {
     const result = await action.run((c) =>
-      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode, usesCycles ? cycle : null),
+      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode, usesCycles ? cycle : null, topUp),
     );
     if (!result.ok) return;
     report(result.value, machine.name);
@@ -221,6 +263,8 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
           multiCycle={usesCycles}
           cycle={cycle}
           onCycle={setCycle}
+          topUp={topUp}
+          onTopUp={setTopUp}
         />
       ) : (
         <>
@@ -343,6 +387,7 @@ export function OrderPickerDialog({
   const scanOn = useData((c) => getSetting(c.db, 'requireReceiptScan'));
   const multiCycle = useData((c) => getSetting(c.db, 'multiCycle'));
   const [cycle, setCycle] = useState<Cycle | null>(null);
+  const [topUp, setTopUp] = useState<TopUpMinutes | null>(null);
   const usesCycles = hasCycles(multiCycle, machine.type);
   const candidates = useData(
     (c) =>
@@ -362,6 +407,7 @@ export function OrderPickerDialog({
   function back() {
     action.clearError();
     setCycle(null);
+    setTopUp(null);
     setChosen(null);
     setReceiptCode(null);
   }
@@ -389,7 +435,7 @@ export function OrderPickerDialog({
 
   async function start(orderId: string) {
     const result = await action.run((c) =>
-      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode, usesCycles ? cycle : null),
+      startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode, usesCycles ? cycle : null, topUp),
     );
     if (!result.ok) return;
     report(result.value, machine.name);
@@ -425,6 +471,8 @@ export function OrderPickerDialog({
           multiCycle={usesCycles}
           cycle={cycle}
           onCycle={setCycle}
+          topUp={topUp}
+          onTopUp={setTopUp}
         />
       ) : scanOn && receiptCode === null ? (
         <ReceiptScanner

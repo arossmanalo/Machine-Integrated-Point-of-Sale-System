@@ -398,6 +398,27 @@ describe('dryer top-ups', () => {
     expect(machineUsage(ctx, order.id).DRYER).toBe(1);
   });
 
+  it('can be added on the start screen: sent with the start and charged, undone if nothing went out', async () => {
+    const { ctx, controller, order, dryers, machineById, log, markWashed } = await setup();
+    markWashed(order.id, 2);
+    const run = (dryer: number) =>
+      startOrderOnMachine(ctx, controller, testEmployee, order.id, dryer, receiptOf(order), null, 15);
+
+    controller.failNextStart('failed');
+    await expect(run(dryers[0])).resolves.toBe('failed');
+    expect(getOrderDetail(ctx, order.id)?.order.total).toBe(order.total);
+    expect(log().find((row) => row.kind === 'TOP_UP')).toMatchObject({ result: 'FAILED', charge: null });
+
+    await expect(startMachine(ctx, controller, testEmployee, dryers[0], 15)).resolves.toBe('acked');
+    // Dryer 1: 1 start pulse + 7 pulses for 15 minutes, in one go.
+    expect(controller.starts[0]).toEqual({ channel: 4, pulses: { count: 8, onMs: 500, offMs: 500 } });
+    expect(machineById(dryers[0])?.runEndsAt).toBe(ctx.now() + 45 * MIN);
+    expect(getOrderDetail(ctx, order.id)?.order.total).toBe(order.total + 5000);
+    expect(log().find((row) => row.kind === 'TOP_UP' && row.result === 'ACKED')).toMatchObject({ charge: 5000 });
+
+    await expect(run(dryers[1])).rejects.toThrow('has no price');
+  });
+
   it('is gone once the dryer finishes or is marked as done', async () => {
     const { ctx, controller, order, newOrder, dryers, markWashed } = await setup();
     markWashed(order.id, 2);
