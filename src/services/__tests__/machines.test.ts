@@ -856,13 +856,12 @@ describe('multi-cycle', () => {
     expect(getSetting(ctx.db, 'multiCycle')).toBe(false);
   });
 
-  it('the owner or developer can simulate the machines', async () => {
+  it('only the developer can simulate the machines', async () => {
     const { ctx, owner, developer } = await setup();
-    expect(() => setSimulateMachines(ctx, testEmployee, true)).toThrow('Only the owner');
-    setSimulateMachines(ctx, owner, true);
+    expect(() => setSimulateMachines(ctx, testEmployee, true)).toThrow('managed by support');
+    expect(() => setSimulateMachines(ctx, owner, true)).toThrow('managed by support');
+    setSimulateMachines(ctx, developer, true);
     expect(getSetting(ctx.db, 'simulateMachines')).toBe(true);
-    setSimulateMachines(ctx, developer, false);
-    expect(getSetting(ctx.db, 'simulateMachines')).toBe(false);
   });
 
   it("needs a cycle, then sends that cycle's pulses and counts down its minutes", async () => {

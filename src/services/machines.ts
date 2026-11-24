@@ -332,11 +332,11 @@ export function setReceiptScanRequired(ctx: ServiceContext, actor: Actor, requir
 }
 
 /**
- * Owner or developer: record starts without sending anything to the machines, for training.
+ * Developer only: record starts without sending anything to the machines, for testing.
  * The app swaps its machine controller once this is saved.
  */
 export function setSimulateMachines(ctx: ServiceContext, actor: Actor, on: boolean): void {
-  requireOwnerRights(actor);
+  requireDeveloper(actor);
   setSetting(ctx.db, 'simulateMachines', on);
 }
 

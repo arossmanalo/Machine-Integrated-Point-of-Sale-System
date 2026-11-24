@@ -19,7 +19,6 @@ import {
   saveOwnerMachineChanges,
   setMultiCycle,
   setReceiptScanRequired,
-  setSimulateMachines,
 } from '@/services/machines';
 import { getSetting } from '@/services/settings';
 import { useActor, useApp } from '@/state/AppProvider';
@@ -46,14 +45,13 @@ export function coins(count: number): string {
 export function MachineOverview() {
   const actor = useActor();
   const action = useAction();
-  const { controller, controllerState, reloadLockController } = useApp();
+  const { controller, controllerState } = useApp();
   const [viewing, setViewing] = useState<MachineRow | null>(null);
   const machines = useData(listMachines);
   const cycles = useData(listCycles);
   const settings = useData((c) => ({
     receiptScan: getSetting(c.db, 'requireReceiptScan'),
     multiCycle: getSetting(c.db, 'multiCycle'),
-    simulate: getSetting(c.db, 'simulateMachines'),
   }));
   const cyclesOf = (machine: MachineRow) =>
     settings.multiCycle && machine.type === 'WASHER' ? cycles.filter((cycle) => cycle.machineId === machine.id) : [];
@@ -90,15 +88,6 @@ export function MachineOverview() {
           label="Multi-cycle"
           value={settings.multiCycle}
           onChange={(on) => void action.run((c) => setMultiCycle(c, actor, on))}
-        />
-        <Toggle
-          label="Simulate machines"
-          description="For training: starts are recorded, but the machines do not run."
-          value={settings.simulate}
-          onChange={async (on) => {
-            const result = await action.run((c) => setSimulateMachines(c, actor, on));
-            if (result.ok) reloadLockController();
-          }}
         />
         {action.error && <Notice tone="danger">{action.error}</Notice>}
       </Section>

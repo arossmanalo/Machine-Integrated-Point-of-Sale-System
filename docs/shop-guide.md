@@ -131,11 +131,10 @@ Everything lives only on this tablet. Go to **Manage › Backup and import › S
 
 ### Machines
 
-**Manage › Machines** shows the machine setup: whether the machines are connected (**Check connection** tries again), three switches, and each machine with its run time and **coins** (one coin is one start signal, like a coin in the slot). The switches:
+**Manage › Machines** shows the machine setup: whether the machines are connected (**Check connection** tries again), two switches, and each machine with its run time and **coins** (one coin is one start signal, like a coin in the slot). The switches:
 
 - **Scan receipt to run a machine**: staff must scan the order's receipt before a machine runs. Off, they pick the order from a list.
 - **Multi-cycle**: staff pick one of a washer's cycles before it runs.
-- **Simulate machines**: for training. Starts are recorded but the machines do not run; turn it off for real use.
 
 Tap a machine to:
 
