@@ -32,7 +32,7 @@ The washers and dryers only start for an order, and only with that order's recei
 
 - While a machine runs, the **Machines** tab shows **In use** with a countdown and the order. Nobody can start it again until the countdown ends. If it finished early, tap **Mark as done**.
 - If a start did not go out (offline, busy), the machine shows **Did not start**. Tap **Run machine** to try again (no new scan needed), or **Remove** to take the order off.
-- If the app says the order has used all its washers or dryers, it has used all of its loads. Ask the owner for an override.
+- If the order has used all its washers or dryers, tapping a machine for it opens **Owner override** instead: the owner enters the PIN, or you scan the order's override receipt (see Overrides).
 - The order page lists each load with the washer and dryer that ran it.
 
 ### Cycles (when Multi-cycle is on)
@@ -76,11 +76,14 @@ If the owner allows it, the **Today** screen has **Record expense**. Enter what 
 
 ### Overrides
 
-For a rewash, a machine that did not start, or maintenance, go to **Machines**, tap a free machine and choose **Owner override**. Pick a reason and enter the owner PIN. The machine starts right away.
+For a rewash, a machine that did not start, or maintenance, go to **Machines**, tap a free machine and choose **Owner override**. An order that has used all its washers or dryers opens the override by itself when you assign it a machine. Pick a reason, then allow it one of two ways:
+
+- **Owner PIN**: the owner types the PIN.
+- **Override receipt**: scan the order's override receipt. When the owner will not be at the shop, they open the order and tap **Print override receipt**. It prints the receipt with an override QR code instead of the usual one, good for one machine start for that order without the PIN. After that start it stops working; printing another one makes the earlier one stop working too. If the start did not reach the machine, the same receipt can be used again.
 
 - Five wrong PINs in a row lock overrides for 5 minutes.
-- Every override, and every wrong PIN, is written in the log.
-- Admins cannot override; only the owner PIN can.
+- Every override, and every wrong PIN, is written in the log. Starts allowed by an override receipt say so.
+- Admins cannot override; only the owner PIN or the owner's override receipt can.
 
 ### Machine earnings
 

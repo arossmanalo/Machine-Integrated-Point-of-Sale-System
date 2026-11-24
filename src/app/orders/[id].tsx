@@ -35,7 +35,7 @@ function methodLabel(method: string): string {
 export default function OrderDetails() {
   const { id, fresh } = useLocalSearchParams<{ id: string; fresh?: string }>();
   const actor = useActor();
-  const { print, printing } = usePrintReceipt();
+  const { print, printOverride, printing } = usePrintReceipt();
   const [dialog, setDialog] = useState<'pay' | 'status' | 'void' | null>(null);
   const [starting, setStarting] = useState(false);
   const data = useData(
@@ -105,6 +105,15 @@ export default function OrderDetails() {
           )}
           {!voided && <Button label="Change status" kind="secondary" onPress={() => setDialog('status')} />}
           <Button label="Print receipt" kind="secondary" icon="printer-outline" busy={printing} onPress={() => void print(order.id)} />
+          {!voided && can.issueOverrideReceipts(actor.role) && (
+            <Button
+              label="Print override receipt"
+              kind="secondary"
+              icon="shield-key-outline"
+              busy={printing}
+              onPress={() => void printOverride(order.id, actor)}
+            />
+          )}
           {allowance > 0 && (
             <Button
               label="Assign machine"

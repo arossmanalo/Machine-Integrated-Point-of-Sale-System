@@ -9,6 +9,12 @@
 export const RECEIPT_CODE_PREFIX = 'LPOS1';
 
 /**
+ * The owner's override receipt: "LPOS1X:<order id>:<token>". It allows one override start for
+ * that order without the owner PIN, then the token is spent. It never counts as the normal code.
+ */
+export const OVERRIDE_CODE_PREFIX = 'LPOS1X';
+
+/**
  * TEMPORARY, until the receipt printer arrives: this one code is accepted for every open order.
  * Anyone holding it can start machines for any order, so delete it (and its uses) before the
  * shop relies on receipt codes.
@@ -26,16 +32,23 @@ export function receiptCodeFor(orderId: string, token: string): string {
   return `${RECEIPT_CODE_PREFIX}:${orderId}:${token}`;
 }
 
-export type ScannedCode = { kind: 'test' } | { kind: 'order'; orderId: string; token: string } | { kind: 'invalid' };
+export function overrideCodeFor(orderId: string, token: string): string {
+  return `${OVERRIDE_CODE_PREFIX}:${orderId}:${token}`;
+}
+
+export type ScannedCode =
+  | { kind: 'test' }
+  | { kind: 'order' | 'override'; orderId: string; token: string }
+  | { kind: 'invalid' };
 
 export function parseReceiptCode(scanned: string): ScannedCode {
   const text = scanned.trim();
   if (text === TEST_RECEIPT_CODE) return { kind: 'test' };
   const [prefix, orderId, token, ...rest] = text.split(':');
-  if (prefix !== RECEIPT_CODE_PREFIX || !orderId || !token || rest.length > 0 || !TOKEN_PATTERN.test(token)) {
-    return { kind: 'invalid' };
-  }
-  return { kind: 'order', orderId, token };
+  if (!orderId || !token || rest.length > 0 || !TOKEN_PATTERN.test(token)) return { kind: 'invalid' };
+  if (prefix === RECEIPT_CODE_PREFIX) return { kind: 'order', orderId, token };
+  if (prefix === OVERRIDE_CODE_PREFIX) return { kind: 'override', orderId, token };
+  return { kind: 'invalid' };
 }
 
 /** Compares without stopping at the first different character. */

@@ -74,6 +74,11 @@ export const orders = sqliteTable(
     /** Random token in the receipt's QR code; scanning it is what lets a machine run for this order. */
     qrToken: text('qr_token').notNull().default(''),
     /**
+     * Random token in the owner's override receipt for this order: scanning it allows one
+     * override start for the order without the owner PIN. Null once used or never printed.
+     */
+    overrideToken: text('override_token'),
+    /**
      * Dryer top-up paid for when the order was taken: this many minutes on each of the first
      * `prepaidTopUpLoads` dryer starts. The charge itself is an order item.
      */

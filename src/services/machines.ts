@@ -21,7 +21,7 @@ import {
 } from '@/domain/machinePolicy';
 import { formatPeso } from '@/domain/money';
 import { machineEarnings, type MachineEarnings } from '@/domain/machineEarnings';
-import { parseReceiptCode, tokensMatch } from '@/domain/receiptCode';
+import { newReceiptToken, overrideCodeFor, parseReceiptCode, tokensMatch } from '@/domain/receiptCode';
 import { periodRange } from '@/domain/reports';
 import {
   isValidChannel,
@@ -445,8 +445,11 @@ export function machinesAssignedTo(ctx: ServiceContext, orderId: string): Machin
 
 // ---------- Receipt codes ----------
 
-/** What a scanned receipt QR code stands for: one order, or the temporary test code. */
-export type ScannedReceipt = { kind: 'test' } | { kind: 'order'; orderId: string };
+/**
+ * What a scanned receipt QR code stands for: an order's receipt, the owner's override receipt
+ * for an order, or the temporary test code.
+ */
+export type ScannedReceipt = { kind: 'test' } | { kind: 'order' | 'override'; orderId: string };
 
 /** Checks a scanned QR code against the orders. Throws with a message staff can act on. */
 export function readReceiptCode(ctx: ServiceContext, scanned: string): ScannedReceipt {
@@ -456,15 +459,41 @@ export function readReceiptCode(ctx: ServiceContext, scanned: string): ScannedRe
     throw new UserFacingError('That is not a Laundry POS receipt. Scan the QR code printed on the order receipt.');
   }
   const order = ctx.db.select().from(orders).where(eq(orders.id, code.orderId)).get();
+  if (code.kind === 'override') {
+    if (!order || order.overrideToken === null || !tokensMatch(code.token, order.overrideToken)) {
+      throw new UserFacingError(
+        `This override receipt for ${code.orderId} was already used or replaced. Ask the owner for a new one.`,
+      );
+    }
+    if (order.voidedAt !== null) throw new UserFacingError(`${order.id} is voided.`);
+    return { kind: 'override', orderId: order.id };
+  }
   if (!order || !tokensMatch(code.token, order.qrToken)) {
     throw new UserFacingError(`This QR code does not match order ${code.orderId}. Reprint the receipt and scan again.`);
   }
   return { kind: 'order', orderId: order.id };
 }
 
+/**
+ * Owner only: a new one-time override code for an order, printed on an override receipt. It
+ * replaces any earlier override code for the order, which stops working.
+ */
+export function issueOverrideCode(ctx: ServiceContext, actor: Actor, orderId: string): string {
+  if (!can.issueOverrideReceipts(actor.role)) throw new UserFacingError('Only the owner can print override receipts.');
+  const order = ctx.db.select().from(orders).where(eq(orders.id, orderId)).get();
+  if (!order) throw new UserFacingError(`There is no order ${orderId}.`);
+  if (order.voidedAt !== null) throw new UserFacingError(`${orderId} is voided.`);
+  const token = newReceiptToken(ctx.randomBytes);
+  ctx.db.update(orders).set({ overrideToken: token }).where(eq(orders.id, orderId)).run();
+  return overrideCodeFor(orderId, token);
+}
+
 /** Throws unless the scanned code may run a machine for this order (its own receipt, or the test code). */
 export function checkReceiptFor(ctx: ServiceContext, scanned: string, orderId: string): void {
   const receipt = readReceiptCode(ctx, scanned);
+  if (receipt.kind === 'override') {
+    throw new UserFacingError('This is an override receipt. Tap Owner override to use it.');
+  }
   if (receipt.kind === 'order' && receipt.orderId !== orderId) {
     throw new UserFacingError(`This receipt is for ${receipt.orderId}, not ${orderId}. Scan the receipt for ${orderId}.`);
   }
@@ -918,7 +947,10 @@ export function markRunDone(ctx: ServiceContext, machineId: number): void {
 
 export interface OverrideInput {
   machineId: number;
+  /** The owner PIN; ignored when an override receipt code is given. */
   pin: string;
+  /** A scanned override receipt: one start for its order, no PIN needed. */
+  overrideCode?: string | null;
   reason: OverrideReason;
   note: string;
   orderId: string | null;
@@ -926,7 +958,11 @@ export interface OverrideInput {
   cycleId?: number | null;
 }
 
-/** Owner-PIN start outside an order's allowance. Wrong PINs are logged too. */
+/**
+ * Start outside an order's allowance, allowed by the owner PIN or by the order's one-time override
+ * receipt. Wrong PINs are logged too. An override receipt is spent by the start, and given back
+ * when nothing was sent.
+ */
 export async function overrideStart(
   ctx: ServiceContext,
   controller: MachineController,
@@ -936,36 +972,57 @@ export async function overrideStart(
   const machine = requireMachine(ctx.db, input.machineId);
   const note = input.note.trim();
   if (input.reason === 'Other' && !note) throw new UserFacingError('Describe the reason for the override.');
-  const pin = await checkOwnerPin(ctx, input.pin);
+  const code = input.overrideCode ? readReceiptCode(ctx, input.overrideCode) : null;
+  if (code && code.kind !== 'override') {
+    throw new UserFacingError("That is not an override receipt. Scan the owner's override receipt or use the PIN.");
+  }
+  if (code && input.orderId !== null && code.orderId !== input.orderId) {
+    throw new UserFacingError(`This override receipt is for ${code.orderId}, not ${input.orderId}.`);
+  }
+  const orderId = code ? code.orderId : input.orderId;
   const base = {
     machine,
     actor,
-    orderId: input.orderId,
+    orderId,
     overrideReason: input.reason,
-    overrideNote: note || null,
+    overrideNote: [note, code ? 'override receipt' : ''].filter(Boolean).join(' · ') || null,
   };
-  if (pin !== 'ok') {
-    writeLog(ctx, { ...base, kind: 'OVERRIDE_DENIED', result: 'DENIED' });
-    if (pin === 'not-set') throw new UserFacingError('No owner PIN is set. The owner must set one first.');
-    if (pin === 'locked') throw new UserFacingError('Too many wrong PINs. Overrides are locked for 5 minutes.');
-    throw new UserFacingError('Wrong owner PIN.');
+  if (!code) {
+    const pin = await checkOwnerPin(ctx, input.pin);
+    if (pin !== 'ok') {
+      writeLog(ctx, { ...base, kind: 'OVERRIDE_DENIED', result: 'DENIED' });
+      if (pin === 'not-set') throw new UserFacingError('No owner PIN is set. The owner must set one first.');
+      if (pin === 'locked') throw new UserFacingError('Too many wrong PINs. Overrides are locked for 5 minutes.');
+      throw new UserFacingError('Wrong owner PIN.');
+    }
   }
   const ready = isReady(controller);
   const cycle = chosenOrFirstCycle(ctx.db, machine, input.cycleId ?? null);
-  const logId = writeLog(ctx, {
-    ...base,
-    kind: 'OVERRIDE',
-    result: ready ? 'PENDING' : 'NOT_CONNECTED',
-    cycle: cycle?.name,
+  const spentToken = code
+    ? (ctx.db.select().from(orders).where(eq(orders.id, code.orderId)).get()?.overrideToken ?? null)
+    : null;
+  const logId = ctx.db.transaction((tx) => {
+    const id = writeLog(
+      { ...ctx, db: tx },
+      { ...base, kind: 'OVERRIDE', result: ready ? 'PENDING' : 'NOT_CONNECTED', cycle: cycle?.name },
+    );
+    if (code && ready) tx.update(orders).set({ overrideToken: null }).where(eq(orders.id, code.orderId)).run();
+    return id;
   });
   if (!ready) return 'not-connected';
   ctx.db
     .update(machines)
-    .set(runFields(machine, input.orderId, ctx.now(), cycle))
+    .set(runFields(machine, orderId, ctx.now(), cycle))
     .where(eq(machines.id, machine.id))
     .run();
   const result = await sendAndRecord(ctx, controller, logId, machine, startPulsesFor(machine, cycle));
-  if (NOTHING_SENT.includes(result)) restoreRun(ctx.db, machine);
+  if (NOTHING_SENT.includes(result)) {
+    restoreRun(ctx.db, machine);
+    // Nothing reached the machine, so the override receipt can be used again.
+    if (code && spentToken) {
+      ctx.db.update(orders).set({ overrideToken: spentToken }).where(eq(orders.id, code.orderId)).run();
+    }
+  }
   return result;
 }
 

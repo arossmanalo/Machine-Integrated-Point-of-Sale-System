@@ -60,7 +60,9 @@ export default function Machines() {
   const actor = useActor();
   const { controller, controllerState } = useApp();
   const [picking, setPicking] = useState<MachineRow | null>(null);
-  const [overriding, setOverriding] = useState<MachineRow | null>(null);
+  const [overriding, setOverriding] = useState<{ machine: MachineRow; orderId: string | null; code: string | null } | null>(
+    null,
+  );
   const [toppingUp, setToppingUp] = useState<MachineRow | null>(null);
   const [testingCycles, setTestingCycles] = useState<MachineRow | null>(null);
   const cyclesFor = useCyclePicker();
@@ -310,14 +312,21 @@ export default function Machines() {
         <OrderPickerDialog
           machine={picking}
           onClose={() => setPicking(null)}
-          onOverride={() => {
-            setOverriding(picking);
+          onOverride={(orderId, code) => {
+            setOverriding({ machine: picking, orderId, code });
             setPicking(null);
           }}
         />
       )}
       {viewingEarnings && <MachineEarningsDialog machine={viewingEarnings} onClose={() => setViewingEarnings(null)} />}
-      {overriding && <OverrideDialog machine={overriding} onClose={() => setOverriding(null)} />}
+      {overriding && (
+        <OverrideDialog
+          machine={overriding.machine}
+          orderId={overriding.orderId}
+          scannedCode={overriding.code}
+          onClose={() => setOverriding(null)}
+        />
+      )}
       {testingCycles && (
         <TestMachineDialog machine={testingCycles} onClose={() => setTestingCycles(null)} />
       )}

@@ -14,6 +14,7 @@ import {
   listMachineLog,
   listMachines,
   machineUsage,
+  issueOverrideCode,
   machineEarningsFor,
   markRunDone,
   overrideStart,
@@ -264,6 +265,62 @@ describe('owner override', () => {
       orderId: null,
     });
     expect(controller.starts.map((s) => s.channel)).toEqual([3]);
+  });
+
+  it('an override receipt allows one start for its order without the PIN, even with its runs used up', async () => {
+    const { ctx, owner, controller, order, washers, log } = await setup();
+    const rewash = (code: string | null, machineId = washers[2]) =>
+      overrideStart(ctx, controller, testEmployee, {
+        machineId,
+        reason: 'Rewash',
+        note: '',
+        orderId: order.id,
+        pin: '',
+        overrideCode: code,
+      });
+    // Use up the order's two washers.
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[1], receiptOf(order));
+
+    expect(() => issueOverrideCode(ctx, testEmployee, order.id)).toThrow('Only the owner');
+    const first = issueOverrideCode(ctx, owner, order.id);
+    const code = issueOverrideCode(ctx, owner, order.id);
+    await expect(rewash(first)).rejects.toThrow('already used or replaced');
+    // The override receipt is not a normal receipt.
+    await expect(
+      startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[2], code),
+    ).rejects.toThrow('override receipt');
+
+    await expect(rewash(code)).resolves.toBe('acked');
+    expect(log()[0]).toMatchObject({ kind: 'OVERRIDE', orderId: order.id, overrideNote: 'override receipt' });
+    expect(controller.starts).toHaveLength(3);
+    await expect(rewash(code, washers[0])).rejects.toThrow('already used or replaced');
+    // Without a code it falls back to the PIN.
+    await expect(rewash(null, washers[0])).rejects.toThrow('Wrong owner PIN');
+  });
+
+  it('gives an override receipt back when nothing reached the machine', async () => {
+    const { ctx, owner, controller, order, washers } = await setup();
+    const code = issueOverrideCode(ctx, owner, order.id);
+    const input = { machineId: washers[0], reason: 'Rewash' as const, note: '', orderId: null, pin: '', overrideCode: code };
+    controller.failNextStart('failed');
+    await expect(overrideStart(ctx, controller, testEmployee, input)).resolves.toBe('failed');
+    await expect(overrideStart(ctx, controller, testEmployee, input)).resolves.toBe('acked');
+    await expect(overrideStart(ctx, controller, testEmployee, input)).rejects.toThrow('already used');
+  });
+
+  it('refuses an override receipt for another order or a voided one', async () => {
+    const { ctx, owner, controller, order, newOrder, washers } = await setup();
+    const other = newOrder();
+    const code = issueOverrideCode(ctx, owner, order.id);
+    const input = { machineId: washers[0], reason: 'Rewash' as const, note: '', pin: '', overrideCode: code };
+    await expect(overrideStart(ctx, controller, testEmployee, { ...input, orderId: other.id })).rejects.toThrow(
+      `is for ${order.id}`,
+    );
+    voidOrder(ctx, owner, order.id, 'Test');
+    await expect(overrideStart(ctx, controller, testEmployee, { ...input, orderId: null })).rejects.toThrow('voided');
+    expect(() => issueOverrideCode(ctx, owner, order.id)).toThrow('voided');
+    expect(controller.starts).toEqual([]);
   });
 
   it('requires a note for "Other"', async () => {

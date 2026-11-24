@@ -1,6 +1,8 @@
 import { useCallback, useState } from 'react';
 
 import { buildReceipt } from '@/printing/escpos';
+import { errorMessage, type Actor } from '@/db/types';
+import { issueOverrideCode } from '@/services/machines';
 import { receiptForOrder } from '@/services/receipts';
 import { getAllSettings } from '@/services/settings';
 
@@ -20,7 +22,13 @@ export function usePrinter() {
         toast('No receipt printer chosen. Pick one in Manage > Settings.', 'danger');
         return;
       }
-      const bytes = makeBytes();
+      let bytes: Uint8Array | null;
+      try {
+        bytes = makeBytes();
+      } catch (error: unknown) {
+        toast(errorMessage(error), 'danger');
+        return;
+      }
       if (!bytes) return;
       setPrinting(true);
       try {
@@ -57,5 +65,16 @@ export function usePrintReceipt() {
     [ctx, printBytes],
   );
 
-  return { print, printing };
+  /** Owner only: a new one-time override code for the order, printed on its receipt. */
+  const printOverride = useCallback(
+    (orderId: string, actor: Actor) =>
+      printBytes(() => {
+        const code = issueOverrideCode(ctx, actor, orderId);
+        const data = receiptForOrder(ctx, orderId, code);
+        return data ? buildReceipt(data) : null;
+      }, `Override receipt for ${orderId} printed`),
+    [ctx, printBytes],
+  );
+
+  return { print, printOverride, printing };
 }

@@ -6,8 +6,15 @@ import type { ServiceContext } from '@/db/types';
 import { getOrderDetail } from './orders';
 import { getAllSettings } from './settings';
 
-/** Everything the printer needs for one order, read fresh from the database. */
-export function receiptForOrder(ctx: ServiceContext, orderId: string): ReceiptData | null {
+/**
+ * Everything the printer needs for one order, read fresh from the database. With an override
+ * code, the receipt carries that code instead of the order's machine code.
+ */
+export function receiptForOrder(
+  ctx: ServiceContext,
+  orderId: string,
+  overrideCode: string | null = null,
+): ReceiptData | null {
   const detail = getOrderDetail(ctx, orderId);
   if (!detail) return null;
   const settings = getAllSettings(ctx.db);
@@ -38,5 +45,6 @@ export function receiptForOrder(ctx: ServiceContext, orderId: string): ReceiptDa
     lastPayment: last ? { channel: last.channel, amount: last.amount, cashReceived: last.cashReceived } : null,
     voided: order.voidedAt !== null,
     machineCode: receiptCodeFor(order.id, order.qrToken),
+    overrideCode,
   };
 }

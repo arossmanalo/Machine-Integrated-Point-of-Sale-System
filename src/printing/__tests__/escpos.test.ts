@@ -32,6 +32,7 @@ const receipt: ReceiptData = {
   lastPayment: { channel: 'CASH', amount: 47000, cashReceived: 50000 },
   voided: false,
   machineCode: 'LPOS1:T0007:0123456789abcdef0123456789abcdef',
+  overrideCode: null,
 };
 
 describe('receipt layout', () => {
@@ -96,6 +97,17 @@ describe('receipt layout', () => {
     expect(text(receipt)).toContain('Scan at the machines');
     expect(text(receipt)).toContain(raster);
     expect(text({ ...receipt, voided: true })).not.toContain(raster);
+  });
+
+  it('prints the override code instead of the machine code on an override receipt', () => {
+    const text = (data: ReceiptData) => Buffer.from(buildReceipt(data)).toString('latin1');
+    const override = text({ ...receipt, overrideCode: 'LPOS1X:T0007:abcdefabcdefabcdefabcdefabcdefab' });
+    expect(override).toContain('OWNER OVERRIDE');
+    expect(override).toContain('One machine start for T0007');
+    expect(override).not.toContain('Scan at the machines');
+    expect(Buffer.from(buildReceipt(receipt)).equals(Buffer.from(buildReceipt({ ...receipt, overrideCode: null })))).toBe(
+      true,
+    );
   });
 
   it('base64-encodes like Node does', () => {

@@ -95,6 +95,8 @@ export interface ReceiptData {
   voided: boolean;
   /** What the receipt's QR code holds; staff scan it to run a machine for this order. */
   machineCode: string;
+  /** The owner's one-time override code; printed instead of the machine code when set. */
+  overrideCode: string | null;
 }
 
 /** Thermal printers only know plain ASCII; replace anything else so the line still prints. */
@@ -156,7 +158,16 @@ export function buildReceipt(data: ReceiptData): Uint8Array {
     if (isBalance) out.push(...BOLD_OFF);
   }
   out.push(...ALIGN_CENTER);
-  if (!data.voided) {
+  if (!data.voided && data.overrideCode !== null) {
+    out.push(
+      ...BOLD_ON,
+      ...bytes('\n*** OWNER OVERRIDE ***\n'),
+      ...BOLD_OFF,
+      ...bytes(`One machine start for ${data.orderId}\n`),
+      ...qrRasterBytes(data.overrideCode),
+      ...bytes('\n'),
+    );
+  } else if (!data.voided) {
     out.push(...bytes('\nScan at the machines\n'), ...qrRasterBytes(data.machineCode), ...bytes('\n'));
   }
   out.push(...bytes(`\n${data.footer}\n`), ...FEED_3);

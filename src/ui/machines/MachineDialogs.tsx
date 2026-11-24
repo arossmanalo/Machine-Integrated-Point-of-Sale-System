@@ -17,6 +17,7 @@ import {
 } from '@/domain/machinePolicy';
 import type { Earned } from '@/domain/machineEarnings';
 import { formatPeso } from '@/domain/money';
+import { parseReceiptCode } from '@/domain/receiptCode';
 import { can } from '@/domain/permissions';
 import { isClosedStatus } from '@/domain/statuses';
 import type { StartResult } from '@/machines/MachineController';
@@ -194,7 +195,7 @@ function ConfirmStart({
  */
 export function StartMachineDialog({ orderId, onClose }: { orderId: string; onClose: () => void }) {
   const actor = useActor();
-  const { controller } = useApp();
+  const { controller, ctx } = useApp();
   const action = useAction();
   const report = useReportStart();
   const now = useNow(15000);
@@ -204,6 +205,7 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
   const cyclesFor = useCyclePicker();
   const [cycleId, setCycleId] = useState<number | null>(null);
   const [topUp, setTopUp] = useState<TopUpMinutes | null>(null);
+  const [overriding, setOverriding] = useState<{ machine: MachineRow; code: string | null } | null>(null);
   const chosenCycles = chosen ? cyclesFor(chosen) : [];
   const usesCycles = chosenCycles.length > 0;
   const needScan = scanOn && receiptCode === null;
@@ -241,9 +243,37 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
     if (result.value === 'acked' || result.value === 'timeout') onClose();
   }
 
+  /** The order's own receipt runs it; its override receipt goes to the override instead. */
+  function checkScan(c: ServiceContext, scanned: string) {
+    const receipt = readReceiptCode(c, scanned);
+    if (receipt.kind === 'override' && receipt.orderId === orderId) return;
+    checkReceiptFor(c, scanned, orderId);
+  }
+
+  function scanned(code: string) {
+    if (chosen && readReceiptCode(ctx, code).kind === 'override') {
+      setOverriding({ machine: chosen, code });
+      return;
+    }
+    setReceiptCode(code);
+  }
+
+  function choose(machine: MachineRow) {
+    action.clearError();
+    // An order whose runs of this type are used up can only run it by override.
+    if (data.usage[machine.type] >= data.allowance[machine.type]) setOverriding({ machine, code: null });
+    else setChosen(machine);
+  }
+
   const actions = chosen ? (
     <>
       <Button label="Back" kind="secondary" onPress={back} />
+      <Button
+        label="Owner override"
+        kind="secondary"
+        icon="shield-key-outline"
+        onPress={() => setOverriding({ machine: chosen, code: null })}
+      />
       {!needScan && (
         <Button
           label="Run machine"
@@ -263,8 +293,8 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
       {chosen && needScan ? (
         <ReceiptScanner
           prompt={`Scan the receipt for ${orderId} to run ${chosen.name}.`}
-          check={(c, scanned) => checkReceiptFor(c, scanned, orderId)}
-          onAccepted={setReceiptCode}
+          check={checkScan}
+          onAccepted={scanned}
         />
       ) : chosen ? (
         <ConfirmStart
@@ -306,10 +336,7 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
                         orderId={orderId}
                         now={now}
                         busy={action.busy}
-                        onChoose={() => {
-                          action.clearError();
-                          setChosen(machine);
-                        }}
+                        onChoose={() => choose(machine)}
                       />
                     ))}
                   </View>
@@ -320,6 +347,17 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
         </>
       )}
       {action.error && <Notice tone="danger">{action.error}</Notice>}
+      {overriding && (
+        <OverrideDialog
+          machine={overriding.machine}
+          orderId={orderId}
+          scannedCode={overriding.code}
+          onClose={() => {
+            setOverriding(null);
+            back();
+          }}
+        />
+      )}
     </Dialog>
   );
 }
@@ -387,7 +425,8 @@ export function OrderPickerDialog({
 }: {
   machine: MachineRow;
   onClose: () => void;
-  onOverride: () => void;
+  /** The order and override receipt, when the scan named them. */
+  onOverride: (orderId: string | null, code: string | null) => void;
 }) {
   const actor = useActor();
   const { controller, ctx } = useApp();
@@ -424,11 +463,15 @@ export function OrderPickerDialog({
     setReceiptCode(null);
   }
 
-  /** A receipt picks its order straight away; it must be an open order with this machine type left. */
+  /**
+   * A receipt picks its order straight away; it must be an open order with this machine type left.
+   * An override receipt, or the receipt of an open order whose runs are used up, goes to the override.
+   */
   function checkScan(c: ServiceContext, scanned: string) {
     const receipt = readReceiptCode(c, scanned);
-    if (receipt.kind === 'test') return;
+    if (receipt.kind === 'test' || receipt.kind === 'override') return;
     const row = candidates.find((r) => r.summary.order.id === receipt.orderId);
+    if (!row && usedUp(c, receipt.orderId)) return;
     if (!row) {
       throw new UserFacingError(
         `${receipt.orderId} cannot use a ${label}: it is voided or closed, or it has used all its ${label}s.`,
@@ -436,9 +479,24 @@ export function OrderPickerDialog({
     }
   }
 
+  /** An open order that has used all its runs of this machine type. */
+  function usedUp(c: ServiceContext, orderId: string): boolean {
+    const detail = getOrderDetail(c, orderId);
+    if (!detail || detail.order.voidedAt !== null || isClosedStatus(detail.order.status)) return false;
+    return machineUsage(c, orderId)[machine.type] >= machineAllowance(detail.order, machine.type);
+  }
+
   function accepted(scanned: string) {
-    setReceiptCode(scanned);
     const receipt = readReceiptCode(ctx, scanned);
+    if (receipt.kind === 'override') {
+      onOverride(receipt.orderId, scanned);
+      return;
+    }
+    if (receipt.kind === 'order' && usedUp(ctx, receipt.orderId)) {
+      onOverride(receipt.orderId, null);
+      return;
+    }
+    setReceiptCode(scanned);
     if (receipt.kind === 'order') {
       const row = candidates.find((r) => r.summary.order.id === receipt.orderId);
       setChosen({ orderId: receipt.orderId, customerName: row?.summary.customerName ?? '' });
@@ -468,7 +526,7 @@ export function OrderPickerDialog({
     </>
   ) : (
     <>
-      <Button label="Owner override" kind="secondary" icon="shield-key-outline" onPress={onOverride} />
+      <Button label="Owner override" kind="secondary" icon="shield-key-outline" onPress={() => onOverride(null, null)} />
       <Button label="Close" kind="secondary" onPress={onClose} />
     </>
   );
@@ -535,36 +593,74 @@ export function OrderPickerDialog({
   );
 }
 
-/** Owner-PIN start for rewashes, a machine that did not start, and maintenance. Always logged. */
+type OverrideMethod = 'pin' | 'receipt';
+
+/** The order an override receipt is for; null for any other code. Throws for a spent override receipt. */
+function readOverrideOrder(c: ServiceContext, scanned: string): string | null {
+  const receipt = readReceiptCode(c, scanned);
+  return receipt.kind === 'override' ? receipt.orderId : null;
+}
+
+/**
+ * Override start for rewashes, a machine that did not start, an order whose runs are used up, and
+ * maintenance. Allowed by the owner PIN or by scanning the order's one-time override receipt.
+ * Always logged.
+ */
 export function OverrideDialog({
   machine,
   orderId = null,
+  scannedCode = null,
   onClose,
 }: {
   machine: MachineRow;
+  /** The order the start is for, when known. */
   orderId?: string | null;
+  /** An override receipt already scanned elsewhere. */
+  scannedCode?: string | null;
   onClose: () => void;
 }) {
   const actor = useActor();
   const { controller } = useApp();
   const action = useAction();
   const report = useReportStart();
+  const [method, setMethod] = useState<OverrideMethod>(scannedCode ? 'receipt' : 'pin');
+  const [code, setCode] = useState<string | null>(scannedCode);
   const [reason, setReason] = useState<OverrideReason>('Rewash');
   const [note, setNote] = useState('');
   const [pin, setPin] = useState('');
   const cycles = useCyclePicker()(machine);
   const [cycleId, setCycleId] = useState<number | null>(cycles[0]?.id ?? null);
+  // Parsed without the database: once the start uses the code up, reading it there would fail.
+  const parsedCode = code ? parseReceiptCode(code) : null;
+  const codeOrder = parsedCode?.kind === 'override' ? parsedCode.orderId : null;
+  const forOrder = codeOrder ?? orderId;
 
-  async function submit() {
-    const result = await action.run((c) =>
-      overrideStart(c, controller, actor, { machineId: machine.id, pin, reason, note, orderId, cycleId }),
-    );
-    setPin('');
-    if (result.ok) {
-      report(result.value, machine.name);
-      if (result.value === 'acked') onClose();
+  /** The scanner accepts only an override receipt, and only the one for this order when known. */
+  function checkCode(c: ServiceContext, scanned: string) {
+    const scannedOrder = readOverrideOrder(c, scanned);
+    if (scannedOrder === null) {
+      throw new UserFacingError("That is not an override receipt. Scan the owner's override receipt or use the PIN.");
+    }
+    if (orderId !== null && scannedOrder !== orderId) {
+      throw new UserFacingError(`This override receipt is for ${scannedOrder}, not ${orderId}.`);
     }
   }
+
+  async function submit() {
+    const overrideCode = method === 'receipt' ? code : null;
+    const result = await action.run((c) =>
+      overrideStart(c, controller, actor, { machineId: machine.id, pin, overrideCode, reason, note, orderId, cycleId }),
+    );
+    setPin('');
+    if (!result.ok) {
+      setCode(null);
+      return;
+    }
+    report(result.value, machine.name);
+    if (result.value === 'acked' || result.value === 'timeout') onClose();
+  }
+
+  const ready = method === 'pin' ? pin.length >= 4 : code !== null;
 
   return (
     <Dialog
@@ -574,14 +670,43 @@ export function OverrideDialog({
       actions={
         <>
           <Button label="Cancel" kind="secondary" onPress={onClose} />
-          <Button label="Start with PIN" icon="play" onPress={submit} busy={action.busy} disabled={pin.length < 4} />
+          <Button
+            label={method === 'pin' ? 'Start with PIN' : 'Start machine'}
+            icon="play"
+            onPress={submit}
+            busy={action.busy}
+            disabled={!ready}
+          />
         </>
       }
     >
       <Text tone="muted">
-        Starts the machine without an order, even while it is in use. The owner enters the PIN. This start and any
-        wrong PIN are recorded with your name.
+        {forOrder
+          ? `Starts ${machine.name} for ${forOrder} outside its runs, even while it is in use. This start is recorded with your name.`
+          : 'Starts the machine without an order, even while it is in use. This start and any wrong PIN are recorded with your name.'}
       </Text>
+      <Choice
+        label="Allow it with"
+        value={method}
+        onChange={(value) => {
+          action.clearError();
+          setMethod(value);
+        }}
+        options={[
+          { value: 'pin', label: 'Owner PIN' },
+          { value: 'receipt', label: 'Override receipt' },
+        ]}
+      />
+      {method === 'receipt' &&
+        (code ? (
+          <Notice tone="success">{`Override receipt for ${codeOrder ?? 'the order'} scanned. It allows this one start.`}</Notice>
+        ) : (
+          <ReceiptScanner
+            prompt="Scan the override receipt the owner printed for this order."
+            check={checkCode}
+            onAccepted={setCode}
+          />
+        ))}
       <Choice
         label="Reason"
         value={reason}
@@ -602,14 +727,16 @@ export function OverrideDialog({
         onChangeText={setNote}
         multiline
       />
-      <TextField
-        label="Owner PIN"
-        value={pin}
-        onChangeText={(text) => setPin(text.replace(/\D/g, ''))}
-        keyboardType="number-pad"
-        secureTextEntry
-        maxLength={6}
-      />
+      {method === 'pin' && (
+        <TextField
+          label="Owner PIN"
+          value={pin}
+          onChangeText={(text) => setPin(text.replace(/\D/g, ''))}
+          keyboardType="number-pad"
+          secureTextEntry
+          maxLength={6}
+        />
+      )}
       {action.error && <Notice tone="danger">{action.error}</Notice>}
     </Dialog>
   );

@@ -40,6 +40,8 @@ export const can = {
   manageMachines: developerOnly,
   viewUnlockLog: hasOwnerRights,
   changeOwnerPin: hasOwnerRights,
+  /** Printing an order's one-time override receipt, which stands in for the owner PIN once. */
+  issueOverrideReceipts: hasOwnerRights,
   // Backups hold the owner PIN hash and a restore replaces the unlock log.
   manageBackups: hasOwnerRights,
 };

@@ -1,0 +1,1 @@
+ALTER TABLE `orders` ADD `override_token` text;

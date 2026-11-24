@@ -12,6 +12,7 @@ import m0007 from './0007_prepaid_top_ups.sql';
 import m0008 from './0008_machine_cycles.sql';
 import m0009 from './0009_top_up_pulses_per_length.sql';
 import m0010 from './0010_machine_cycle_table.sql';
+import m0011 from './0011_order_override_token.sql';
 
   export default {
     journal,
@@ -26,7 +27,8 @@ m0006,
 m0007,
 m0008,
 m0009,
-m0010
+m0010,
+m0011
     }
   }
   

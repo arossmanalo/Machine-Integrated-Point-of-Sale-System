@@ -252,6 +252,7 @@ export function createOrder(
       voidReason: null,
       legacyNote: null,
       qrToken: newReceiptToken(ctx.randomBytes),
+      overrideToken: null,
       prepaidTopUpMinutes: quote.topUp?.minutes ?? null,
       prepaidTopUpLoads: quote.topUp?.loads ?? 0,
     };
