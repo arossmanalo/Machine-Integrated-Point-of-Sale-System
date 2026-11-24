@@ -19,6 +19,7 @@ import {
   overrideStart,
   readReceiptCode,
   saveLockController,
+  saveOwnerMachineChanges,
   saveShopTopUpPrices,
   setMultiCycle,
   setReceiptScanRequired,
@@ -298,6 +299,42 @@ describe('machine settings', () => {
     await expect(testStart(ctx, controller, owner, washers[0])).rejects.toThrow(denied);
     await expect(testTopUp(ctx, controller, owner, dryers[0], 5)).rejects.toThrow(denied);
     expect(controller.starts).toEqual([]);
+  });
+
+  it('lets the owner switch a machine and its cycles off and set top-up prices, and nothing else', async () => {
+    const { ctx, owner, order, washers, dryers, machineById } = await setup();
+    const keep = { enabled: true, cycles: [], topUpPrices: null };
+    const washerCycles = listCycles(ctx).filter((c) => c.machineId === washers[0]);
+    const before = machineById(dryers[0]);
+
+    assignOrder(ctx, testEmployee, order.id, washers[0]);
+    saveOwnerMachineChanges(ctx, owner, washers[0], {
+      ...keep,
+      enabled: false,
+      cycles: [{ id: washerCycles[0].id, enabled: false }],
+    });
+    expect(machineById(washers[0])).toMatchObject({ enabled: false, assignedOrderId: null });
+    expect(listCycles(ctx).find((c) => c.id === washerCycles[0].id)?.enabled).toBe(false);
+
+    const prices = { topUpPrice: 0, topUpPrice10: 3000, topUpPrice15: 0, topUpPrice20: 6000 };
+    saveOwnerMachineChanges(ctx, owner, dryers[0], { ...keep, topUpPrices: prices });
+    expect(machineById(dryers[0])).toMatchObject({
+      ...prices,
+      pulseCount: before?.pulseCount,
+      topUpPulses10: before?.topUpPulses10,
+      runMinutes: before?.runMinutes,
+    });
+
+    expect(() => saveOwnerMachineChanges(ctx, testEmployee, dryers[0], keep)).toThrow('Only the owner');
+    expect(() =>
+      saveOwnerMachineChanges(ctx, owner, washers[1], { ...keep, cycles: [{ id: washerCycles[1].id, enabled: false }] }),
+    ).toThrow('not on Washer 2');
+    expect(() =>
+      saveOwnerMachineChanges(ctx, owner, washers[1], { ...keep, topUpPrices: prices }),
+    ).toThrow('Only dryers');
+    expect(() =>
+      saveOwnerMachineChanges(ctx, owner, dryers[0], { ...keep, topUpPrices: { ...prices, topUpPrice: -100 } }),
+    ).toThrow('5-minute');
   });
 
   it('copies start pulses to chosen machines only, for the developer, after checking them', async () => {

@@ -25,6 +25,7 @@ import { periodRange } from '@/domain/reports';
 import { isValidChannel, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress, pulsesProblem } from '@/machines/protocol';
 import type { MachineController, PulseSettings, StartResult } from '@/machines/MachineController';
 import {
+  machineCycles,
   machines,
   machineUnlocks,
   orderItems,
@@ -187,6 +188,57 @@ export function updateMachine(ctx: ServiceContext, actor: Actor, id: number, inp
   // A machine switched off cannot run the order waiting on it.
   const release = values.enabled ? {} : { assignedOrderId: null, assignedAt: null, assignedByName: null };
   ctx.db.update(machines).set({ ...values, ...release }).where(eq(machines.id, id)).run();
+}
+
+/** What the owner may change on a machine: in use, which cycles are offered, top-up prices. */
+export interface OwnerMachineChanges {
+  enabled: boolean;
+  /** The washer's cycles and whether each is offered. */
+  cycles: readonly { id: number; enabled: boolean }[];
+  /** Dryers only; a price of 0 means that length is not offered. */
+  topUpPrices: TopUpPrices | null;
+}
+
+/**
+ * The owner's changes to one machine, saved together. Coins, timings, wiring and the cycles
+ * themselves stay with the developer.
+ */
+export function saveOwnerMachineChanges(
+  ctx: ServiceContext,
+  actor: Actor,
+  machineId: number,
+  changes: OwnerMachineChanges,
+): void {
+  if (!can.viewMachineSettings(actor.role)) throw new UserFacingError('Only the owner can change machines.');
+  ctx.db.transaction((tx) => {
+    const machine = requireMachine(tx, machineId);
+    const own = new Set(
+      tx
+        .select({ id: machineCycles.id })
+        .from(machineCycles)
+        .where(eq(machineCycles.machineId, machineId))
+        .all()
+        .map((cycle) => cycle.id),
+    );
+    for (const cycle of changes.cycles) {
+      if (!own.has(cycle.id)) throw new UserFacingError(`That cycle is not on ${machine.name}.`);
+      tx.update(machineCycles).set({ enabled: cycle.enabled }).where(eq(machineCycles.id, cycle.id)).run();
+    }
+    let prices = {};
+    if (changes.topUpPrices) {
+      if (machine.type !== 'DRYER') throw new UserFacingError('Only dryers take top-ups.');
+      const problem = topUpProblem(machine, changes.topUpPrices);
+      if (problem) throw new UserFacingError(problem);
+      const { topUpPrice, topUpPrice10, topUpPrice15, topUpPrice20 } = changes.topUpPrices;
+      prices = { topUpPrice, topUpPrice10, topUpPrice15, topUpPrice20 };
+    }
+    // A machine switched off cannot run the order waiting on it.
+    const release = changes.enabled ? {} : { assignedOrderId: null, assignedAt: null, assignedByName: null };
+    tx.update(machines)
+      .set({ enabled: changes.enabled, ...prices, ...release })
+      .where(eq(machines.id, machineId))
+      .run();
+  });
 }
 
 /** Gives several machines the same start pulses (count, length and gap) in one step. */

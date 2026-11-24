@@ -47,7 +47,7 @@ If the laundry is still damp, tap **Top up** on the dryer in **Machines** while 
 
 **Adding a top-up when taking the order:** if you can already tell the laundry will need longer, pick a length under **Dryer top-up** (below the add-ons) on the new order and how many loads get it. It is charged with the order and shows on the receipt. When each of those loads starts in a dryer, the extra minutes go out with the start; there is nothing more to tap.
 
-**Owner:** prices for top-ups added on new orders are in **Manage › Shop settings › Dryer top-ups on new orders** (one list for the shop, since the dryer is not known yet). Saving them also gives every dryer the same prices for top-ups while drying. **Manage › Machines** shows each dryer's top-up lengths, coins and prices; to give one dryer different prices, contact support.
+**Owner:** prices for top-ups added on new orders are in **Manage › Shop settings › Dryer top-ups on new orders** (one list for the shop, since the dryer is not known yet). Saving them also gives every dryer the same prices for top-ups while drying. **Manage › Machines** shows each dryer's top-up lengths, coins and prices; to give one dryer different prices, change them on that dryer in **Manage › Machines**.
 
 ### Payments later
 
@@ -129,6 +129,12 @@ In **Manage › Shop settings › Expenses**, turn on **Employees can record exp
 
 Everything lives only on this tablet. Go to **Manage › Backup and import › Save a backup** at least once a week and keep the file somewhere else (Google Drive, email to yourself).
 
-### Machines (read only)
+### Machines
 
-**Manage › Machines** shows the machine setup without changing it: whether the machines are connected (**Check connection** tries again), whether receipt scans and Multi-cycle are on, and each machine with its run time and **coins** (one coin is one start signal, like a coin in the slot). Tap a machine to see its cycles, or for a dryer its top-up lengths, coins and prices. To add or change machines, contact support. The owner PIN is changed on the same screen.
+**Manage › Machines** shows the machine setup: whether the machines are connected (**Check connection** tries again), whether receipt scans and Multi-cycle are on, and each machine with its run time and **coins** (one coin is one start signal, like a coin in the slot). Tap a machine to:
+
+- switch it off with **In use** while it is broken, so nobody can start it (an order waiting on it is taken off);
+- tick which of a washer's cycles staff are offered (with none ticked, staff are not asked and it runs its normal time);
+- for a dryer, tick which top-up lengths are offered and set each one's price.
+
+Then tap **Save changes**. To add machines or change coins, run times or cycles, contact support. The owner PIN is changed on the same screen.
