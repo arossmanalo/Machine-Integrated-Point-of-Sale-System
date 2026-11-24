@@ -6,11 +6,10 @@ import {
   can,
   canDeleteAccount,
   canEditAccount,
-  canSeeAccount,
   ROLE_LABELS,
   type Role,
 } from '@/domain/permissions';
-import { addStaff, developerExists, listStaff, removeStaff, updateStaff } from '@/services/auth';
+import { addStaff, listStaff, removeStaff, updateStaff } from '@/services/auth';
 import { useActor } from '@/state/AppProvider';
 import { useAction, useData } from '@/state/hooks';
 import { useToast } from '@/state/toast';
@@ -24,7 +23,7 @@ import { TextField } from '@/ui/TextField';
 export default function Staff() {
   const actor = useActor();
   const [editing, setEditing] = useState<UserRow | 'new' | null>(null);
-  const staff = useData(listStaff).filter((member) => canSeeAccount(actor.role, member.role));
+  const staff = useData(listStaff);
   return (
     <ManageScreen title="Staff" allowed={can.manageStaff}>
       <Screen>
@@ -56,8 +55,7 @@ function StaffDialog({ member, onClose }: { member: UserRow | null; onClose: () 
   const actor = useActor();
   const action = useAction();
   const toast = useToast();
-  const hasDeveloper = useData(developerExists);
-  const roles = assignableRoles(actor, member, hasDeveloper);
+  const roles = assignableRoles(actor, member);
   const [username, setUsername] = useState(member?.username ?? '');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<Role>(member?.role ?? roles[roles.length - 1] ?? 'EMPLOYEE');

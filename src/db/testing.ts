@@ -6,6 +6,8 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 
 import { receiptCodeFor } from '@/domain/receiptCode';
+import { hashSecret } from '@/domain/secrets';
+import type { DeveloperLogin } from '@/services/developerAccount';
 
 import * as schema from './schema';
 import type { Actor, ServiceContext } from './types';
@@ -30,6 +32,11 @@ export function createTestContext(start = Date.UTC(2026, 10, 17, 2, 0)): Service
 }
 
 export const testOwner: Actor = { id: 'U0001', username: 'owner', role: 'OWNER' };
+/** A built-in developer login for tests, as `npm run developer-login` would make it. */
+export async function testDeveloperLogin(username: string, password: string): Promise<DeveloperLogin> {
+  return { username, passwordHash: await hashSecret(password, new Uint8Array(16).fill(7)) };
+}
+
 /** Only used to set up machines in tests; the users table has no row for it. */
 export const testDeveloper: Actor = { id: 'U0099', username: 'dev', role: 'DEVELOPER' };
 export const testEmployee: Actor = { id: 'U0002', username: 'ana', role: 'EMPLOYEE' };

@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 
 import {
   afterPinFailure,
@@ -13,6 +13,7 @@ import { assignableRoles, can, canDeleteAccount, canEditAccount, type Role } fro
 import { users, type UserRow } from '@/db/schema';
 import { UserFacingError, type Actor, type ServiceContext } from '@/db/types';
 
+import { BUILT_IN_DEVELOPER, DEVELOPER_ID, type DeveloperLogin } from './developerAccount';
 import { takeNextId } from './sequences';
 import { getSetting, setSetting } from './settings';
 
@@ -65,6 +66,7 @@ export async function completeFirstRunSetup(ctx: ServiceContext, input: FirstRun
   const pinHash = await hashNew(ctx, input.pin);
   return ctx.db.transaction((tx) => {
     const existing = findByUsername({ ...ctx, db: tx }, username);
+    if (existing?.role === 'DEVELOPER') throw new UserFacingError('Pick another username.');
     let id: string;
     if (existing) {
       // An imported account with this name becomes the owner.
@@ -86,13 +88,24 @@ export async function completeFirstRunSetup(ctx: ServiceContext, input: FirstRun
   });
 }
 
-export async function logIn(ctx: ServiceContext, username: string, password: string): Promise<Actor> {
+export async function logIn(
+  ctx: ServiceContext,
+  username: string,
+  password: string,
+  developer: DeveloperLogin | null = BUILT_IN_DEVELOPER,
+): Promise<Actor> {
   if (!username.trim() || !password) {
     throw new UserFacingError('Enter both username and password.');
   }
-  const user = findByUsername(ctx, username);
   const wrong = new UserFacingError('Incorrect username or password. Please try again.');
-  if (!user || !user.active) throw wrong;
+  const isDeveloper =
+    developer !== null &&
+    sameUsername(username, developer.username) &&
+    (await verifySecret(password, developer.passwordHash));
+  if (developer && isDeveloper) return signInDeveloper(ctx, developer, wrong);
+  const user = findByUsername(ctx, username);
+  // Developer rows only sign in through the built-in developer login above.
+  if (!user || !user.active || user.role === 'DEVELOPER') throw wrong;
   if (!user.passwordHash) {
     throw new UserFacingError('This account has no password yet. Ask the owner to set one in Staff.');
   }
@@ -101,29 +114,57 @@ export async function logIn(ctx: ServiceContext, username: string, password: str
   return toActor(user);
 }
 
+function sameUsername(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+/**
+ * Signs in the built-in developer. Its row exists only so sessions and "done by" names work; it is
+ * created on first sign-in, follows the built-in password, and is left out of Staff and backups.
+ */
+function signInDeveloper(ctx: ServiceContext, developer: DeveloperLogin, wrong: UserFacingError): Actor {
+  return ctx.db.transaction((tx) => {
+    const clash = findByUsername({ ...ctx, db: tx }, developer.username);
+    if (clash && clash.id !== DEVELOPER_ID) throw wrong;
+    const row = {
+      username: developer.username.trim(),
+      passwordHash: developer.passwordHash,
+      role: 'DEVELOPER' as const,
+      active: true,
+    };
+    const existing = tx.select({ id: users.id }).from(users).where(eq(users.id, DEVELOPER_ID)).get();
+    if (existing) tx.update(users).set(row).where(eq(users.id, DEVELOPER_ID)).run();
+    else tx.insert(users).values({ id: DEVELOPER_ID, ...row, createdAt: ctx.now() }).run();
+    setSetting(tx, 'sessionUserId', DEVELOPER_ID);
+    return { id: DEVELOPER_ID, username: row.username, role: 'DEVELOPER' };
+  });
+}
+
 export function logOut(ctx: ServiceContext): void {
   setSetting(ctx.db, 'sessionUserId', null);
 }
 
-export function restoreSession(ctx: ServiceContext): Actor | null {
+export function restoreSession(
+  ctx: ServiceContext,
+  developer: DeveloperLogin | null = BUILT_IN_DEVELOPER,
+): Actor | null {
   const id = getSetting(ctx.db, 'sessionUserId');
   if (!id) return null;
   const user = ctx.db.select().from(users).where(eq(users.id, id)).get();
-  return user && user.active && user.passwordHash ? toActor(user) : null;
+  if (!user || !user.active || !user.passwordHash) return null;
+  // A developer session ends once the app's built-in developer login changes or is removed.
+  if (user.role === 'DEVELOPER' && user.passwordHash !== developer?.passwordHash) return null;
+  return toActor(user);
 }
 
+/** Everyone who signs in, except the built-in developer, which nobody else should know about. */
 export function listStaff(ctx: ServiceContext): UserRow[] {
-  return ctx.db.select().from(users).where(eq(users.active, true)).orderBy(users.id).all();
-}
-
-/** Whether an active developer account exists; until one does, the owner may create it. */
-export function developerExists(ctx: ServiceContext): boolean {
-  const developer = ctx.db
-    .select({ id: users.id })
+  return ctx.db
+    .select()
     .from(users)
-    .where(and(eq(users.role, 'DEVELOPER'), eq(users.active, true)))
-    .get();
-  return developer !== undefined;
+    .where(and(eq(users.active, true), ne(users.role, 'DEVELOPER')))
+    .orderBy(users.id)
+    .all();
 }
 
 function getUser(ctx: ServiceContext, id: string): UserRow {
@@ -140,7 +181,7 @@ export interface StaffInput {
 }
 
 export async function addStaff(ctx: ServiceContext, actor: Actor, input: StaffInput): Promise<string> {
-  if (!assignableRoles(actor, null, developerExists(ctx)).includes(input.role)) {
+  if (!assignableRoles(actor, null).includes(input.role)) {
     throw new UserFacingError('You cannot create an account with that role.');
   }
   const username = cleanUsername(input.username);
@@ -173,7 +214,7 @@ export async function updateStaff(
 ): Promise<void> {
   const target = getUser(ctx, id);
   if (!canEditAccount(actor, target)) throw new UserFacingError('You cannot edit this account.');
-  const allowedRoles = assignableRoles(actor, target, developerExists(ctx));
+  const allowedRoles = assignableRoles(actor, target);
   if (input.role !== target.role && !allowedRoles.includes(input.role)) {
     throw new UserFacingError('You cannot give this account that role.');
   }

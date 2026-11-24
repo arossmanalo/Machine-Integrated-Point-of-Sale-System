@@ -25,7 +25,7 @@ The washers and dryers only start for an order, and only with that order's recei
 3. The camera opens. Hold the receipt's QR code in front of it. If the picture is from the wrong side, tap **Switch camera**. The first time, allow the app to use the camera.
 4. The app asks once: **Run Washer 1 for T0012?** Tap **Run machine**. The machine starts right away.
 
-- The developer can turn receipt scans off (**Scan receipt to run a machine** in **Manage › Machines**). Staff then pick the order from a list with no receipt, as before.
+- If receipt scans are switched off (**Manage › Machines** shows it), staff pick the order from a list with no receipt.
 - A load is washed before it is dried: a dryer only runs for an order once that load's wash is over (load 2's dryer waits for the second washer). While the washer is still counting down, the dryer is refused; if the wash finished early, tap **Mark as done** on the washer first. Dry-only orders skip the washer.
 - A receipt for another order, or any other QR code, is refused. Tap **Scan again** and use the right receipt.
 - **For testing only:** until the receipt printer arrives, one test QR code (`docs/test-receipt-qr.png`) works for every open order. On the Machines tab you then pick the order from the list. Anyone holding a copy of it can start machines for any order, so it is removed before the shop relies on receipts.
@@ -47,7 +47,7 @@ If the laundry is still damp, tap **Top up** on the dryer in **Machines** while 
 
 **Adding a top-up when taking the order:** if you can already tell the laundry will need longer, pick a length under **Dryer top-up** (below the add-ons) on the new order and how many loads get it. It is charged with the order and shows on the receipt. When each of those loads starts in a dryer, the extra minutes go out with the start; there is nothing more to tap.
 
-**Owner:** prices for top-ups added on new orders are in **Manage › Shop settings › Dryer top-ups on new orders** (one list for the shop, since the dryer is not known yet). Saving them also gives every dryer the same prices for top-ups while drying. **Manage › Machines** shows each dryer's top-up lengths, coins and prices; only the developer can give one dryer different prices.
+**Owner:** prices for top-ups added on new orders are in **Manage › Shop settings › Dryer top-ups on new orders** (one list for the shop, since the dryer is not known yet). Saving them also gives every dryer the same prices for top-ups while drying. **Manage › Machines** shows each dryer's top-up lengths, coins and prices; to give one dryer different prices, contact support.
 
 ### Payments later
 
@@ -67,7 +67,7 @@ If the owner allows it, the **Today** screen has **Record expense**. Enter what 
 |---|---|
 | **Machines offline** at the top | Check that the machine controller box has power and the tablet is on the shop Wi-Fi. Tap the chip to reconnect. |
 | **Did not get the start** | Nothing happened. Tap **Run machine** again. |
-| **Busy** | That machine is still getting the pulses from the last start. Wait a moment and try again. |
+| **Busy** | That machine is still taking the last start. Wait a moment and try again. |
 | **Still running** | The machine's countdown has not ended. Wait, or tap **Mark as done** on the Machines tab if it already stopped. |
 | **No answer** after a start | Look at the machine: it may have started anyway. If it did not, ask the owner for an override; the app will not start it twice on its own. |
 | Printer does not print | Make sure the printer is on and charged. Use **Print receipt** on the order page to try again. |
@@ -131,41 +131,4 @@ Everything lives only on this tablet. Go to **Manage › Backup and import › S
 
 ### Machines (read only)
 
-**Manage › Machines** shows the machine setup without changing it: whether the machines are connected (**Check connection** tries again), whether receipt scans and Multi-cycle are on, and each machine with its run time and **coins** (one coin is one start signal, like a coin in the slot). Tap a machine to see its cycles, or for a dryer its top-up lengths, coins and prices. Only the developer adds or changes machines and tests them. The owner PIN is changed on the same screen.
-
-## For the developer
-
-The developer account can do everything the owner can, and is the only account that sets up and tests the machines. Only a developer sees developer accounts in **Staff**. Right after setting up a tablet, sign in as the owner and add the developer account in **Staff** (role **Developer**); the owner can do this only while the tablet has no developer account, and cannot edit or remove it afterwards.
-
-### Multi-cycle
-
-In **Manage › Machines**, turn on **Multi-cycle** to make staff pick a cycle before a washer runs. Each washer starts with Delicates, Light, Medium and Heavy. Its settings show a table of its cycles: the tick box (**On**) decides whether staff are offered that cycle, and you can change each cycle's name, pulses and minutes; pulse length and gap stay the washer's. **Add cycle** creates your own (for example "Quick wash") on this washer only, all washers, or the washers you pick. A washer with every cycle unticked starts with its own pulse count and run time. Dryers have no cycles. The owner override asks for the cycle too. In Testing mode, **Test start** on a washer asks which cycle to send, and on a dryer asks for **Start** or a 5, 10, 15 or 20-minute top-up, so you can test each one in turn. Tests charge nothing and set no countdown. When you first turn it on, every cycle has the machine's current pulses and run time, so set each one.
-
-### Setting up machines
-
-**Manage › Machines**: add each machine with its type, its channel (the machine controller terminal it is wired to), its start pulses and its **run time** in minutes (what the in-use countdown counts down). For dryers, also set the **top-up pulses** (how many pulses give the dryer 5 more minutes) and the **top-up price**; a price of 0 switches top-ups off. Use **Test** to send a machine's pulses without an order. Switch a machine off while it is broken so nobody can start it. **Simulate machines** is for training; turn it off for real use.
-
-**Start pulses.** A start works like dropping coins in the machine's slot: it sends a number of pulses, each a set length, with a gap between them. Set all three per machine: **Number of pulses** (1 to 50), **Pulse length** and **Gap between** (20 to 5000 milliseconds; 1000 ms is one second). The defaults are 1 pulse of 500 ms with a 500 ms gap. To give other machines the same pulses, pick **All machines** or **Selected machines** under **Use these pulses on** before saving; their run time and top-up settings are left alone.
-
-The machine controller has 14 channels. Wire each machine to the terminal for its channel; the app shows the terminal next to each machine.
-
-| Channel | Terminal | Green strip (USB port at the top) | ESP32 pin |
-|---|---|---|---|
-| 1 | D25 | right strip | GPIO 25 |
-| 2 | D26 | right strip | GPIO 26 |
-| 3 | D27 | right strip | GPIO 27 |
-| 4 | D32 | right strip | GPIO 32 |
-| 5 | D33 | right strip | GPIO 33 |
-| 6 | D13 | right strip | GPIO 13 |
-| 7 | D18 | left strip | GPIO 18 |
-| 8 | D19 | left strip | GPIO 19 |
-| 9 | D21 | left strip | GPIO 21 |
-| 10 | D22 | left strip | GPIO 22 |
-| 11 | D23 | left strip | GPIO 23 |
-| 12 | D4 | left strip | GPIO 4 |
-| 13 | RX2 | left strip | GPIO 16 |
-| 14 | TX2 | left strip | GPIO 17 |
-
-Leave the other terminals free: some of them switch on briefly while the board starts, which could start a machine.
-
-**Testing the machines.** The **Machines** tab looks the same for the developer as for staff until the developer turns on **Testing mode** at the bottom of the tab. Testing mode shows **Test start** on each free machine, which sends its pulses without an order, sets no countdown and is logged as a test, and **Create test order**. A test order is Pay later, takes no supplies, and lets you try the staff flow: tap a free machine, pick the test order and start it. Tap **Void test order** when you are done so it does not stay in the open jobs. With the LED prototype, the LED stays off and blinks once per pulse.
+**Manage › Machines** shows the machine setup without changing it: whether the machines are connected (**Check connection** tries again), whether receipt scans and Multi-cycle are on, and each machine with its run time and **coins** (one coin is one start signal, like a coin in the slot). Tap a machine to see its cycles, or for a dryer its top-up lengths, coins and prices. To add or change machines, contact support. The owner PIN is changed on the same screen.

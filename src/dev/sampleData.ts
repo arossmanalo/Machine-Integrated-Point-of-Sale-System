@@ -29,7 +29,6 @@ import { setSetting } from '@/services/settings';
 /** Sign-in details of the sample accounts (sample data only, not a real shop's). */
 export const SAMPLE_ACCOUNTS = {
   owner: { username: 'owner', password: 'sample123', pin: '1234' },
-  developer: { username: 'developer', password: 'sample123' },
   employee: { username: 'ana', password: 'sample123' },
 } as const;
 
@@ -87,8 +86,8 @@ export async function buildSampleBackup(now: number, days = 30): Promise<Backup>
   const owner = await completeFirstRunSetup(ctx, SAMPLE_ACCOUNTS.owner);
   const employeeId = await addStaff(ctx, owner, { ...SAMPLE_ACCOUNTS.employee, role: 'EMPLOYEE' });
   const employee: Actor = { id: employeeId, username: SAMPLE_ACCOUNTS.employee.username, role: 'EMPLOYEE' };
-  const developerId = await addStaff(ctx, owner, { ...SAMPLE_ACCOUNTS.developer, role: 'DEVELOPER' });
-  const developer: Actor = { id: developerId, username: SAMPLE_ACCOUNTS.developer.username, role: 'DEVELOPER' };
+  // Sets up the machines only; the built-in developer is never part of a backup.
+  const developer: Actor = { id: 'D0001', username: 'sample-setup', role: 'DEVELOPER' };
   setSetting(ctx.db, 'pricePerLoad', 16000);
   setSetting(ctx.db, 'dryOnlyPricePerLoad', 10000);
   setSetting(ctx.db, 'orderTopUpPrices', { topUpPrice: 2000, topUpPrice10: 3500, topUpPrice15: 5000, topUpPrice20: 6500 });

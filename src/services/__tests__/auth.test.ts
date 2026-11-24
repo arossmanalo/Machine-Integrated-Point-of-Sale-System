@@ -1,4 +1,4 @@
-import { createTestContext } from '@/db/testing';
+import { createTestContext, testDeveloperLogin } from '@/db/testing';
 
 import {
   addStaff,
@@ -103,3 +103,38 @@ describe('owner PIN', () => {
     await expect(checkOwnerPin(ctx, '1357')).resolves.toBe('ok');
   });
 });
+
+describe('built-in developer', () => {
+  it('signs in with the login built into the app, and nobody else sees or backs it up', async () => {
+    const { ctx } = await ownerContext();
+    const developer = await testDeveloperLogin('support', 'long dev passphrase');
+
+    await expect(logIn(ctx, 'support', 'wrong', developer)).rejects.toThrow('Incorrect');
+    await expect(logIn(ctx, 'support', 'long dev passphrase', null)).rejects.toThrow('Incorrect');
+    const actor = await logIn(ctx, ' Support ', 'long dev passphrase', developer);
+    expect(actor).toMatchObject({ username: 'support', role: 'DEVELOPER' });
+    expect(restoreSession(ctx, developer)?.id).toBe(actor.id);
+    expect(listStaff(ctx).map((u) => u.role)).not.toContain('DEVELOPER');
+
+    // Signing in again reuses the same row.
+    await logIn(ctx, 'support', 'long dev passphrase', developer);
+    expect(restoreSession(ctx, developer)?.id).toBe(actor.id);
+  });
+
+  it('ends a developer session when the built-in login changes or is removed', async () => {
+    const { ctx } = await ownerContext();
+    const developer = await testDeveloperLogin('support', 'long dev passphrase');
+    await logIn(ctx, 'support', 'long dev passphrase', developer);
+    expect(restoreSession(ctx, null)).toBeNull();
+    expect(restoreSession(ctx, await testDeveloperLogin('support', 'new passphrase'))).toBeNull();
+  });
+
+  it('never lets a stored developer row sign in with the normal login', async () => {
+    const { ctx } = await ownerContext();
+    const developer = await testDeveloperLogin('support', 'long dev passphrase');
+    await logIn(ctx, 'support', 'long dev passphrase', developer);
+    // Without the built-in login (or with another one), the stored row and its hash are refused.
+    await expect(logIn(ctx, 'support', 'long dev passphrase', null)).rejects.toThrow('Incorrect');
+  });
+});
+

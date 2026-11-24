@@ -337,7 +337,7 @@ export const TEST_CUSTOMER_NAME = 'Test customer';
  * the real locks. It takes no supplies off stock and no money; void it afterwards.
  */
 export function createTestOrder(ctx: ServiceContext, actor: Actor): OrderRow {
-  if (!can.manageMachines(actor.role)) throw new UserFacingError('Only the developer can create test orders.');
+  if (!can.manageMachines(actor.role)) throw new UserFacingError('Test orders are for support only.');
   const existing = ctx.db
     .select()
     .from(customers)

@@ -152,7 +152,7 @@ export default function Machines() {
           <EmptyState
             icon="washing-machine"
             title="No machines set up"
-            body={developer ? 'Add each washer and dryer with the machine controller channel it is wired to.' : 'The developer adds the machines.'}
+            body={developer ? 'Add each washer and dryer with the machine controller channel it is wired to.' : 'Machines are added by support.'}
             action={developer ? <Button label="Set up machines" onPress={() => router.push('/manage/machines')} /> : undefined}
           />
         </Panel>

@@ -1,4 +1,4 @@
-import { createTestContext, receiptOf, testDeveloper, testEmployee } from '@/db/testing';
+import { createTestContext, receiptOf, testDeveloper, testDeveloperLogin, testEmployee } from '@/db/testing';
 import { NO_TOP_UP_PRICES } from '@/domain/machinePolicy';
 import { MockMachineController } from '@/machines/MockMachineController';
 
@@ -249,6 +249,19 @@ describe('full backup', () => {
       topUpPulses20: 4,
       runEndsAt: null,
     });
+  });
+
+  it('leaves the built-in developer out of backups and ignores one written into a backup', async () => {
+    const { ctx, owner } = await setup();
+    await logIn(ctx, 'support', 'long dev passphrase', await testDeveloperLogin('support', 'long dev passphrase'));
+    const backup = JSON.parse(JSON.stringify(exportBackup(ctx, owner)));
+    expect(backup.tables.users.map((u: { role: string }) => u.role)).not.toContain('DEVELOPER');
+
+    backup.tables.users.push({ ...backup.tables.users[0], id: 'U0099', username: 'sneaky', role: 'DEVELOPER' });
+    const fresh = createTestContext();
+    restoreBackup(fresh, owner, backup);
+    expect(listStaff(fresh).map((u) => u.username)).toEqual(['Aryl']);
+    await expect(logIn(fresh, 'sneaky', 'secret123', null)).rejects.toThrow('Incorrect');
   });
 
   it('rebuilds the four fixed cycles of a backup from before cycles had their own table', async () => {

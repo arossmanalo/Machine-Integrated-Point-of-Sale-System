@@ -3,7 +3,7 @@ import { formatId, parseIdNumber } from '../ids';
 import { isPromoEligible, loyaltyAfterOrder, loyaltyAfterVoid } from '../loyalty';
 import { centavosToInput, formatPeso, parsePesoInput, pesosToCentavos } from '../money';
 import { amountToApply, balanceDue, changeDue, fullyPaidAt } from '../payments';
-import { assignableRoles, can, canDeleteAccount, canEditAccount, canSeeAccount } from '../permissions';
+import { assignableRoles, can, canDeleteAccount, canEditAccount } from '../permissions';
 import { computeOrderTotal, loadRangeForWeight } from '../pricing';
 import { isClosedStatus, normalizeStatus, selectableStatuses, statusLabel } from '../statuses';
 
@@ -158,26 +158,23 @@ describe('roles', () => {
   });
 
   it('owner assigns admin or employee, admin only employee', () => {
-    expect(assignableRoles(owner, null, true)).toEqual(['ADMIN', 'EMPLOYEE']);
-    expect(assignableRoles(admin, null, true)).toEqual(['EMPLOYEE']);
-    expect(assignableRoles(admin, owner, true)).toEqual([]);
-    expect(assignableRoles(admin, admin, true)).toEqual([]);
-    expect(assignableRoles(employee, null, true)).toEqual([]);
+    expect(assignableRoles(owner, null)).toEqual(['ADMIN', 'EMPLOYEE']);
+    expect(assignableRoles(admin, null)).toEqual(['EMPLOYEE']);
+    expect(assignableRoles(admin, owner)).toEqual([]);
+    expect(assignableRoles(admin, admin)).toEqual([]);
+    expect(assignableRoles(employee, null)).toEqual([]);
   });
 
-  it('the owner may add the developer only while there is none, and never edits it', () => {
-    expect(assignableRoles(owner, null, false)).toEqual(['DEVELOPER', 'ADMIN', 'EMPLOYEE']);
-    expect(assignableRoles(owner, admin, false)).toEqual(['ADMIN', 'EMPLOYEE']);
-    expect(assignableRoles(owner, developer, true)).toEqual([]);
+  it('nobody gives out the developer role, and the owner never edits a developer', () => {
+    expect(assignableRoles(owner, null)).not.toContain('DEVELOPER');
+    expect(assignableRoles(developer, null)).toEqual(['ADMIN', 'EMPLOYEE']);
+    expect(assignableRoles(owner, developer)).toEqual([]);
     expect(canEditAccount(owner, developer)).toBe(false);
     expect(canDeleteAccount(owner, developer)).toBe(false);
-    expect(canSeeAccount('OWNER', 'DEVELOPER')).toBe(false);
-    expect(canSeeAccount('DEVELOPER', 'DEVELOPER')).toBe(true);
   });
 
-  it('the developer manages every account but never removes the owner', () => {
-    expect(assignableRoles(developer, null, true)).toEqual(['DEVELOPER', 'ADMIN', 'EMPLOYEE']);
-    expect(assignableRoles(developer, owner, true)).toEqual([]);
+  it('the developer manages staff accounts but never removes or demotes the owner', () => {
+    expect(assignableRoles(developer, owner)).toEqual([]);
     expect(canEditAccount(developer, owner)).toBe(true);
     expect(canDeleteAccount(developer, owner)).toBe(false);
     expect(canDeleteAccount(developer, admin)).toBe(true);

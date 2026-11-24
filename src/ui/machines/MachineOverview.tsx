@@ -28,7 +28,7 @@ function OnOff({ on }: { on: boolean }) {
 
 /**
  * The owner's read-only view of the machine setup. It names each setting broadly and leaves out
- * how the machines are wired and signalled; only the developer changes the setup.
+ * how the machines are wired and signalled; only the built-in developer changes the setup.
  */
 export function MachineOverview() {
   const { controller, controllerState } = useApp();
@@ -76,7 +76,7 @@ export function MachineOverview() {
       <Section title="Machines">
         <Panel>
           {machines.length === 0 ? (
-            <EmptyState icon="washing-machine" title="No machines yet" body="The developer adds the machines." />
+            <EmptyState icon="washing-machine" title="No machines yet" body="Machines are added by support." />
           ) : (
             machines.map((machine, index) => (
               <ListRow

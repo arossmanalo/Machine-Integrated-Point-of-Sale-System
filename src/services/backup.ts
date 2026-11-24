@@ -1,4 +1,4 @@
-import { notInArray, sql } from 'drizzle-orm';
+import { ne, notInArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { parseIdNumber, type IdKind } from '@/domain/ids';
@@ -33,7 +33,8 @@ export const BACKUP_VERSION = 9;
 
 function readAll(db: Db) {
   return {
-    users: db.select().from(users).all(),
+    // The built-in developer is never written to a backup, and never restored from one.
+    users: db.select().from(users).where(ne(users.role, 'DEVELOPER')).all(),
     customers: db.select().from(customers).all(),
     inventoryItems: db.select().from(inventoryItems).all(),
     orders: db.select().from(orders).all(),
@@ -300,7 +301,9 @@ export function restoreBackup(ctx: ServiceContext, actor: Actor, parsed: unknown
     tx.delete(sequences).run();
     tx.delete(settings).where(notInArray(settings.key, [...DEVICE_ONLY_SETTINGS])).run();
     tx.delete(users).run();
-    for (const values of tables.users) tx.insert(users).values(values).run();
+    for (const values of tables.users.filter((user) => user.role !== 'DEVELOPER')) {
+      tx.insert(users).values(values).run();
+    }
     for (const values of tables.customers) tx.insert(customers).values(values).run();
     for (const values of tables.inventoryItems) tx.insert(inventoryItems).values(values).run();
     for (const values of tables.orders) {

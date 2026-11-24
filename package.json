@@ -52,7 +52,8 @@
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "check": "npm run typecheck && npm run lint && npm test",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "developer-login": "node scripts/developer-login.mjs"
   },
   "private": true
 }

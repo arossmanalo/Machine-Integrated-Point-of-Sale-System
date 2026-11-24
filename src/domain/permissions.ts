@@ -50,16 +50,12 @@ interface Account {
 }
 
 /**
- * Roles the acting user may give an account (null target = a new account). The owner may create
- * the developer account only while the tablet has none, so the developer can be added after setup.
+ * Roles the acting user may give an account (null target = a new account). Nobody gives out the
+ * developer role: the developer signs in with the login built into the app.
  */
-export function assignableRoles(actor: Account, target: Account | null, developerExists: boolean): Role[] {
+export function assignableRoles(actor: Account, target: Account | null): Role[] {
   if (target !== null && target.id === actor.id) return [];
-  if (actor.role === 'DEVELOPER') return target?.role === 'OWNER' ? [] : ['DEVELOPER', 'ADMIN', 'EMPLOYEE'];
-  if (actor.role === 'OWNER') {
-    if (target?.role === 'OWNER' || target?.role === 'DEVELOPER') return [];
-    return target === null && !developerExists ? ['DEVELOPER', 'ADMIN', 'EMPLOYEE'] : ['ADMIN', 'EMPLOYEE'];
-  }
+  if (hasOwnerRights(actor.role)) return hasOwnerRights(target?.role ?? 'EMPLOYEE') ? [] : ['ADMIN', 'EMPLOYEE'];
   if (actor.role === 'ADMIN') {
     return target === null || target.role === 'EMPLOYEE' ? ['EMPLOYEE'] : [];
   }
@@ -78,9 +74,4 @@ export function canEditAccount(actor: Account, target: Account): boolean {
 /** Nobody deletes their own account, and the owner account is never deleted. */
 export function canDeleteAccount(actor: Account, target: Account): boolean {
   return actor.id !== target.id && target.role !== 'OWNER' && canEditAccount(actor, target);
-}
-
-/** Only a developer sees developer accounts in the staff list. */
-export function canSeeAccount(viewer: Role, target: Role): boolean {
-  return target !== 'DEVELOPER' || viewer === 'DEVELOPER';
 }

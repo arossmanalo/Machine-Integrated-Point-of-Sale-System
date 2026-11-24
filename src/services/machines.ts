@@ -62,7 +62,7 @@ const NOTHING_SENT: readonly StartResult[] = ['rejected', 'busy', 'failed', 'not
 
 export const RESULT_MESSAGES: Record<StartResult, string> = {
   acked: 'Started.',
-  rejected: 'The machines refused the start. Ask the developer to check the machine setup.',
+  rejected: 'The machines refused the start. Contact support to check the machine setup.',
   busy: 'This machine is still taking the last start. Wait a moment and try again.',
   failed: 'The machine controller did not get the start, so nothing happened. Try again.',
   timeout:
@@ -137,7 +137,7 @@ export function listMachines(ctx: ServiceContext): MachineRow[] {
 }
 
 function requireDeveloper(actor: Actor): void {
-  if (!can.manageMachines(actor.role)) throw new UserFacingError('Only the developer can change the machine setup.');
+  if (!can.manageMachines(actor.role)) throw new UserFacingError('Machine setup is managed by support.');
 }
 
 function checkMachine(db: Db, input: MachineInput, editingId: number | null): MachineInput {

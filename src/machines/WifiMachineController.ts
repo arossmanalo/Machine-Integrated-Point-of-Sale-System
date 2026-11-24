@@ -50,10 +50,10 @@ export interface WifiTimings {
 export const DEFAULT_TIMINGS: WifiTimings = { requestTimeoutMs: 3000, healthIntervalMs: 20000 };
 
 const DETAILS = {
-  notConfigured: 'The machine connection is not set up yet. Ask the developer to set it up.',
+  notConfigured: 'The machine connection is not set up yet. Contact support.',
   unreachable: 'Cannot reach the machine controller. Check that it has power and is on the shop Wi-Fi.',
-  notOurs: 'The machine connection points at the wrong device. Ask the developer to check it.',
-  badKey: 'The machine connection settings do not match. Ask the developer to check them.',
+  notOurs: 'The machine connection points at the wrong device. Contact support.',
+  badKey: 'The machine connection settings do not match. Contact support.',
 };
 
 type CheckedReply<T> = { kind: 'ok'; data: T } | { kind: 'unreachable' } | { kind: 'not-ours' };

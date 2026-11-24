@@ -21,7 +21,7 @@ export interface CycleEdit extends CycleInput {
 }
 
 function requireDeveloper(actor: Actor): void {
-  if (!can.manageMachines(actor.role)) throw new UserFacingError('Only the developer can change the machine setup.');
+  if (!can.manageMachines(actor.role)) throw new UserFacingError('Machine setup is managed by support.');
 }
 
 /** Every machine's cycles, in the order they are shown. */

@@ -221,8 +221,8 @@ describe('status and void', () => {
 describe('test orders', () => {
   it('lets only the developer make one, with no money and no supplies taken', () => {
     const { ctx, detergent } = setup();
-    expect(() => createTestOrder(ctx, testEmployee)).toThrow('developer');
-    expect(() => createTestOrder(ctx, testOwner)).toThrow('developer');
+    expect(() => createTestOrder(ctx, testEmployee)).toThrow('support only');
+    expect(() => createTestOrder(ctx, testOwner)).toThrow('support only');
     const first = createTestOrder(ctx, testDeveloper);
     const detail = getOrderDetail(ctx, first.id);
     expect(detail).toMatchObject({ customerName: 'Test customer', paid: 0 });
