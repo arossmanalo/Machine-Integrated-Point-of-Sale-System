@@ -6,9 +6,9 @@ Not for customers: this covers the hidden developer sign-in and how the machines
 
 The developer account is built into the app, not created on a tablet. It can do everything the owner can, and it alone sets up and tests the machines. Nobody else sees it: it is not in **Staff**, not in backups, and a backup cannot add one.
 
-1. On your PC, in the project folder, run `npm run developer-login` and enter a username and a password of at least 12 characters. Pick a username no shop will use for staff.
+1. On your PC, in the project folder, run `npm run developer-login` (in PowerShell, `npm.cmd run developer-login`) and enter a username and a password of at least 12 characters. Pick a username no shop will use for staff.
 2. It writes the username and a salted hash of the password to `.env` (git-ignored). The password itself is never saved.
-3. Publish an update (or build an APK). Every tablet then accepts that sign-in on the normal login screen.
+3. Publish an update (or build an APK) with those values loaded into the shell: `eas update --environment production` does not read `.env` by itself. In bash, run `set -a; . ./.env; set +a` first. Every tablet then accepts that sign-in on the normal login screen.
 
 To change the password, run it again and publish: developer sessions on the tablets end once the update runs. The hash ships inside the app, so use a long password nobody could guess. Signing in takes a few seconds while the tablet checks it.
 
