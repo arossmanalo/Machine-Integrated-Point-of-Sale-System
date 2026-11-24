@@ -23,6 +23,7 @@ import {
   saveShopTopUpPrices,
   setMultiCycle,
   setReceiptScanRequired,
+  setSimulateMachines,
   startMachine,
   startOrderOnMachine,
   testStart,
@@ -292,8 +293,6 @@ describe('machine settings', () => {
     const denied = 'managed by support';
     expect(() => addMachine(ctx, owner, machine('Washer 9', 'WASHER', 9))).toThrow(denied);
     expect(() => updateMachine(ctx, owner, washers[0], machine('Washer 1', 'WASHER', 1))).toThrow(denied);
-    expect(() => setMultiCycle(ctx, owner, true)).toThrow(denied);
-    expect(() => setReceiptScanRequired(ctx, owner, false)).toThrow(denied);
     expect(() => saveLockController(ctx, owner, { address: '192.168.1.50', key: 'a-long-enough-key' })).toThrow(denied);
     expect(() => addCycle(ctx, owner, { name: 'Quick', pulses: 1, minutes: 20 }, [washers[0]])).toThrow(denied);
     await expect(testStart(ctx, controller, owner, washers[0])).rejects.toThrow(denied);
@@ -663,14 +662,14 @@ describe('receipt QR codes', () => {
     expect(() => readReceiptCode(ctx, receiptCodeFor('T9999', 'a'.repeat(32)))).toThrow('does not match order T9999');
   });
 
-  it('the developer can turn receipt scans off and on', async () => {
-    const { ctx, developer, controller, order, washers } = await setup();
+  it('the owner or developer can turn receipt scans off and on', async () => {
+    const { ctx, owner, developer, controller, order, washers } = await setup();
     const run = (machineId: number) =>
       startOrderOnMachine(ctx, controller, testEmployee, order.id, machineId, null);
     await expect(run(washers[0])).rejects.toThrow('not a Laundry POS receipt');
 
-    expect(() => setReceiptScanRequired(ctx, testEmployee, false)).toThrow('managed by support');
-    setReceiptScanRequired(ctx, developer, false);
+    expect(() => setReceiptScanRequired(ctx, testEmployee, false)).toThrow('Only the owner');
+    setReceiptScanRequired(ctx, owner, false);
     await expect(run(washers[0])).resolves.toBe('acked');
 
     setReceiptScanRequired(ctx, developer, true);
@@ -845,14 +844,25 @@ describe('multi-cycle', () => {
     expect(names(dryers[0])).toEqual([]);
   });
 
-  it('only the developer turns it on, and while off a start ignores cycles', async () => {
-    const { ctx, developer, controller, order, washers } = await setup();
-    expect(() => setMultiCycle(ctx, testEmployee, true)).toThrow('managed by support');
+  it('only the owner or developer turns it on, and while off a start ignores cycles', async () => {
+    const { ctx, owner, developer, controller, order, washers } = await setup();
+    expect(() => setMultiCycle(ctx, testEmployee, true)).toThrow('Only the owner');
     const heavy = listCycles(ctx).find((c) => c.machineId === washers[0] && c.name === 'Heavy')?.id ?? null;
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order), heavy);
     expect(controller.starts[0].pulses.count).toBe(3);
-    setMultiCycle(ctx, developer, true);
+    setMultiCycle(ctx, owner, true);
     expect(getSetting(ctx.db, 'multiCycle')).toBe(true);
+    setMultiCycle(ctx, developer, false);
+    expect(getSetting(ctx.db, 'multiCycle')).toBe(false);
+  });
+
+  it('the owner or developer can simulate the machines', async () => {
+    const { ctx, owner, developer } = await setup();
+    expect(() => setSimulateMachines(ctx, testEmployee, true)).toThrow('Only the owner');
+    setSimulateMachines(ctx, owner, true);
+    expect(getSetting(ctx.db, 'simulateMachines')).toBe(true);
+    setSimulateMachines(ctx, developer, false);
+    expect(getSetting(ctx.db, 'simulateMachines')).toBe(false);
   });
 
   it("needs a cycle, then sends that cycle's pulses and counts down its minutes", async () => {

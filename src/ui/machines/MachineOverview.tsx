@@ -14,7 +14,13 @@ import { centavosToInput, parsePesoInput } from '@/domain/money';
 import { STATUS_LABELS } from '@/machines/MachineController';
 import { PULSE_LIMITS } from '@/machines/protocol';
 import { listCycles } from '@/services/cycles';
-import { listMachines, saveOwnerMachineChanges } from '@/services/machines';
+import {
+  listMachines,
+  saveOwnerMachineChanges,
+  setMultiCycle,
+  setReceiptScanRequired,
+  setSimulateMachines,
+} from '@/services/machines';
 import { getSetting } from '@/services/settings';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData } from '@/state/hooks';
@@ -32,17 +38,15 @@ export function coins(count: number): string {
   return `${count} coin${count === 1 ? '' : 's'}`;
 }
 
-function OnOff({ on }: { on: boolean }) {
-  return <Badge label={on ? 'On' : 'Off'} tone={on ? 'accent' : 'neutral'} />;
-}
-
 /**
  * The owner's view of the machine setup. It names each setting broadly and leaves out how the
  * machines are wired and signalled. The owner may switch machines and cycles on or off and set
  * coins and dryer top-up prices; everything else stays with the built-in developer.
  */
 export function MachineOverview() {
-  const { controller, controllerState } = useApp();
+  const actor = useActor();
+  const action = useAction();
+  const { controller, controllerState, reloadLockController } = useApp();
   const [viewing, setViewing] = useState<MachineRow | null>(null);
   const machines = useData(listMachines);
   const cycles = useData(listCycles);
@@ -77,11 +81,26 @@ export function MachineOverview() {
       </Section>
 
       <Section title="Settings">
-        <Panel>
-          <ListRow title="Scan receipt to run a machine" right={<OnOff on={settings.receiptScan} />} />
-          <ListRow title="Multi-cycle" right={<OnOff on={settings.multiCycle} />} last={!settings.simulate} />
-          {settings.simulate && <ListRow title="Simulated machines" right={<OnOff on />} last />}
-        </Panel>
+        <Toggle
+          label="Scan receipt to run a machine"
+          value={settings.receiptScan}
+          onChange={(on) => void action.run((c) => setReceiptScanRequired(c, actor, on))}
+        />
+        <Toggle
+          label="Multi-cycle"
+          value={settings.multiCycle}
+          onChange={(on) => void action.run((c) => setMultiCycle(c, actor, on))}
+        />
+        <Toggle
+          label="Simulate machines"
+          description="For training: starts are recorded, but the machines do not run."
+          value={settings.simulate}
+          onChange={async (on) => {
+            const result = await action.run((c) => setSimulateMachines(c, actor, on));
+            if (result.ok) reloadLockController();
+          }}
+        />
+        {action.error && <Notice tone="danger">{action.error}</Notice>}
       </Section>
 
       <Section title="Machines" description="Tap a machine to switch it off, choose its cycles, or change its coins and top-up prices.">

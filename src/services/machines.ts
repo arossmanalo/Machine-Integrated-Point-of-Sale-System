@@ -234,7 +234,7 @@ export function saveOwnerMachineChanges(
   machineId: number,
   changes: OwnerMachineChanges,
 ): void {
-  if (!can.viewMachineSettings(actor.role)) throw new UserFacingError('Only the owner can change machines.');
+  requireOwnerRights(actor);
   ctx.db.transaction((tx) => {
     const machine = requireMachine(tx, machineId);
     requireCoins(machine.name, changes.coins);
@@ -321,10 +321,23 @@ export function saveLockController(ctx: ServiceContext, actor: Actor, input: Loc
   });
 }
 
-/** Owner only: whether staff must scan the order's receipt before a machine runs. */
+function requireOwnerRights(actor: Actor): void {
+  if (!can.viewMachineSettings(actor.role)) throw new UserFacingError('Only the owner can change this.');
+}
+
+/** Owner or developer: whether staff must scan the order's receipt before a machine runs. */
 export function setReceiptScanRequired(ctx: ServiceContext, actor: Actor, required: boolean): void {
-  requireDeveloper(actor);
+  requireOwnerRights(actor);
   setSetting(ctx.db, 'requireReceiptScan', required);
+}
+
+/**
+ * Owner or developer: record starts without sending anything to the machines, for training.
+ * The app swaps its machine controller once this is saved.
+ */
+export function setSimulateMachines(ctx: ServiceContext, actor: Actor, on: boolean): void {
+  requireOwnerRights(actor);
+  setSetting(ctx.db, 'simulateMachines', on);
 }
 
 function requireMachine(db: Db, id: number): MachineRow {
@@ -596,7 +609,7 @@ function chosenOrFirstCycle(db: Db, machine: MachineRow, cycleId: number | null)
 
 /** Owner only: turns cycle choices on or off for every machine. */
 export function setMultiCycle(ctx: ServiceContext, actor: Actor, on: boolean): void {
-  requireDeveloper(actor);
+  requireOwnerRights(actor);
   setSetting(ctx.db, 'multiCycle', on);
 }
 

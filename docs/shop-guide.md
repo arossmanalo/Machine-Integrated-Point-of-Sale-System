@@ -25,7 +25,7 @@ The washers and dryers only start for an order, and only with that order's recei
 3. The camera opens. Hold the receipt's QR code in front of it. If the picture is from the wrong side, tap **Switch camera**. The first time, allow the app to use the camera.
 4. The app asks once: **Run Washer 1 for T0012?** Tap **Run machine**. The machine starts right away.
 
-- If receipt scans are switched off (**Manage › Machines** shows it), staff pick the order from a list with no receipt.
+- The owner can switch receipt scans off in **Manage › Machines › Scan receipt to run a machine**. Staff then pick the order from a list with no receipt.
 - A load is washed before it is dried: a dryer only runs for an order once that load's wash is over (load 2's dryer waits for the second washer). While the washer is still counting down, the dryer is refused; if the wash finished early, tap **Mark as done** on the washer first. Dry-only orders skip the washer.
 - A receipt for another order, or any other QR code, is refused. Tap **Scan again** and use the right receipt.
 - **For testing only:** until the receipt printer arrives, one test QR code (`docs/test-receipt-qr.png`) works for every open order. On the Machines tab you then pick the order from the list. Anyone holding a copy of it can start machines for any order, so it is removed before the shop relies on receipts.
@@ -131,7 +131,13 @@ Everything lives only on this tablet. Go to **Manage › Backup and import › S
 
 ### Machines
 
-**Manage › Machines** shows the machine setup: whether the machines are connected (**Check connection** tries again), whether receipt scans and Multi-cycle are on, and each machine with its run time and **coins** (one coin is one start signal, like a coin in the slot). Tap a machine to:
+**Manage › Machines** shows the machine setup: whether the machines are connected (**Check connection** tries again), three switches, and each machine with its run time and **coins** (one coin is one start signal, like a coin in the slot). The switches:
+
+- **Scan receipt to run a machine**: staff must scan the order's receipt before a machine runs. Off, they pick the order from a list.
+- **Multi-cycle**: staff pick one of a washer's cycles before it runs.
+- **Simulate machines**: for training. Starts are recorded but the machines do not run; turn it off for real use.
+
+Tap a machine to:
 
 - switch it off with **In use** while it is broken, so nobody can start it (an order waiting on it is taken off);
 - change its **coins** (how many coins one start counts as), and each cycle's coins;

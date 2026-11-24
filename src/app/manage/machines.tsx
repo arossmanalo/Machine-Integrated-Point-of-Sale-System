@@ -28,11 +28,12 @@ import {
   saveLockController,
   setMultiCycle,
   setReceiptScanRequired,
+  setSimulateMachines,
   testStart,
   updateMachine,
 } from '@/services/machines';
 import { listCycles, updateCycles } from '@/services/cycles';
-import { getSetting, setSetting } from '@/services/settings';
+import { getSetting } from '@/services/settings';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData } from '@/state/hooks';
 import { useToast } from '@/state/toast';
@@ -168,7 +169,7 @@ function MachineSetup() {
           description="For demos and training: starts are recorded but nothing is sent to the machine controller."
           value={simulate}
           onChange={async (value) => {
-            const result = await action.run((c) => setSetting(c.db, 'simulateMachines', value));
+            const result = await action.run((c) => setSimulateMachines(c, actor, value));
             if (result.ok) reloadLockController();
           }}
         />
