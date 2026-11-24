@@ -62,8 +62,8 @@ const NOTHING_SENT: readonly StartResult[] = ['rejected', 'busy', 'failed', 'not
 
 export const RESULT_MESSAGES: Record<StartResult, string> = {
   acked: 'Started.',
-  rejected: 'The machine controller refused the start. Check the channel, pulse settings and key in Manage.',
-  busy: 'This machine is still receiving the pulses of the last start. Wait a moment and try again.',
+  rejected: 'The machines refused the start. Ask the developer to check the machine setup.',
+  busy: 'This machine is still taking the last start. Wait a moment and try again.',
   failed: 'The machine controller did not get the start, so nothing happened. Try again.',
   timeout:
     'The machine controller did not answer, so the machine may or may not have started. Check the machine; ' +
@@ -136,8 +136,8 @@ export function listMachines(ctx: ServiceContext): MachineRow[] {
   return ctx.db.select().from(machines).orderBy(asc(machines.sortOrder), asc(machines.id)).all();
 }
 
-function requireOwner(actor: Actor): void {
-  if (!can.manageMachines(actor.role)) throw new UserFacingError('Only the owner can do this.');
+function requireDeveloper(actor: Actor): void {
+  if (!can.manageMachines(actor.role)) throw new UserFacingError('Only the developer can change the machine setup.');
 }
 
 function checkMachine(db: Db, input: MachineInput, editingId: number | null): MachineInput {
@@ -171,7 +171,7 @@ function checkMachine(db: Db, input: MachineInput, editingId: number | null): Ma
 }
 
 export function addMachine(ctx: ServiceContext, actor: Actor, input: MachineInput): number {
-  requireOwner(actor);
+  requireDeveloper(actor);
   const values = checkMachine(ctx.db, input, null);
   const sortOrder = listMachines(ctx).length;
   return ctx.db.transaction((tx) => {
@@ -182,7 +182,7 @@ export function addMachine(ctx: ServiceContext, actor: Actor, input: MachineInpu
 }
 
 export function updateMachine(ctx: ServiceContext, actor: Actor, id: number, input: MachineInput): void {
-  requireOwner(actor);
+  requireDeveloper(actor);
   const values = checkMachine(ctx.db, input, id);
   // A machine switched off cannot run the order waiting on it.
   const release = values.enabled ? {} : { assignedOrderId: null, assignedAt: null, assignedByName: null };
@@ -196,7 +196,7 @@ export function applyPulsesToMachines(
   pulses: PulseSettings,
   machineIds: readonly number[],
 ): void {
-  requireOwner(actor);
+  requireDeveloper(actor);
   const problem = pulsesProblem(pulses);
   if (problem) throw new UserFacingError(problem);
   if (machineIds.length === 0) return;
@@ -214,7 +214,7 @@ export interface LockControllerInput {
 
 /** Where the ESP32 is on the shop Wi-Fi and the passphrase that signs every start. */
 export function saveLockController(ctx: ServiceContext, actor: Actor, input: LockControllerInput): void {
-  requireOwner(actor);
+  requireDeveloper(actor);
   if (normalizeAddress(input.address) === null) {
     throw new UserFacingError('Enter the address shown by the machine controller, such as 192.168.1.50.');
   }
@@ -229,7 +229,7 @@ export function saveLockController(ctx: ServiceContext, actor: Actor, input: Loc
 
 /** Owner only: whether staff must scan the order's receipt before a machine runs. */
 export function setReceiptScanRequired(ctx: ServiceContext, actor: Actor, required: boolean): void {
-  requireOwner(actor);
+  requireDeveloper(actor);
   setSetting(ctx.db, 'requireReceiptScan', required);
 }
 
@@ -502,7 +502,7 @@ function chosenOrFirstCycle(db: Db, machine: MachineRow, cycleId: number | null)
 
 /** Owner only: turns cycle choices on or off for every machine. */
 export function setMultiCycle(ctx: ServiceContext, actor: Actor, on: boolean): void {
-  requireOwner(actor);
+  requireDeveloper(actor);
   setSetting(ctx.db, 'multiCycle', on);
 }
 
@@ -754,7 +754,11 @@ export function applyTopUpPricesToDryers(
   prices: TopUpPrices,
   machineIds: readonly number[],
 ): void {
-  requireOwner(actor);
+  requireDeveloper(actor);
+  setDryerTopUpPrices(ctx, prices, machineIds);
+}
+
+function setDryerTopUpPrices(ctx: ServiceContext, prices: TopUpPrices, machineIds: readonly number[]): void {
   if (machineIds.length === 0) return;
   ctx.db.transaction((tx) => {
     const dryers = tx
@@ -784,7 +788,7 @@ export function applyTopUpPricesToDryers(
  * each dryer's own prices match. A dryer can still be given different prices afterwards.
  */
 export function saveShopTopUpPrices(ctx: ServiceContext, actor: Actor, prices: TopUpPrices): void {
-  requireOwner(actor);
+  if (!can.changeOwnerSettings(actor.role)) throw new UserFacingError('Only the owner can change these prices.');
   ctx.db.transaction((tx) => {
     const txCtx = { ...ctx, db: tx };
     const dryerIds = tx
@@ -793,7 +797,7 @@ export function saveShopTopUpPrices(ctx: ServiceContext, actor: Actor, prices: T
       .where(eq(machines.type, 'DRYER'))
       .all()
       .map((row) => row.id);
-    applyTopUpPricesToDryers(txCtx, actor, prices, dryerIds);
+    setDryerTopUpPrices(txCtx, prices, dryerIds);
     setSetting(tx, 'orderTopUpPrices', prices);
   });
 }
@@ -870,7 +874,7 @@ export async function testStart(
   machineId: number,
   testCycleId: number | null = null,
 ): Promise<StartResult> {
-  requireOwner(actor);
+  requireDeveloper(actor);
   const machine = requireMachine(ctx.db, machineId);
   const ready = isReady(controller);
   const cycle = chosenOrFirstCycle(ctx.db, machine, testCycleId);
@@ -897,7 +901,7 @@ export async function testTopUp(
   machineId: number,
   minutes: TopUpMinutes,
 ): Promise<StartResult> {
-  requireOwner(actor);
+  requireDeveloper(actor);
   const machine = requireMachine(ctx.db, machineId);
   if (machine.type !== 'DRYER') throw new UserFacingError('Only dryers take top-ups.');
   const pulses = topUpPulsesOf(machine, minutes);

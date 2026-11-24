@@ -1,5 +1,7 @@
 import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core';
 
+import type { Role } from '@/domain/permissions';
+
 import type * as schema from './schema';
 
 /**
@@ -18,7 +20,7 @@ export interface ServiceContext {
 export interface Actor {
   id: string;
   username: string;
-  role: 'OWNER' | 'ADMIN' | 'EMPLOYEE';
+  role: Role;
 }
 
 /** A rule was broken in a way the user can fix. The message is shown as is. */

@@ -3,6 +3,7 @@ import { launchImageLibraryAsync } from 'expo-image-picker';
 import { useState } from 'react';
 import { Image, StyleSheet, View } from 'react-native';
 
+import { can } from '@/domain/permissions';
 import { gcashQrFile, setGcashQrFile } from '@/services/gcashQr';
 import { useActor, useApp } from '@/state/AppProvider';
 import { useAction, useData } from '@/state/hooks';
@@ -92,7 +93,7 @@ export function GcashQrSetting() {
     if (old.exists) old.delete();
   }
 
-  if (actor.role !== 'OWNER') return null;
+  if (!can.changeOwnerSettings(actor.role)) return null;
   return (
     <View style={styles.setting}>
       <Text variant="label">GCash QR code</Text>

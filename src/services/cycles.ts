@@ -20,8 +20,8 @@ export interface CycleEdit extends CycleInput {
   enabled: boolean;
 }
 
-function requireOwner(actor: Actor): void {
-  if (!can.manageMachines(actor.role)) throw new UserFacingError('Only the owner can do this.');
+function requireDeveloper(actor: Actor): void {
+  if (!can.manageMachines(actor.role)) throw new UserFacingError('Only the developer can change the machine setup.');
 }
 
 /** Every machine's cycles, in the order they are shown. */
@@ -88,7 +88,7 @@ export function addDefaultCycles(db: Db, machine: Pick<MachineRow, 'id' | 'type'
  * every washer picked (pulse limits with each washer's pulse length, no duplicate name).
  */
 export function addCycle(ctx: ServiceContext, actor: Actor, input: CycleInput, machineIds: readonly number[]): void {
-  requireOwner(actor);
+  requireDeveloper(actor);
   if (machineIds.length === 0) throw new UserFacingError('Pick at least one washer for the new cycle.');
   ctx.db.transaction((tx) => {
     const targets = tx.select().from(machines).where(inArray(machines.id, [...machineIds])).all();
@@ -111,7 +111,7 @@ export function addCycle(ctx: ServiceContext, actor: Actor, input: CycleInput, m
 
 /** Owner only: saves a washer's cycles as edited in its settings (names, pulses, minutes, on/off). */
 export function updateCycles(ctx: ServiceContext, actor: Actor, machineId: number, edits: readonly CycleEdit[]): void {
-  requireOwner(actor);
+  requireDeveloper(actor);
   ctx.db.transaction((tx) => {
     const machine = tx.select().from(machines).where(eq(machines.id, machineId)).get();
     if (!machine) throw new UserFacingError('That machine no longer exists.');

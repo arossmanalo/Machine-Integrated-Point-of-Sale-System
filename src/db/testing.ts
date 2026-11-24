@@ -30,6 +30,8 @@ export function createTestContext(start = Date.UTC(2026, 10, 17, 2, 0)): Service
 }
 
 export const testOwner: Actor = { id: 'U0001', username: 'owner', role: 'OWNER' };
+/** Only used to set up machines in tests; the users table has no row for it. */
+export const testDeveloper: Actor = { id: 'U0099', username: 'dev', role: 'DEVELOPER' };
 export const testEmployee: Actor = { id: 'U0002', username: 'ana', role: 'EMPLOYEE' };
 
 /** The QR code printed on an order's receipt, as staff would scan it. */

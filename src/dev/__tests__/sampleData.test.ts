@@ -25,6 +25,9 @@ describe('sample data', () => {
     await expect(logIn(ctx, SAMPLE_ACCOUNTS.owner.username, SAMPLE_ACCOUNTS.owner.password)).resolves.toMatchObject({
       role: 'OWNER',
     });
+    await expect(
+      logIn(ctx, SAMPLE_ACCOUNTS.developer.username, SAMPLE_ACCOUNTS.developer.password),
+    ).resolves.toMatchObject({ role: 'DEVELOPER' });
     const orders = listOrderSummaries(ctx);
     expect(orders.length).toBeGreaterThan(100);
     expect(orders.some((s) => s.order.service === 'DRY_ONLY')).toBe(true);

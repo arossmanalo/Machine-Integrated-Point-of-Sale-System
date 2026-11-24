@@ -34,7 +34,7 @@ export function canRecordExpenses(ctx: ServiceContext, role: Role): boolean {
 
 /** Owner only: lets employees enter expenses, without seeing or changing the expense list. */
 export function setEmployeesRecordExpenses(ctx: ServiceContext, actor: Actor, allowed: boolean): void {
-  if (actor.role !== 'OWNER') throw new UserFacingError('Only the owner can change this.');
+  if (!can.changeOwnerSettings(actor.role)) throw new UserFacingError('Only the owner can change this.');
   setSetting(ctx.db, 'employeesRecordExpenses', allowed);
 }
 

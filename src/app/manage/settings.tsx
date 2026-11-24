@@ -40,7 +40,7 @@ export default function Settings() {
           description="For customers who only want their laundry dried (the Dry only box on a new order)."
           savedMessage="Dry-only price per load"
         />
-        {actor.role === 'OWNER' && <OrderTopUpSection current={settings.orderTopUpPrices} />}
+        {can.changeOwnerSettings(actor.role) && <OrderTopUpSection current={settings.orderTopUpPrices} />}
         <StatusSection custom={settings.customStatuses} hidden={settings.hiddenStatuses} />
         <ExpenseEntrySection allowed={settings.employeesRecordExpenses} />
         <GcashSection />
@@ -58,7 +58,7 @@ export default function Settings() {
 /** Owner only: whose account customers pay into. */
 function GcashSection() {
   const actor = useActor();
-  if (actor.role !== 'OWNER') return null;
+  if (!can.changeOwnerSettings(actor.role)) return null;
   return (
     <Section title="GCash payments">
       <GcashQrSetting />
@@ -70,7 +70,7 @@ function GcashSection() {
 function ExpenseEntrySection({ allowed }: { allowed: boolean }) {
   const actor = useActor();
   const action = useAction();
-  if (actor.role !== 'OWNER') return null;
+  if (!can.changeOwnerSettings(actor.role)) return null;
   return (
     <Section title="Expenses">
       <Toggle

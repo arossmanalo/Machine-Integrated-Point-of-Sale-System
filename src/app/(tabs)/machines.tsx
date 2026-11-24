@@ -70,12 +70,12 @@ export default function Machines() {
   const toast = useToast();
   const report = useReportStart();
   const now = useNow();
-  const owner = can.manageMachines(actor.role);
+  const developer = can.manageMachines(actor.role);
   const seesEarnings = can.seeRevenue(actor.role);
-  // Off by default so the owner sees the same screen as staff. Tied to the user who turned it on,
+  // Off by default so the developer sees the same screen as staff. Tied to the user who turned it on,
   // so it is off again for the next login on this tablet.
   const [testingBy, setTestingBy] = useState<string | null>(null);
-  const testing = owner && testingBy === actor.id;
+  const testing = developer && testingBy === actor.id;
   const data = useData((c) => {
     const machines = listMachines(c);
     const summaries = listOrderSummaries(c);
@@ -144,7 +144,7 @@ export default function Machines() {
         </Notice>
       )}
       {controller.kind === 'mock' && (
-        <Notice tone="info">Machines are simulated. No pulses go out. The owner can change this in Manage.</Notice>
+        <Notice tone="info">Machines are simulated: starts are recorded, but nothing is sent to the machines.</Notice>
       )}
 
       {data.machines.length === 0 ? (
@@ -152,8 +152,8 @@ export default function Machines() {
           <EmptyState
             icon="washing-machine"
             title="No machines set up"
-            body="Add each washer and dryer with the machine controller channel it is wired to."
-            action={owner ? <Button label="Set up machines" onPress={() => router.push('/manage/machines')} /> : undefined}
+            body={developer ? 'Add each washer and dryer with the machine controller channel it is wired to.' : 'The developer adds the machines.'}
+            action={developer ? <Button label="Set up machines" onPress={() => router.push('/manage/machines')} /> : undefined}
           />
         </Panel>
       ) : (
@@ -262,7 +262,7 @@ export default function Machines() {
                                 icon="play-outline"
                                 onPress={() => void test(machine)}
                                 busy={action.busy}
-                                accessibilityHint="Owner only. Sends this machine's pulses without an order and logs it as a test."
+                                accessibilityHint="Developer only. Sends this machine's pulses without an order and logs it as a test."
                               />
                             )}
                           </Row>
@@ -277,14 +277,14 @@ export default function Machines() {
         })
       )}
       {action.error && <Notice tone="danger">{action.error}</Notice>}
-      {owner && data.machines.length > 0 && (
+      {developer && data.machines.length > 0 && (
         <Section title="Testing">
           <Toggle
             label="Testing mode"
             description={
               testing
                 ? "Test start sends a machine's pulses without an order and sets no timer. To try the staff flow instead, create a test order and start a machine with it. Test orders are Pay later and take no supplies; void them when you are done."
-                : 'Only the owner sees this. Turn it on to show Test start on each machine and to make test orders.'
+                : 'Only the developer sees this. Turn it on to show Test start on each machine and to make test orders.'
             }
             value={testing}
             onChange={(on) => setTestingBy(on ? actor.id : null)}

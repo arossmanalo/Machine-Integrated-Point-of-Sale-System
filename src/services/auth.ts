@@ -9,7 +9,7 @@ import {
   pinProblem,
   verifySecret,
 } from '@/domain/secrets';
-import { assignableRoles, canDeleteAccount, canEditAccount, type Role } from '@/domain/permissions';
+import { assignableRoles, can, canDeleteAccount, canEditAccount, type Role } from '@/domain/permissions';
 import { users, type UserRow } from '@/db/schema';
 import { UserFacingError, type Actor, type ServiceContext } from '@/db/types';
 
@@ -116,6 +116,16 @@ export function listStaff(ctx: ServiceContext): UserRow[] {
   return ctx.db.select().from(users).where(eq(users.active, true)).orderBy(users.id).all();
 }
 
+/** Whether an active developer account exists; until one does, the owner may create it. */
+export function developerExists(ctx: ServiceContext): boolean {
+  const developer = ctx.db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.role, 'DEVELOPER'), eq(users.active, true)))
+    .get();
+  return developer !== undefined;
+}
+
 function getUser(ctx: ServiceContext, id: string): UserRow {
   const user = ctx.db.select().from(users).where(eq(users.id, id)).get();
   if (!user) throw new UserFacingError('That staff account no longer exists.');
@@ -130,7 +140,7 @@ export interface StaffInput {
 }
 
 export async function addStaff(ctx: ServiceContext, actor: Actor, input: StaffInput): Promise<string> {
-  if (!assignableRoles(actor, null).includes(input.role)) {
+  if (!assignableRoles(actor, null, developerExists(ctx)).includes(input.role)) {
     throw new UserFacingError('You cannot create an account with that role.');
   }
   const username = cleanUsername(input.username);
@@ -163,7 +173,7 @@ export async function updateStaff(
 ): Promise<void> {
   const target = getUser(ctx, id);
   if (!canEditAccount(actor, target)) throw new UserFacingError('You cannot edit this account.');
-  const allowedRoles = assignableRoles(actor, target);
+  const allowedRoles = assignableRoles(actor, target, developerExists(ctx));
   if (input.role !== target.role && !allowedRoles.includes(input.role)) {
     throw new UserFacingError('You cannot give this account that role.');
   }
@@ -218,7 +228,7 @@ export async function changeOwnerPin(
   currentPin: string,
   newPin: string,
 ): Promise<void> {
-  if (actor.role !== 'OWNER') throw new UserFacingError('Only the owner can change the PIN.');
+  if (!can.changeOwnerPin(actor.role)) throw new UserFacingError('Only the owner can change the PIN.');
   requireValid(pinProblem(newPin));
   const check = await checkOwnerPin(ctx, currentPin);
   if (check === 'locked') throw new UserFacingError('Too many wrong PINs. Try again in 5 minutes.');

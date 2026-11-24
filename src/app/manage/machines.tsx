@@ -41,6 +41,7 @@ import { Badge, Choice, Dialog, Toggle } from '@/ui/controls';
 import { EmptyState, ListRow, Notice, Panel, Row, Screen, Section } from '@/ui/layout';
 import { AddCycleDialog, CycleTable, draftsProblem, toDraft, toEdits, type CycleDraft } from '@/ui/machines/CycleSettings';
 import { useCyclePicker } from '@/ui/machines/MachineDialogs';
+import { MachineOverview } from '@/ui/machines/MachineOverview';
 import { ManageScreen } from '@/ui/ManagerGate';
 import { Text } from '@/ui/Text';
 import { TextField } from '@/ui/TextField';
@@ -74,11 +75,27 @@ function priceInput(text: string): number | null {
 
 export default function MachineSettings() {
   const actor = useActor();
+  const [changingPin, setChangingPin] = useState(false);
+  return (
+    <ManageScreen title="Machines" allowed={can.viewMachineSettings}>
+      <Screen>
+        {can.manageMachines(actor.role) ? <MachineSetup /> : <MachineOverview />}
+        <Section title="Owner PIN" description="Needed for every override. Change it if anyone else may have seen it.">
+          <Button label="Change owner PIN" kind="secondary" icon="shield-key-outline" onPress={() => setChangingPin(true)} />
+        </Section>
+      </Screen>
+      {changingPin && <PinDialog onClose={() => setChangingPin(false)} />}
+    </ManageScreen>
+  );
+}
+
+/** The developer's full machine setup: connection, wiring, signals, cycles and tests. */
+function MachineSetup() {
+  const actor = useActor();
   const { controller, controllerState, reloadLockController } = useApp();
   const action = useAction();
   const toast = useToast();
   const [editing, setEditing] = useState<MachineRow | 'new' | null>(null);
-  const [changingPin, setChangingPin] = useState(false);
   const machines = useData(listMachines);
   const simulate = useData((c) => getSetting(c.db, 'simulateMachines'));
   const receiptScan = useData((c) => getSetting(c.db, 'requireReceiptScan'));
@@ -114,105 +131,99 @@ export default function MachineSettings() {
   }
 
   return (
-    <ManageScreen title="Machines" allowed={can.manageMachines}>
-      <Screen>
-        <Section title="Machine controller">
-          <Row wrap>
-            <Text style={{ flex: 1 }}>
-              {`${STATUS_LABELS[controllerState.status]}${controllerState.detail ? `. ${controllerState.detail}` : ''}`}
-            </Text>
-            <Button label="Check connection" kind="secondary" icon="wifi" onPress={() => void controller.connect()} />
-          </Row>
-          <TextField
-            label="Address"
-            value={address}
-            onChangeText={setAddress}
-            placeholder="192.168.1.50"
-            autoCapitalize="none"
-            keyboardType="url"
-            hint="The machine controller shows it on the serial monitor when it starts. Reserve it in the router so it stays the same."
-            error={addressError ? 'Enter an address like 192.168.1.50.' : null}
-          />
-          <TextField
-            label="Key"
-            value={key}
-            onChangeText={setKey}
-            autoCapitalize="none"
-            secureTextEntry
-            hint={`The same passphrase as LOCK_KEY on the machine controller, at least ${MIN_KEY_LENGTH} characters. Anyone who knows it can start machines.`}
-          />
-          <Button
-            label="Save controller settings"
-            onPress={saveConnection}
-            busy={action.busy}
-            disabled={!changed || addressError}
-          />
-          <Toggle
-            label="Simulate machines"
-            description="For demos and training: starts are recorded but nothing is sent to the machine controller."
-            value={simulate}
-            onChange={async (value) => {
-              const result = await action.run((c) => setSetting(c.db, 'simulateMachines', value));
-              if (result.ok) reloadLockController();
-            }}
-          />
-          <Toggle
-            label="Scan receipt to run a machine"
-            description={
-              receiptScan
-                ? "Staff scan the QR code on the order's receipt before a machine runs. The receipt allows one washer and one dryer per load."
-                : 'Off: staff pick the order from a list, with no receipt needed. Anyone at the tablet can run a machine for any open order.'
-            }
-            value={receiptScan}
-            onChange={(value) => void action.run((c) => setReceiptScanRequired(c, actor, value))}
-          />
-        </Section>
+    <>
+      <Section title="Machine controller">
+        <Row wrap>
+          <Text style={{ flex: 1 }}>
+            {`${STATUS_LABELS[controllerState.status]}${controllerState.detail ? `. ${controllerState.detail}` : ''}`}
+          </Text>
+          <Button label="Check connection" kind="secondary" icon="wifi" onPress={() => void controller.connect()} />
+        </Row>
+        <TextField
+          label="Address"
+          value={address}
+          onChangeText={setAddress}
+          placeholder="192.168.1.50"
+          autoCapitalize="none"
+          keyboardType="url"
+          hint="The machine controller shows it on the serial monitor when it starts. Reserve it in the router so it stays the same."
+          error={addressError ? 'Enter an address like 192.168.1.50.' : null}
+        />
+        <TextField
+          label="Key"
+          value={key}
+          onChangeText={setKey}
+          autoCapitalize="none"
+          secureTextEntry
+          hint={`The same passphrase as LOCK_KEY on the machine controller, at least ${MIN_KEY_LENGTH} characters. Anyone who knows it can start machines.`}
+        />
+        <Button
+          label="Save controller settings"
+          onPress={saveConnection}
+          busy={action.busy}
+          disabled={!changed || addressError}
+        />
+        <Toggle
+          label="Simulate machines"
+          description="For demos and training: starts are recorded but nothing is sent to the machine controller."
+          value={simulate}
+          onChange={async (value) => {
+            const result = await action.run((c) => setSetting(c.db, 'simulateMachines', value));
+            if (result.ok) reloadLockController();
+          }}
+        />
+        <Toggle
+          label="Scan receipt to run a machine"
+          description={
+            receiptScan
+              ? "Staff scan the QR code on the order's receipt before a machine runs. The receipt allows one washer and one dryer per load."
+              : 'Off: staff pick the order from a list, with no receipt needed. Anyone at the tablet can run a machine for any open order.'
+          }
+          value={receiptScan}
+          onChange={(value) => void action.run((c) => setReceiptScanRequired(c, actor, value))}
+        />
+      </Section>
 
-        <Section
-          title="Machines"
-          description={`Each machine's channel (1 to ${MAX_CHANNEL}) is the machine controller terminal it is wired to. A start sends that machine's pulses.`}
-          action={<Button label="Add machine" icon="plus" onPress={() => setEditing('new')} />}
-        >
-          <Toggle
-            label="Multi-cycle"
-            description={
-              multiCycle
-                ? 'Staff pick a cycle before a washer runs. Each washer\'s settings list its cycles: tick the ones to offer, change their pulses and minutes, or add your own. Dryers keep one start and their top-ups.'
-                : 'Off: every start sends the machine\'s one pulse count. Turn on to give each washer cycles (Delicates, Light, Medium, Heavy and any you add).'
-            }
-            value={multiCycle}
-            onChange={(value) => void action.run((c) => setMultiCycle(c, actor, value))}
-          />
-          <Panel>
-            {machines.length === 0 ? (
-              <EmptyState icon="washing-machine" title="No machines yet" body="Add each washer and dryer once it is wired to the controller." />
-            ) : (
-              machines.map((machine, index) => (
-                <ListRow
-                  key={machine.id}
-                  title={machine.name}
-                  subtitle={`${MACHINE_TYPE_LABELS[machine.type]} · channel ${machine.hardwareChannel} (${
-                    channelTerminal(machine.hardwareChannel) ?? 'not on the board'
-                  }) · ${machineSummary(machine, cyclesFor(machine))}`}
-                  right={
-                    <Row>
-                      {!machine.enabled && <Badge label="Off" tone="warning" />}
-                      <Button label="Test" kind="quiet" onPress={() => void test(machine)} />
-                    </Row>
-                  }
-                  onPress={() => setEditing(machine)}
-                  last={index === machines.length - 1}
-                />
-              ))
-            )}
-          </Panel>
-          {action.error && <Notice tone="danger">{action.error}</Notice>}
-        </Section>
-
-        <Section title="Owner PIN" description="Needed for every override. Change it if anyone else may have seen it.">
-          <Button label="Change owner PIN" kind="secondary" icon="shield-key-outline" onPress={() => setChangingPin(true)} />
-        </Section>
-      </Screen>
+      <Section
+        title="Machines"
+        description={`Each machine's channel (1 to ${MAX_CHANNEL}) is the machine controller terminal it is wired to. A start sends that machine's pulses.`}
+        action={<Button label="Add machine" icon="plus" onPress={() => setEditing('new')} />}
+      >
+        <Toggle
+          label="Multi-cycle"
+          description={
+            multiCycle
+              ? 'Staff pick a cycle before a washer runs. Each washer\'s settings list its cycles: tick the ones to offer, change their pulses and minutes, or add your own. Dryers keep one start and their top-ups.'
+              : 'Off: every start sends the machine\'s one pulse count. Turn on to give each washer cycles (Delicates, Light, Medium, Heavy and any you add).'
+          }
+          value={multiCycle}
+          onChange={(value) => void action.run((c) => setMultiCycle(c, actor, value))}
+        />
+        <Panel>
+          {machines.length === 0 ? (
+            <EmptyState icon="washing-machine" title="No machines yet" body="Add each washer and dryer once it is wired to the controller." />
+          ) : (
+            machines.map((machine, index) => (
+              <ListRow
+                key={machine.id}
+                title={machine.name}
+                subtitle={`${MACHINE_TYPE_LABELS[machine.type]} · channel ${machine.hardwareChannel} (${
+                  channelTerminal(machine.hardwareChannel) ?? 'not on the board'
+                }) · ${machineSummary(machine, cyclesFor(machine))}`}
+                right={
+                  <Row>
+                    {!machine.enabled && <Badge label="Off" tone="warning" />}
+                    <Button label="Test" kind="quiet" onPress={() => void test(machine)} />
+                  </Row>
+                }
+                onPress={() => setEditing(machine)}
+                last={index === machines.length - 1}
+              />
+            ))
+          )}
+        </Panel>
+        {action.error && <Notice tone="danger">{action.error}</Notice>}
+      </Section>
       {editing && (
         <MachineDialog
           machine={editing === 'new' ? null : editing}
@@ -222,8 +233,7 @@ export default function MachineSettings() {
           onClose={() => setEditing(null)}
         />
       )}
-      {changingPin && <PinDialog onClose={() => setChangingPin(false)} />}
-    </ManageScreen>
+    </>
   );
 }
 

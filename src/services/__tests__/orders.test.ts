@@ -1,4 +1,4 @@
-import { createTestContext, testEmployee, testOwner } from '@/db/testing';
+import { createTestContext, testDeveloper, testEmployee, testOwner } from '@/db/testing';
 
 import { createCustomer, getCustomer } from '../customers';
 import { adjustStock, createInventoryItem, listInventory, updateInventoryItem } from '../inventory';
@@ -219,16 +219,17 @@ describe('status and void', () => {
 });
 
 describe('test orders', () => {
-  it('lets only the owner make one, with no money and no supplies taken', () => {
+  it('lets only the developer make one, with no money and no supplies taken', () => {
     const { ctx, detergent } = setup();
-    expect(() => createTestOrder(ctx, testEmployee)).toThrow('owner');
-    const first = createTestOrder(ctx, testOwner);
+    expect(() => createTestOrder(ctx, testEmployee)).toThrow('developer');
+    expect(() => createTestOrder(ctx, testOwner)).toThrow('developer');
+    const first = createTestOrder(ctx, testDeveloper);
     const detail = getOrderDetail(ctx, first.id);
     expect(detail).toMatchObject({ customerName: 'Test customer', paid: 0 });
     expect(detail?.order.loadCount).toBe(1);
     expect(listInventory(ctx).find((i) => i.id === detergent)?.currentStock).toBe(20);
 
-    const second = createTestOrder(ctx, testOwner);
+    const second = createTestOrder(ctx, testDeveloper);
     expect(second.customerId).toBe(first.customerId);
     voidOrder(ctx, testOwner, first.id, 'Test order');
     expect(getOrderDetail(ctx, first.id)?.order.voidedAt).not.toBeNull();

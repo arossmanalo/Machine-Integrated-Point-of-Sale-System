@@ -4,7 +4,7 @@ import { receiptCodeFor, TEST_RECEIPT_CODE } from '@/domain/receiptCode';
 import { machineUnlocks } from '@/db/schema';
 import { MockMachineController } from '@/machines/MockMachineController';
 
-import { completeFirstRunSetup } from '../auth';
+import { addStaff, completeFirstRunSetup } from '../auth';
 import { createCustomer } from '../customers';
 import {
   addMachine,
@@ -50,12 +50,14 @@ async function setup() {
     password: 'owner123',
     pin: '2468',
   });
-  const washer1 = addMachine(ctx, owner, { ...machine('Washer 1', 'WASHER', 1), pulseCount: 3 });
-  const washer2 = addMachine(ctx, owner, machine('Washer 2', 'WASHER', 2));
-  const washer3 = addMachine(ctx, owner, machine('Washer 3', 'WASHER', 3));
-  const dryer1 = addMachine(ctx, owner, { ...machine('Dryer 1', 'DRYER', 4), topUpPulseCount: 2, topUpPulses10: 4, topUpPulses15: 7, topUpPrice: 2000, topUpPrice15: 5000 });
-  const dryer2 = addMachine(ctx, owner, machine('Dryer 2', 'DRYER', 5));
-  const dryer3 = addMachine(ctx, owner, machine('Dryer 3', 'DRYER', 6));
+  const developerId = await addStaff(ctx, owner, { username: 'dev', password: 'dev12345', role: 'DEVELOPER' });
+  const developer = { id: developerId, username: 'dev', role: 'DEVELOPER' as const };
+  const washer1 = addMachine(ctx, developer, { ...machine('Washer 1', 'WASHER', 1), pulseCount: 3 });
+  const washer2 = addMachine(ctx, developer, machine('Washer 2', 'WASHER', 2));
+  const washer3 = addMachine(ctx, developer, machine('Washer 3', 'WASHER', 3));
+  const dryer1 = addMachine(ctx, developer, { ...machine('Dryer 1', 'DRYER', 4), topUpPulseCount: 2, topUpPulses10: 4, topUpPulses15: 7, topUpPrice: 2000, topUpPrice15: 5000 });
+  const dryer2 = addMachine(ctx, developer, machine('Dryer 2', 'DRYER', 5));
+  const dryer3 = addMachine(ctx, developer, machine('Dryer 3', 'DRYER', 6));
   const customer = createCustomer(ctx, { name: 'Juan', phone: '', address: '', notes: '' });
   const controller = new MockMachineController(0);
   await controller.connect();
@@ -108,6 +110,7 @@ async function setup() {
   return {
     ctx,
     owner,
+    developer,
     controller,
     customer,
     order,
@@ -147,9 +150,9 @@ describe('assigning orders to machines', () => {
   });
 
   it('refuses voided, completed and unknown orders, and machines switched off', async () => {
-    const { ctx, owner, order, washers } = await setup();
+    const { ctx, owner, developer, order, washers } = await setup();
     expect(() => assignOrder(ctx, testEmployee, 'T9999', washers[0])).toThrow('No order');
-    updateMachine(ctx, owner, washers[0], { ...machine('Washer 1', 'WASHER', 1), enabled: false });
+    updateMachine(ctx, developer, washers[0], { ...machine('Washer 1', 'WASHER', 1), enabled: false });
     expect(() => assignOrder(ctx, testEmployee, order.id, washers[0])).toThrow('switched off');
     updateOrderStatus(ctx, owner, order.id, 'COMPLETED');
     expect(() => assignOrder(ctx, testEmployee, order.id, washers[1])).toThrow('completed');
@@ -159,10 +162,10 @@ describe('assigning orders to machines', () => {
   });
 
   it('frees machines when their order is voided or completed, or the machine is switched off', async () => {
-    const { ctx, owner, order, washers, dryers, machineById, markWashed } = await setup();
+    const { ctx, owner, developer, order, washers, dryers, machineById, markWashed } = await setup();
     markWashed(order.id);
     assignOrder(ctx, testEmployee, order.id, washers[0]);
-    updateMachine(ctx, owner, washers[0], { ...machine('Washer 1', 'WASHER', 1), enabled: false });
+    updateMachine(ctx, developer, washers[0], { ...machine('Washer 1', 'WASHER', 1), enabled: false });
     expect(machineById(washers[0])?.assignedOrderId).toBeNull();
     assignOrder(ctx, testEmployee, order.id, washers[1]);
     updateOrderStatus(ctx, owner, order.id, 'COMPLETED');
@@ -271,40 +274,54 @@ describe('owner override', () => {
 });
 
 describe('machine settings', () => {
-  it('keeps channels unique, checks pulses, and lets only the owner change machines or test', async () => {
-    const { ctx, owner, controller, washers, log } = await setup();
-    expect(() => addMachine(ctx, owner, machine('Dup', 'WASHER', 1))).toThrow('already used by Washer 1');
-    expect(() => addMachine(ctx, owner, machine('Washer 15', 'WASHER', 15))).toThrow('from 1 to 14');
-    expect(() => addMachine(ctx, owner, { ...machine('W', 'WASHER', 9), pulseCount: 0 })).toThrow('pulses');
-    expect(() => addMachine(ctx, owner, { ...machine('W', 'WASHER', 9), pulseOnMs: 10 })).toThrow('Pulse length');
-    expect(addMachine(ctx, owner, machine('Dryer 7', 'DRYER', 14))).toBeGreaterThan(0);
-    expect(() => addMachine(ctx, testEmployee, machine('X', 'WASHER', 9))).toThrow('owner');
-    await expect(testStart(ctx, controller, testEmployee, washers[0])).rejects.toThrow('owner');
-    await expect(testStart(ctx, controller, owner, washers[0])).resolves.toBe('acked');
+  it('keeps channels unique, checks pulses, and lets only the developer change machines or test', async () => {
+    const { ctx, developer, controller, washers, log } = await setup();
+    expect(() => addMachine(ctx, developer, machine('Dup', 'WASHER', 1))).toThrow('already used by Washer 1');
+    expect(() => addMachine(ctx, developer, machine('Washer 15', 'WASHER', 15))).toThrow('from 1 to 14');
+    expect(() => addMachine(ctx, developer, { ...machine('W', 'WASHER', 9), pulseCount: 0 })).toThrow('pulses');
+    expect(() => addMachine(ctx, developer, { ...machine('W', 'WASHER', 9), pulseOnMs: 10 })).toThrow('Pulse length');
+    expect(addMachine(ctx, developer, machine('Dryer 7', 'DRYER', 14))).toBeGreaterThan(0);
+    expect(() => addMachine(ctx, testEmployee, machine('X', 'WASHER', 9))).toThrow('developer');
+    await expect(testStart(ctx, controller, testEmployee, washers[0])).rejects.toThrow('developer');
+    await expect(testStart(ctx, controller, developer, washers[0])).resolves.toBe('acked');
     expect(log()[0].kind).toBe('TEST');
   });
 
-  it('copies start pulses to chosen machines only, for the owner, after checking them', async () => {
-    const { ctx, owner, washers, dryers, machineById } = await setup();
+  it('shows the owner the machine setup but lets only the developer change or test it', async () => {
+    const { ctx, owner, controller, washers, dryers } = await setup();
+    const denied = 'Only the developer';
+    expect(() => addMachine(ctx, owner, machine('Washer 9', 'WASHER', 9))).toThrow(denied);
+    expect(() => updateMachine(ctx, owner, washers[0], machine('Washer 1', 'WASHER', 1))).toThrow(denied);
+    expect(() => setMultiCycle(ctx, owner, true)).toThrow(denied);
+    expect(() => setReceiptScanRequired(ctx, owner, false)).toThrow(denied);
+    expect(() => saveLockController(ctx, owner, { address: '192.168.1.50', key: 'a-long-enough-key' })).toThrow(denied);
+    expect(() => addCycle(ctx, owner, { name: 'Quick', pulses: 1, minutes: 20 }, [washers[0]])).toThrow(denied);
+    await expect(testStart(ctx, controller, owner, washers[0])).rejects.toThrow(denied);
+    await expect(testTopUp(ctx, controller, owner, dryers[0], 5)).rejects.toThrow(denied);
+    expect(controller.starts).toEqual([]);
+  });
+
+  it('copies start pulses to chosen machines only, for the developer, after checking them', async () => {
+    const { ctx, developer, washers, dryers, machineById } = await setup();
     const pulses = { count: 12, onMs: 80, offMs: 70 };
-    expect(() => applyPulsesToMachines(ctx, testEmployee, pulses, washers)).toThrow('owner');
-    expect(() => applyPulsesToMachines(ctx, owner, { ...pulses, onMs: 5 }, washers)).toThrow('Pulse length');
-    applyPulsesToMachines(ctx, owner, pulses, [washers[1], dryers[0]]);
+    expect(() => applyPulsesToMachines(ctx, testEmployee, pulses, washers)).toThrow('developer');
+    expect(() => applyPulsesToMachines(ctx, developer, { ...pulses, onMs: 5 }, washers)).toThrow('Pulse length');
+    applyPulsesToMachines(ctx, developer, pulses, [washers[1], dryers[0]]);
     expect(machineById(washers[1])).toMatchObject({ pulseCount: 12, pulseOnMs: 80, pulseOffMs: 70 });
     expect(machineById(dryers[0])).toMatchObject({ pulseCount: 12, pulseOnMs: 80, pulseOffMs: 70, topUpPulseCount: 2 });
     expect(machineById(washers[0])).toMatchObject({ pulseCount: 3, pulseOnMs: 500 });
     expect(machineById(dryers[1])).toMatchObject({ pulseCount: 1, pulseOnMs: 500 });
   });
 
-  it('saves the controller address and key for the owner only, after checking them', async () => {
-    const { ctx, owner } = await setup();
+  it('saves the controller address and key for the developer only, after checking them', async () => {
+    const { ctx, developer } = await setup();
     const good = { address: ' 192.168.1.50 ', key: 'correct horse battery' };
-    expect(() => saveLockController(ctx, testEmployee, good)).toThrow('owner');
-    expect(() => saveLockController(ctx, owner, { ...good, address: 'not an address!' })).toThrow('192.168.1.50');
-    expect(() => saveLockController(ctx, owner, { ...good, key: 'short' })).toThrow('at least 12');
+    expect(() => saveLockController(ctx, testEmployee, good)).toThrow('developer');
+    expect(() => saveLockController(ctx, developer, { ...good, address: 'not an address!' })).toThrow('192.168.1.50');
+    expect(() => saveLockController(ctx, developer, { ...good, key: 'short' })).toThrow('at least 12');
     expect(getSetting(ctx.db, 'lockControllerAddress')).toBe('');
 
-    saveLockController(ctx, owner, good);
+    saveLockController(ctx, developer, good);
     expect(getSetting(ctx.db, 'lockControllerAddress')).toBe('192.168.1.50');
     expect(getSetting(ctx.db, 'lockControllerKey')).toBe('correct horse battery');
   });
@@ -358,8 +375,8 @@ describe('assigning starts the machine', () => {
   });
 
   it('an override starts a machine that is in use; a test start sets no timer', async () => {
-    const { ctx, owner, controller, order, washers, machineById } = await setup();
-    await testStart(ctx, controller, owner, washers[1]);
+    const { ctx, developer, controller, order, washers, machineById } = await setup();
+    await testStart(ctx, controller, developer, washers[1]);
     expect(machineById(washers[1])?.runEndsAt).toBeNull();
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
     const endsAt = machineById(washers[0])?.runEndsAt;
@@ -375,7 +392,7 @@ describe('assigning starts the machine', () => {
 
 describe('dryer top-ups', () => {
   it('adds the chosen minutes, sends pulses for them and charges that price', async () => {
-    const { ctx, controller, order, dryers, machineById, log , markWashed } = await setup();
+    const { ctx, controller, order, dryers, machineById, log, markWashed } = await setup();
     markWashed(order.id, 2);
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     const endsAt = machineById(dryers[0])?.runEndsAt ?? 0;
@@ -434,14 +451,14 @@ describe('dryer top-ups', () => {
   });
 
   it('refuses a length the dryer does not offer', async () => {
-    const { ctx, controller, order, dryers , markWashed } = await setup();
+    const { ctx, controller, order, dryers, markWashed } = await setup();
     markWashed(order.id, 2);
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 10)).rejects.toThrow('no price');
   });
 
   it('takes the charge off again when nothing was sent', async () => {
-    const { ctx, controller, order, dryers, machineById, log , markWashed } = await setup();
+    const { ctx, controller, order, dryers, machineById, log, markWashed } = await setup();
     markWashed(order.id, 2);
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order));
     const endsAt = machineById(dryers[0])?.runEndsAt;
@@ -467,29 +484,29 @@ describe('dryer top-ups', () => {
     await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], 5)).rejects.toThrow('completed');
   });
 
-  it('the owner can test each top-up length on a dryer, with no order or charge', async () => {
-    const { ctx, owner, controller, washers, dryers, log, machineById } = await setup();
-    await expect(testTopUp(ctx, controller, testEmployee, dryers[0], 10)).rejects.toThrow('Only the owner');
-    await expect(testTopUp(ctx, controller, owner, washers[0], 10)).rejects.toThrow('Only dryers');
-    await expect(testTopUp(ctx, controller, owner, dryers[0], 15)).resolves.toBe('acked');
+  it('the developer can test each top-up length on a dryer, with no order or charge', async () => {
+    const { ctx, developer, controller, washers, dryers, log, machineById } = await setup();
+    await expect(testTopUp(ctx, controller, testEmployee, dryers[0], 10)).rejects.toThrow('Only the developer');
+    await expect(testTopUp(ctx, controller, developer, washers[0], 10)).rejects.toThrow('Only dryers');
+    await expect(testTopUp(ctx, controller, developer, dryers[0], 15)).resolves.toBe('acked');
     expect(controller.starts[0]).toEqual({ channel: 4, pulses: { count: 7, onMs: 500, offMs: 500 } });
     expect(log()[0]).toMatchObject({ kind: 'TEST', orderId: null, charge: null, overrideNote: '15-minute top-up' });
     expect(machineById(dryers[0])?.runEndsAt).toBeNull();
   });
 
-  it('the owner can give all or some dryers the same top-up prices', async () => {
-    const { ctx, owner, washers, dryers, machineById } = await setup();
+  it('the developer can give all or some dryers the same top-up prices', async () => {
+    const { ctx, developer, washers, dryers, machineById } = await setup();
     const prices = { topUpPrice: 2500, topUpPrice10: 4500, topUpPrice15: 6500, topUpPrice20: 8000 };
-    expect(() => applyTopUpPricesToDryers(ctx, testEmployee, prices, [dryers[1]])).toThrow('Only the owner');
+    expect(() => applyTopUpPricesToDryers(ctx, testEmployee, prices, [dryers[1]])).toThrow('Only the developer');
 
-    applyTopUpPricesToDryers(ctx, owner, prices, [dryers[1], washers[0]]);
+    applyTopUpPricesToDryers(ctx, developer, prices, [dryers[1], washers[0]]);
     expect(machineById(dryers[1])).toMatchObject(prices);
     expect(machineById(dryers[2])).toMatchObject(NO_TOP_UP_PRICES);
     expect(machineById(washers[0])).toMatchObject(NO_TOP_UP_PRICES);
 
     // Dryer 3's 20-minute top-up sends 51 pulses, over the limit of 50.
-    updateMachine(ctx, owner, dryers[2], { ...machine('Dryer 3', 'DRYER', 6), topUpPulses20: 51 });
-    expect(() => applyTopUpPricesToDryers(ctx, owner, prices, [dryers[1], dryers[2]])).toThrow('Dryer 3: 20-minute');
+    updateMachine(ctx, developer, dryers[2], { ...machine('Dryer 3', 'DRYER', 6), topUpPulses20: 51 });
+    expect(() => applyTopUpPricesToDryers(ctx, developer, prices, [dryers[1], dryers[2]])).toThrow('Dryer 3: 20-minute');
     expect(machineById(dryers[1])).toMatchObject(prices);
   });
 });
@@ -584,17 +601,17 @@ describe('receipt QR codes', () => {
     expect(() => readReceiptCode(ctx, receiptCodeFor('T9999', 'a'.repeat(32)))).toThrow('does not match order T9999');
   });
 
-  it('the owner can turn receipt scans off and on', async () => {
-    const { ctx, owner, controller, order, washers } = await setup();
+  it('the developer can turn receipt scans off and on', async () => {
+    const { ctx, developer, controller, order, washers } = await setup();
     const run = (machineId: number) =>
       startOrderOnMachine(ctx, controller, testEmployee, order.id, machineId, null);
     await expect(run(washers[0])).rejects.toThrow('not a Laundry POS receipt');
 
-    expect(() => setReceiptScanRequired(ctx, testEmployee, false)).toThrow('Only the owner');
-    setReceiptScanRequired(ctx, owner, false);
+    expect(() => setReceiptScanRequired(ctx, testEmployee, false)).toThrow('Only the developer');
+    setReceiptScanRequired(ctx, developer, false);
     await expect(run(washers[0])).resolves.toBe('acked');
 
-    setReceiptScanRequired(ctx, owner, true);
+    setReceiptScanRequired(ctx, developer, true);
     await expect(run(washers[1])).rejects.toThrow('not a Laundry POS receipt');
   });
 
@@ -749,13 +766,13 @@ describe('multi-cycle', () => {
       if (!cycle) throw new Error(`No ${name} cycle`);
       return cycle.id;
     };
-    updateCycles(env.ctx, env.owner, env.washers[0], [
+    updateCycles(env.ctx, env.developer, env.washers[0], [
       { id: byName('Delicates'), name: 'Delicates', pulses: 2, minutes: 25, enabled: true },
       { id: byName('Light'), name: 'Light', pulses: 3, minutes: 30, enabled: true },
       { id: byName('Medium'), name: 'Medium', pulses: 4, minutes: 40, enabled: true },
       { id: byName('Heavy'), name: 'Heavy', pulses: 6, minutes: 55, enabled: true },
     ]);
-    setMultiCycle(env.ctx, env.owner, true);
+    setMultiCycle(env.ctx, env.developer, true);
     return { ...env, byName };
   }
 
@@ -766,13 +783,13 @@ describe('multi-cycle', () => {
     expect(names(dryers[0])).toEqual([]);
   });
 
-  it('only the owner turns it on, and while off a start ignores cycles', async () => {
-    const { ctx, owner, controller, order, washers } = await setup();
-    expect(() => setMultiCycle(ctx, testEmployee, true)).toThrow('Only the owner');
+  it('only the developer turns it on, and while off a start ignores cycles', async () => {
+    const { ctx, developer, controller, order, washers } = await setup();
+    expect(() => setMultiCycle(ctx, testEmployee, true)).toThrow('Only the developer');
     const heavy = listCycles(ctx).find((c) => c.machineId === washers[0] && c.name === 'Heavy')?.id ?? null;
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order), heavy);
     expect(controller.starts[0].pulses.count).toBe(3);
-    setMultiCycle(ctx, owner, true);
+    setMultiCycle(ctx, developer, true);
     expect(getSetting(ctx.db, 'multiCycle')).toBe(true);
   });
 
@@ -790,9 +807,9 @@ describe('multi-cycle', () => {
   });
 
   it("refuses a switched-off cycle or another washer's cycle", async () => {
-    const { ctx, owner, controller, order, washers, byName } = await setupCycles();
+    const { ctx, developer, controller, order, washers, byName } = await setupCycles();
     const all = listCycles(ctx).filter((c) => c.machineId === washers[0]);
-    updateCycles(ctx, owner, washers[0], all.map((c) => ({ ...c, enabled: c.name !== 'Heavy' })));
+    updateCycles(ctx, developer, washers[0], all.map((c) => ({ ...c, enabled: c.name !== 'Heavy' })));
     const run = (machineId: number, cycleId: number) =>
       startOrderOnMachine(ctx, controller, testEmployee, order.id, machineId, receiptOf(order), cycleId);
     await expect(run(washers[0], byName('Heavy'))).rejects.toThrow('switched off');
@@ -801,9 +818,9 @@ describe('multi-cycle', () => {
   });
 
   it('a washer with every cycle switched off starts with its own pulses', async () => {
-    const { ctx, owner, controller, order, washers } = await setupCycles();
+    const { ctx, developer, controller, order, washers } = await setupCycles();
     const all = listCycles(ctx).filter((c) => c.machineId === washers[0]);
-    updateCycles(ctx, owner, washers[0], all.map((c) => ({ ...c, enabled: false })));
+    updateCycles(ctx, developer, washers[0], all.map((c) => ({ ...c, enabled: false })));
     await expect(
       startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order)),
     ).resolves.toBe('acked');
@@ -811,7 +828,7 @@ describe('multi-cycle', () => {
   });
 
   it('dryers have no cycles: they start with their own pulses and run time', async () => {
-    const { ctx, owner, controller, order, washers, dryers, machineById, byName } = await setupCycles();
+    const { ctx, developer, controller, order, washers, dryers, machineById, byName } = await setupCycles();
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order), byName('Light'));
     markRunDone(ctx, washers[0]);
     await expect(
@@ -819,7 +836,7 @@ describe('multi-cycle', () => {
     ).resolves.toBe('acked');
     expect(controller.starts[1].pulses.count).toBe(1);
     expect(machineById(dryers[0])?.runEndsAt).toBe(ctx.now() + 30 * MIN);
-    await testStart(ctx, controller, owner, dryers[1]);
+    await testStart(ctx, controller, developer, dryers[1]);
     expect(controller.starts[2].pulses.count).toBe(1);
   });
 
@@ -834,25 +851,25 @@ describe('multi-cycle', () => {
   });
 
   it('tests and overrides run the cycle picked, or the first one switched on', async () => {
-    const { ctx, owner, controller, washers, log, byName } = await setupCycles();
-    await testStart(ctx, controller, owner, washers[0]);
-    await testStart(ctx, controller, owner, washers[0], byName('Heavy'));
+    const { ctx, developer, controller, washers, log, byName } = await setupCycles();
+    await testStart(ctx, controller, developer, washers[0]);
+    await testStart(ctx, controller, developer, washers[0], byName('Heavy'));
     expect(controller.starts.map((start) => start.pulses.count)).toEqual([2, 6]);
     expect(log().map((row) => row.cycle)).toEqual(['Heavy', 'Delicates']);
   });
 
-  it('the owner adds a cycle to one, all or selected washers, all or nothing', async () => {
-    const { ctx, owner, washers, dryers } = await setupCycles();
+  it('the developer adds a cycle to one, all or selected washers, all or nothing', async () => {
+    const { ctx, developer, washers, dryers } = await setupCycles();
     const quick = { name: 'Quick wash', pulses: 1, minutes: 20 };
-    expect(() => addCycle(ctx, testEmployee, quick, [washers[0]])).toThrow('Only the owner');
-    expect(() => addCycle(ctx, owner, quick, [washers[0], dryers[0]])).toThrow('Dryer 1 is a dryer');
-    expect(() => addCycle(ctx, owner, { ...quick, pulses: 51 }, [washers[0]])).toThrow('Washer 1');
-    expect(() => addCycle(ctx, owner, { ...quick, name: 'heavy' }, [washers[1], washers[0]])).toThrow(
+    expect(() => addCycle(ctx, testEmployee, quick, [washers[0]])).toThrow('Only the developer');
+    expect(() => addCycle(ctx, developer, quick, [washers[0], dryers[0]])).toThrow('Dryer 1 is a dryer');
+    expect(() => addCycle(ctx, developer, { ...quick, pulses: 51 }, [washers[0]])).toThrow('Washer 1');
+    expect(() => addCycle(ctx, developer, { ...quick, name: 'heavy' }, [washers[1], washers[0]])).toThrow(
       'already has a cycle called heavy',
     );
     expect(listCycles(ctx).some((c) => c.name === 'Quick wash')).toBe(false);
 
-    addCycle(ctx, owner, quick, [washers[0], washers[2]]);
+    addCycle(ctx, developer, quick, [washers[0], washers[2]]);
     const withQuick = listCycles(ctx).filter((c) => c.name === 'Quick wash').map((c) => c.machineId);
     expect(withQuick).toEqual([washers[0], washers[2]]);
     expect(listCycles(ctx).filter((c) => c.machineId === washers[0]).map((c) => c.name)).toEqual([
@@ -865,14 +882,14 @@ describe('multi-cycle', () => {
   });
 
   it("checks each cycle's pulses, minutes and name when the washer is saved", async () => {
-    const { ctx, owner, washers } = await setupCycles();
+    const { ctx, developer, washers } = await setupCycles();
     const all = listCycles(ctx).filter((c) => c.machineId === washers[0]);
     const edit = (change: Partial<(typeof all)[number]>) =>
       all.map((c, i) => ({ ...c, ...(i === 0 ? change : {}) }));
-    expect(() => updateCycles(ctx, owner, washers[0], edit({ pulses: 51 }))).toThrow('Delicates');
-    expect(() => updateCycles(ctx, owner, washers[0], edit({ minutes: 0 }))).toThrow('Run time');
-    expect(() => updateCycles(ctx, owner, washers[0], edit({ name: 'Light' }))).toThrow('two cycles called Light');
-    expect(() => updateCycles(ctx, owner, washers[1], all)).toThrow('not on Washer 2');
+    expect(() => updateCycles(ctx, developer, washers[0], edit({ pulses: 51 }))).toThrow('Delicates');
+    expect(() => updateCycles(ctx, developer, washers[0], edit({ minutes: 0 }))).toThrow('Run time');
+    expect(() => updateCycles(ctx, developer, washers[0], edit({ name: 'Light' }))).toThrow('two cycles called Light');
+    expect(() => updateCycles(ctx, developer, washers[1], all)).toThrow('not on Washer 2');
   });
 });
 

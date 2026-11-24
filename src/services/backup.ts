@@ -70,7 +70,7 @@ const int = z.number().int();
 const text = z.string();
 const maybeInt = int.nullable();
 const maybeText = text.nullable();
-const role = z.enum(['OWNER', 'ADMIN', 'EMPLOYEE']);
+const role = z.enum(['DEVELOPER', 'OWNER', 'ADMIN', 'EMPLOYEE']);
 const machineType = z.enum(['WASHER', 'DRYER']);
 
 /** Every row is checked against the table's shape before anything is written. */

@@ -15,7 +15,7 @@ export const users = sqliteTable(
     username: text('username').notNull(),
     /** Null for accounts imported from the old app until the owner sets a password. */
     passwordHash: text('password_hash'),
-    role: text('role', { enum: ['OWNER', 'ADMIN', 'EMPLOYEE'] }).notNull(),
+    role: text('role', { enum: ['DEVELOPER', 'OWNER', 'ADMIN', 'EMPLOYEE'] }).notNull(),
     active: bool('active').notNull().default(true),
     createdAt: integer('created_at').notNull(),
   },

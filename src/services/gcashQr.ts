@@ -1,4 +1,5 @@
 import { UserFacingError, type Actor, type ServiceContext } from '@/db/types';
+import { can } from '@/domain/permissions';
 
 import { getSetting, setSetting } from './settings';
 
@@ -14,7 +15,7 @@ const FILE_NAME = /^gcash-qr-\d+\.(jpg|jpeg|png|webp)$/;
  * employee must not be able to swap it for their own.
  */
 export function setGcashQrFile(ctx: ServiceContext, actor: Actor, fileName: string | null): void {
-  if (actor.role !== 'OWNER') throw new UserFacingError('Only the owner can change the GCash QR code.');
+  if (!can.changeOwnerSettings(actor.role)) throw new UserFacingError('Only the owner can change the GCash QR code.');
   if (fileName !== null && !FILE_NAME.test(fileName)) throw new UserFacingError('That image could not be saved.');
   setSetting(ctx.db, 'gcashQrFile', fileName);
 }

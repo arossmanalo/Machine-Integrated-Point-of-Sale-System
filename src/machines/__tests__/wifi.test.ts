@@ -158,7 +158,7 @@ describe('WifiMachineController', () => {
     for (const config of [{ baseUrl: null, key: KEY }, { baseUrl: BASE, key: 'short' }]) {
       const { esp, controller } = setup(config);
       await expect(controller.connect()).resolves.toBe('not-configured');
-      expect(controller.state()).toMatchObject({ status: 'disconnected', detail: expect.stringContaining('Set the machine') });
+      expect(controller.state()).toMatchObject({ status: 'disconnected', detail: expect.stringContaining('not set up yet') });
       await expect(controller.start(1, TWO_COINS)).resolves.toBe('not-connected');
       expect(esp.log).toEqual([]);
     }
@@ -201,7 +201,7 @@ describe('WifiMachineController', () => {
     await controller.connect();
     await expect(controller.start(1, TWO_COINS)).resolves.toBe('rejected');
     expect(esp.starts).toEqual([]);
-    expect(controller.state()).toMatchObject({ status: 'error', detail: expect.stringContaining('does not match') });
+    expect(controller.state()).toMatchObject({ status: 'error', detail: expect.stringContaining('settings do not match') });
   });
 
   it('refuses bad channels and pulse settings without asking, and channels the board lacks', async () => {
@@ -268,7 +268,7 @@ describe('WifiMachineController', () => {
     const stranger = setup();
     stranger.esp.device = 'some-printer';
     await expect(stranger.controller.connect()).resolves.toBe('failed');
-    expect(stranger.controller.state()).toMatchObject({ status: 'error', detail: expect.stringContaining('not the machine controller') });
+    expect(stranger.controller.state()).toMatchObject({ status: 'error', detail: expect.stringContaining('wrong device') });
   });
 
   it('notices when the controller drops off and when it comes back', async () => {

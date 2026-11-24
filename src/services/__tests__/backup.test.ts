@@ -1,4 +1,4 @@
-import { createTestContext, receiptOf, testEmployee } from '@/db/testing';
+import { createTestContext, receiptOf, testDeveloper, testEmployee } from '@/db/testing';
 import { NO_TOP_UP_PRICES } from '@/domain/machinePolicy';
 import { MockMachineController } from '@/machines/MockMachineController';
 
@@ -142,8 +142,8 @@ describe('full backup', () => {
     importLegacyExport(ctx, owner, legacyExport);
     setSetting(ctx.db, 'pricePerLoad', 25000);
     const pulses = { pulseCount: 2, pulseOnMs: 300, pulseOffMs: 400, runMinutes: 35, topUpPulseCount: 2, topUpPulses10: 4, topUpPulses15: 6, topUpPulses20: 8, topUpPrice: 2000, topUpPrice10: 3500, topUpPrice15: 0, topUpPrice20: 0 };
-    const machineId = addMachine(ctx, owner, { name: 'Washer 1', type: 'WASHER', hardwareChannel: 1, enabled: true, ...pulses });
-    const dryerId = addMachine(ctx, owner, { name: 'Dryer 1', type: 'DRYER', hardwareChannel: 2, enabled: true, ...pulses });
+    const machineId = addMachine(ctx, testDeveloper, { name: 'Washer 1', type: 'WASHER', hardwareChannel: 1, enabled: true, ...pulses });
+    const dryerId = addMachine(ctx, testDeveloper, { name: 'Dryer 1', type: 'DRYER', hardwareChannel: 2, enabled: true, ...pulses });
     const order = createOrder(ctx, testEmployee, {
       customerId: 'C0002',
       weightKg: 8,
@@ -188,7 +188,7 @@ describe('full backup', () => {
 
   it('gives machines from a backup made before pulse starts the default pulses', async () => {
     const { ctx, owner } = await setup();
-    addMachine(ctx, owner, {
+    addMachine(ctx, testDeveloper, {
       name: 'Washer 1',
       type: 'WASHER',
       hardwareChannel: 1,
@@ -253,7 +253,7 @@ describe('full backup', () => {
 
   it('rebuilds the four fixed cycles of a backup from before cycles had their own table', async () => {
     const { ctx, owner } = await setup();
-    const washer = addMachine(ctx, owner, {
+    const washer = addMachine(ctx, testDeveloper, {
       name: 'Washer 1',
       type: 'WASHER',
       hardwareChannel: 1,
