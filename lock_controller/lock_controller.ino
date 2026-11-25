@@ -5,13 +5,13 @@
 // to /start. A phone on the same Wi-Fi cannot start a machine without the key, and a recorded
 // request cannot be replayed. The contract is in src/machines/protocol.ts; keep the two in step.
 //
-// Board: ESP32 DevKit with an ESP32-WROOM-32 / -32D / -32E module, Arduino core for ESP32
-// 4.0 or newer (Tools > Board > esp32 > ESP32 Dev Module). Not WROVER: it uses GPIO 16 and 17
-// for its extra memory, and those are channels 13 and 14 here.
-// Outputs avoid the boot-strapping pins (0, 2, 5, 12, 15), GPIO 14 (it pulses during boot,
-// which could start a machine at power-on), the flash pins (6-11), the USB serial pins (1, 3)
-// and the input-only pins (34-39). That leaves exactly these 14.
-//
+// Board: ESP32-S3 DevKitC-1 style board with an ESP32-S3-WROOM-1 module (N16R8 here), on a
+// screw-terminal base. Arduino core for ESP32 4.0 or newer (Tools > Board > esp32 > ESP32S3 Dev
+// Module). Upload and read serial through the USB-C port wired to the USB-serial chip ("UART"),
+// or turn on Tools > USB CDC On Boot to use the other port.
+// Outputs avoid the boot-strapping pins (0, 3, 45, 46), the native USB pins (19, 20), the serial
+// pins (43, 44 = RX/TX), the flash pins (26-32), the octal PSRAM pins of R8 modules (35-37) and
+// 38 and 48, one of which drives the board's RGB LED. That leaves these 23.
 // Wiring per LED (prototype): GPIO -> 220 ohm resistor -> LED long leg (+), short leg (-) -> GND.
 // With ACTIVE_LEVEL = HIGH the LED is off while idle and lights only during each pulse.
 // Real machines: the GPIO drives a relay or optocoupler on the machine's coin input, never the
@@ -29,9 +29,14 @@
 
 #include "config.h"
 
-// Channel n uses LOCK_PINS[n - 1]. Board labels: D25 D26 D27 D32 D33 D13 D18 D19 D21 D22 D23 D4
-// RX2 TX2. Keep in step with LOCK_CHANNEL_TERMINALS in src/machines/protocol.ts.
-const int LOCK_PINS[] = {25, 26, 27, 32, 33, 13, 18, 19, 21, 22, 23, 4, 16, 17};
+#if !CONFIG_IDF_TARGET_ESP32S3
+#error "This pin list is for the ESP32-S3. Pick Tools > Board > ESP32S3 Dev Module."
+#endif
+
+// Channel n uses LOCK_PINS[n - 1]. With the USB ports at the top: channels 1-15 run down the
+// right strip (14 13 12 11 10 9 8 18 17 16 15 7 6 5 4), channels 16-23 down the left strip
+// (21 47 39 40 41 42 2 1). Keep in step with LOCK_CHANNEL_TERMINALS in src/machines/protocol.ts.
+const int LOCK_PINS[] = {14, 13, 12, 11, 10, 9, 8, 18, 17, 16, 15, 7, 6, 5, 4, 21, 47, 39, 40, 41, 42, 2, 1};
 const int NUM_CHANNELS = sizeof(LOCK_PINS) / sizeof(LOCK_PINS[0]);
 // The level an output takes during a pulse. HIGH lights the prototype LED and drives most relay
 // and optocoupler modules; an active-LOW module needs LOW here.

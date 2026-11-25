@@ -353,7 +353,7 @@ describe('machine settings', () => {
   it('keeps channels unique, checks pulses, and lets only the developer change machines or test', async () => {
     const { ctx, developer, controller, washers, log } = await setup();
     expect(() => addMachine(ctx, developer, machine('Dup', 'WASHER', 1))).toThrow('already used by Washer 1');
-    expect(() => addMachine(ctx, developer, machine('Washer 15', 'WASHER', 15))).toThrow('from 1 to 14');
+    expect(() => addMachine(ctx, developer, machine('Washer 24', 'WASHER', 24))).toThrow('from 1 to 23');
     expect(() => addMachine(ctx, developer, { ...machine('W', 'WASHER', 9), pulseCount: 0 })).toThrow('pulses');
     expect(() => addMachine(ctx, developer, { ...machine('W', 'WASHER', 9), pulseOnMs: 10 })).toThrow('Pulse length');
     expect(addMachine(ctx, developer, machine('Dryer 7', 'DRYER', 14))).toBeGreaterThan(0);

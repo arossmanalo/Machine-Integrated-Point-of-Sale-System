@@ -22,24 +22,33 @@ In **Manage › Machines**, turn on **Multi-cycle** to make staff pick a cycle b
 
 **Start pulses.** A start works like dropping coins in the machine's slot: it sends a number of pulses, each a set length, with a gap between them. Set all three per machine: **Number of pulses** (1 to 50), **Pulse length** and **Gap between** (20 to 5000 milliseconds; 1000 ms is one second). The defaults are 1 pulse of 500 ms with a 500 ms gap. To give other machines the same pulses, pick **All machines** or **Selected machines** under **Use these pulses on** before saving; their run time and top-up settings are left alone.
 
-The machine controller has 14 channels. Wire each machine to the terminal for its channel; the app shows the terminal next to each machine.
+The machine controller (ESP32-S3) has 23 channels. Wire each machine to the terminal for its channel; the app shows the terminal next to each machine. The terminal is the number printed on the board (IO14 is the terminal labelled 14).
 
-| Channel | Terminal | Green strip (USB port at the top) | ESP32 pin |
+| Channel | Terminal | Green strip (USB ports at the top) | ESP32-S3 pin |
 |---|---|---|---|
-| 1 | D25 | right strip | GPIO 25 |
-| 2 | D26 | right strip | GPIO 26 |
-| 3 | D27 | right strip | GPIO 27 |
-| 4 | D32 | right strip | GPIO 32 |
-| 5 | D33 | right strip | GPIO 33 |
-| 6 | D13 | right strip | GPIO 13 |
-| 7 | D18 | left strip | GPIO 18 |
-| 8 | D19 | left strip | GPIO 19 |
-| 9 | D21 | left strip | GPIO 21 |
-| 10 | D22 | left strip | GPIO 22 |
-| 11 | D23 | left strip | GPIO 23 |
-| 12 | D4 | left strip | GPIO 4 |
-| 13 | RX2 | left strip | GPIO 16 |
-| 14 | TX2 | left strip | GPIO 17 |
+| 1 | IO14 | right strip | GPIO 14 |
+| 2 | IO13 | right strip | GPIO 13 |
+| 3 | IO12 | right strip | GPIO 12 |
+| 4 | IO11 | right strip | GPIO 11 |
+| 5 | IO10 | right strip | GPIO 10 |
+| 6 | IO9 | right strip | GPIO 9 |
+| 7 | IO8 | right strip | GPIO 8 |
+| 8 | IO18 | right strip | GPIO 18 |
+| 9 | IO17 | right strip | GPIO 17 |
+| 10 | IO16 | right strip | GPIO 16 |
+| 11 | IO15 | right strip | GPIO 15 |
+| 12 | IO7 | right strip | GPIO 7 |
+| 13 | IO6 | right strip | GPIO 6 |
+| 14 | IO5 | right strip | GPIO 5 |
+| 15 | IO4 | right strip | GPIO 4 |
+| 16 | IO21 | left strip | GPIO 21 |
+| 17 | IO47 | left strip | GPIO 47 |
+| 18 | IO39 | left strip | GPIO 39 |
+| 19 | IO40 | left strip | GPIO 40 |
+| 20 | IO41 | left strip | GPIO 41 |
+| 21 | IO42 | left strip | GPIO 42 |
+| 22 | IO2 | left strip | GPIO 2 |
+| 23 | IO1 | left strip | GPIO 1 |
 
 Leave the other terminals free: some of them switch on briefly while the board starts, which could start a machine.
 

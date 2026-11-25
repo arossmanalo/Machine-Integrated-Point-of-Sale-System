@@ -125,13 +125,13 @@ describe('protocol', () => {
     expect(normalizeAddress('192.168.1.50:99999')).toBeNull();
   });
 
-  it('names the board terminal for each of the 14 channels', () => {
-    expect(MAX_CHANNEL).toBe(14);
-    expect(channelTerminal(1)).toBe('D25');
-    expect(channelTerminal(7)).toBe('D18');
-    expect(channelTerminal(14)).toBe('TX2');
+  it('names the board terminal for each of the 23 channels', () => {
+    expect(MAX_CHANNEL).toBe(23);
+    expect(channelTerminal(1)).toBe('IO14');
+    expect(channelTerminal(16)).toBe('IO21');
+    expect(channelTerminal(23)).toBe('IO1');
     expect(channelTerminal(0)).toBeNull();
-    expect(channelTerminal(15)).toBeNull();
+    expect(channelTerminal(24)).toBeNull();
   });
 
   it('signs the channel and every pulse setting, exactly as the ESP32 computes it', () => {

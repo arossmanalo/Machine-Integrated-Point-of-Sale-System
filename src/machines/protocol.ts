@@ -9,7 +9,7 @@ import type { PulseSettings } from './MachineController';
  * The HTTP contract with the ESP32 sketch in lock_controller/lock_controller.ino.
  * Keep this file, the sketch and CLAUDE.md in step.
  *
- *   GET  /status     -> {"device":"laundry-locks","channels":14,"busy":[3],"lastAccepted":"<hex>"}
+ *   GET  /status     -> {"device":"laundry-locks","channels":23,"busy":[3],"lastAccepted":"<hex>"}
  *   GET  /challenge  -> {"challenge":"<32 hex chars>"}   single use, expires after 10 s
  *   POST /start      form body channel=<n>&pulses=<count>&onMs=<ms>&offMs=<ms>&challenge=<hex>&signature=<hex>
  *                    -> 200 {"ok":true,"channel":n}   accepted; the pulses follow
@@ -25,11 +25,12 @@ import type { PulseSettings } from './MachineController';
 export const DEVICE_NAME = 'laundry-locks';
 
 /**
- * The board terminal behind each channel (channel n is entry n - 1). Matches LOCK_PINS in the
- * sketch: D25 is GPIO 25, RX2 is GPIO 16, TX2 is GPIO 17.
+ * The board terminal behind each channel (channel n is entry n - 1), in strip order on the
+ * ESP32-S3 board. Matches LOCK_PINS in the sketch: IO14 is the terminal labelled 14, GPIO 14.
  */
 export const LOCK_CHANNEL_TERMINALS = [
-  'D25', 'D26', 'D27', 'D32', 'D33', 'D13', 'D18', 'D19', 'D21', 'D22', 'D23', 'D4', 'RX2', 'TX2',
+  'IO14', 'IO13', 'IO12', 'IO11', 'IO10', 'IO9', 'IO8', 'IO18', 'IO17', 'IO16', 'IO15', 'IO7', 'IO6', 'IO5',
+  'IO4', 'IO21', 'IO47', 'IO39', 'IO40', 'IO41', 'IO42', 'IO2', 'IO1',
 ] as const;
 export const MAX_CHANNEL = LOCK_CHANNEL_TERMINALS.length;
 export const MIN_KEY_LENGTH = 12;

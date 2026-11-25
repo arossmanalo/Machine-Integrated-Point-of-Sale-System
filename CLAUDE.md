@@ -61,27 +61,36 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 ### Current phase: LED prototype
 
 - One LED per machine stands in for the machine's coin input. The hardware side (relays or optocouplers on each machine's coin input, mounting) will be done by my dad later.
-- Hardware: ESP32 DevKit (ESP-32D / WROOM-32 module, type HW-394, on a screw-terminal board with USB-C and a CH340 USB chip), LEDs each through a 220Ω resistor, with a shared GND rail. The LED is off when idle and lights only during each pulse (`ACTIVE_LEVEL = HIGH` in the sketch).
-- 14 channels. Each channel is one screw terminal on the board:
+- Hardware (2026-11-25): ESP32-S3 DevKitC-1 style board with an ESP32-S3-WROOM-1 N16R8 module, two USB-C ports and an RGB LED, on a screw-terminal base. Replaced the 14-channel ESP32 DevKit (WROOM-32, HW-394). LEDs each through a 220Ω resistor, with a shared GND rail. The LED is off when idle and lights only during each pulse (`ACTIVE_LEVEL = HIGH` in the sketch).
+- 23 channels. Each channel is one screw terminal on the board, labelled with its GPIO number:
 
-  | Channel | Terminal | Green strip (USB port at the top) | ESP32 pin |
+  | Channel | Terminal | Green strip (USB ports at the top) | ESP32-S3 pin |
   |---|---|---|---|
-  | 1 | D25 | right strip | GPIO 25 |
-  | 2 | D26 | right strip | GPIO 26 |
-  | 3 | D27 | right strip | GPIO 27 |
-  | 4 | D32 | right strip | GPIO 32 |
-  | 5 | D33 | right strip | GPIO 33 |
-  | 6 | D13 | right strip | GPIO 13 |
-  | 7 | D18 | left strip | GPIO 18 |
-  | 8 | D19 | left strip | GPIO 19 |
-  | 9 | D21 | left strip | GPIO 21 |
-  | 10 | D22 | left strip | GPIO 22 |
-  | 11 | D23 | left strip | GPIO 23 |
-  | 12 | D4 | left strip | GPIO 4 |
-  | 13 | RX2 | left strip | GPIO 16 |
-  | 14 | TX2 | left strip | GPIO 17 |
+  | 1 | IO14 | right strip | GPIO 14 |
+  | 2 | IO13 | right strip | GPIO 13 |
+  | 3 | IO12 | right strip | GPIO 12 |
+  | 4 | IO11 | right strip | GPIO 11 |
+  | 5 | IO10 | right strip | GPIO 10 |
+  | 6 | IO9 | right strip | GPIO 9 |
+  | 7 | IO8 | right strip | GPIO 8 |
+  | 8 | IO18 | right strip | GPIO 18 |
+  | 9 | IO17 | right strip | GPIO 17 |
+  | 10 | IO16 | right strip | GPIO 16 |
+  | 11 | IO15 | right strip | GPIO 15 |
+  | 12 | IO7 | right strip | GPIO 7 |
+  | 13 | IO6 | right strip | GPIO 6 |
+  | 14 | IO5 | right strip | GPIO 5 |
+  | 15 | IO4 | right strip | GPIO 4 |
+  | 16 | IO21 | left strip | GPIO 21 |
+  | 17 | IO47 | left strip | GPIO 47 |
+  | 18 | IO39 | left strip | GPIO 39 |
+  | 19 | IO40 | left strip | GPIO 40 |
+  | 20 | IO41 | left strip | GPIO 41 |
+  | 21 | IO42 | left strip | GPIO 42 |
+  | 22 | IO2 | left strip | GPIO 2 |
+  | 23 | IO1 | left strip | GPIO 1 |
 
-- Those are all the pins that stay quiet at boot: they avoid the boot-strapping pins (0, 2, 5, 12, 15), GPIO 14 (pulses at boot, which could start a machine), flash (6–11), USB serial (1, 3) and input-only pins (34–39). The list lives in `LOCK_PINS` in the sketch and `LOCK_CHANNEL_TERMINALS` in `protocol.ts`; change both together. A WROVER board cannot use channels 13–14 (PSRAM). More than 14 machines needs an I/O expander (MCP23017 or PCF8575) or a second ESP32.
+- These avoid the boot-strapping pins (0, 3, 45, 46), native USB (19, 20), serial RX/TX (43, 44), flash (26–32), the octal PSRAM of R8 modules (35–37) and 38/48 (one drives the RGB LED). Not yet checked for power-on blips on the real board: test with an LED on each pin and drop any that blinks at boot. The list lives in `LOCK_PINS` in the sketch and `LOCK_CHANNEL_TERMINALS` in `protocol.ts`; change both together. The sketch refuses to compile for anything but the ESP32-S3. More than 23 machines needs an I/O expander (MCP23017 or PCF8575) or a second board.
 - `WiFi.setSleep(false)` is required: with modem sleep on, the tablet intermittently could not reach the ESP32.
 - Connection: the ESP32 and the tablet are both on the shop Wi-Fi (2.4 GHz). The developer enters the ESP32's address and the key in Manage › Machines. The ESP32 is powered separately (USB charger).
 - Fixed address (2026-11-21): the router gave the ESP32 a new address after a restart and the app lost it, so `config.h` sets `STATIC_IP`. Since the Wi-Fi change on 2026-11-22 it is 192.168.123.200 (gateway 192.168.123.1; the router hands out 192.168.123.x). After changing Wi-Fi, check the new router's range the same way: boot once without `STATIC_IP` and read the `READY <address>` line on serial. If another device ever takes .200, pick another free address, upload again and change it in the app.
@@ -89,7 +98,7 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 
 ### HTTP protocol (the contract between app and ESP32)
 
-- `GET /status` → `{"device":"laundry-locks","channels":14,"busy":[3],"lastAccepted":"<hex>"}`. The app checks it on connect and every 20 s, since Wi-Fi gives no unplug event. `busy` lists channels still sending pulses; `lastAccepted` is the challenge of the last start carried out.
+- `GET /status` → `{"device":"laundry-locks","channels":23,"busy":[3],"lastAccepted":"<hex>"}`. The app checks it on connect and every 20 s, since Wi-Fi gives no unplug event. `busy` lists channels still sending pulses; `lastAccepted` is the challenge of the last start carried out.
 - `GET /challenge` → `{"challenge":"<32 hex>"}`, single use, expires after 10 s.
 - `POST /start`, form body `channel=<n>&pulses=<count>&onMs=<ms>&offMs=<ms>&challenge=<hex>&signature=<hex>`, where signature = hex HMAC-SHA256(key, `S<n>:<count>:<onMs>:<offMs>:<challenge>`). Replies `200 {"ok":true,"channel":n}` as soon as the start is accepted (the pulses follow), or `4xx {"ok":false,"error":"bad-channel"|"bad-pulses"|"busy"|"bad-signature"|"stale-challenge"}`. Every attempt uses up the challenge.
 - Pulse limits (`PULSE_LIMITS` in `protocol.ts`, `MAX_PULSES`/`MIN_PULSE_MS`/`MAX_PULSE_MS` in the sketch): 1–50 pulses, 20–5000 ms on and off. Each machine stores its own count, on-time and off-time (Manage › Machines, defaults 1 × 500 ms / 500 ms).
@@ -99,7 +108,7 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 
 ### Existing code
 
-- `lock_controller/lock_controller.ino`: the ESP32 sketch (Arduino core for ESP32 4.0 or newer, board "ESP32 Dev Module"; it uses the core's `HMACBuilder`). The board package lives in `D:\Arduino15` (set in `%USERPROFILE%\.arduinoIDE\arduino-cli.yaml`) because C: is nearly full. Pulse trains run non-blocking in `loop()`, so several machines can start at once. Serial prints `START <n> <count>x <on>/<off>` and `DONE <n>`. Wi-Fi name, password and key go in `lock_controller/config.h`, copied from `config.example.h`; `config.h` is git-ignored.
+- `lock_controller/lock_controller.ino`: the ESP32-S3 sketch (Arduino core for ESP32 4.0 or newer, board "ESP32S3 Dev Module"; it uses the core's `HMACBuilder`). The board package lives in `D:\Arduino15` (set in `%USERPROFILE%\.arduinoIDE\arduino-cli.yaml`) because C: is nearly full. Pulse trains run non-blocking in `loop()`, so several machines can start at once. Serial prints `START <n> <count>x <on>/<off>` and `DONE <n>`. Wi-Fi name, password and key go in `lock_controller/config.h`, copied from `config.example.h`; `config.h` is git-ignored.
 - `src/machines/protocol.ts`: the contract in TypeScript (signing, pulse limits, address parsing, reply schemas). `src/machines/WifiMachineController.ts`: one start at a time. Only `src/state/AppProvider.tsx` may import it (enforced by ESLint).
 - `src/domain/machinePolicy.ts`: allowance, `decideAssignment`, `decideStart`. `src/services/machines.ts`: assign, unassign, start, override, test, machine log. The log table is still called `machine_unlocks` (kept to avoid a destructive migration); it now records starts.
 - The controller address and key are settings (`lockControllerAddress`, `lockControllerKey`), saved through `saveLockController` (developer only). They are included in backups, which are owner-only (owner or developer).
