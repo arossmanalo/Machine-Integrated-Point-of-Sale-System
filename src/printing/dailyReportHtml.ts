@@ -32,6 +32,7 @@ const RESULT_LABELS: Record<MachineEntry['result'], string> = {
   FAILED: 'Not sent, did not run',
   NOT_CONNECTED: 'Offline, did not run',
   DENIED: 'Refused',
+  NO_SIGNAL: 'No running signal, did not run',
 };
 
 const CHECK_LABELS = { ok: 'OK', warning: 'Check', danger: 'Look into' } as const;

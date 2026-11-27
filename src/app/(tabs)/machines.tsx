@@ -95,7 +95,7 @@ export default function Machines() {
 
   async function start(machine: MachineRow) {
     const result = await action.run((c) => startMachine(c, controller, actor, machine.id));
-    if (result.ok) report(result.value, machine.name);
+    if (result.ok) report(result.value, machine.name, machine.id);
   }
 
   async function test(machine: MachineRow) {
@@ -105,7 +105,7 @@ export default function Machines() {
       return;
     }
     const result = await action.run((c) => testStart(c, controller, actor, machine.id));
-    if (result.ok) report(result.value, `${machine.name} (test)`);
+    if (result.ok) report(result.value, `${machine.name} (test)`, machine.id);
   }
 
   async function remove(machine: MachineRow) {
@@ -414,7 +414,7 @@ function TestMachineDialog({
   async function send() {
     if (!option) return;
     const result = await action.run((c) => option.send(c));
-    if (result.ok) report(result.value, `${machine.name} ${option.label.split(' · ')[0]} (test)`);
+    if (result.ok) report(result.value, `${machine.name} ${option.label.split(' · ')[0]} (test)`, machine.id);
   }
 
   return (

@@ -20,7 +20,8 @@ export type MachineEventResult =
   | 'FAILED'
   | 'TIMEOUT'
   | 'NOT_CONNECTED'
-  | 'DENIED';
+  | 'DENIED'
+  | 'NO_SIGNAL';
 
 export interface DayOrder {
   id: string;

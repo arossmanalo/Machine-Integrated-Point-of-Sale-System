@@ -101,12 +101,10 @@ export const statusResponse = z.object({
   /** Channels still sending the pulses of a start. */
   busy: z.array(z.number().int()),
   /**
-   * Machines whose running signal is on, and for how many milliseconds. A sketch from before the
-   * running signals sends none.
+   * Machines whose running signal is on, and for how many milliseconds. Missing from a sketch
+   * before the running signals: that is no reading, not "nothing is running".
    */
-  running: z
-    .array(z.object({ channel: z.number().int(), ms: z.number().int().nonnegative() }))
-    .default([]),
+  running: z.array(z.object({ channel: z.number().int(), ms: z.number().int().nonnegative() })).optional(),
   /** Challenge of the last start the ESP32 carried out; empty until the first one. */
   lastAccepted: z.string(),
 });

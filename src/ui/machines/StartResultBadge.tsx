@@ -11,6 +11,7 @@ const looks: Record<UnlockResultCode, { label: string; tone: BadgeTone }> = {
   TIMEOUT: { label: 'No answer', tone: 'danger' },
   NOT_CONNECTED: { label: 'Offline', tone: 'danger' },
   DENIED: { label: 'Wrong PIN', tone: 'danger' },
+  NO_SIGNAL: { label: 'Did not start', tone: 'danger' },
 };
 
 export function StartResultBadge({ result }: { result: UnlockResultCode }) {

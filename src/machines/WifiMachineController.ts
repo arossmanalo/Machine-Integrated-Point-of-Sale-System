@@ -220,8 +220,11 @@ export class WifiMachineController implements MachineController {
       return 'failed';
     }
     this.setState(this.keyRejected ? { status: 'error', detail: DETAILS.badKey } : { status: 'ready', detail: null });
-    const signals = reply.data.running.map(({ channel, ms }) => ({ channel, runningMs: ms }));
-    this.signalListeners.forEach((listener) => listener(signals));
+    const { running } = reply.data;
+    if (running !== undefined) {
+      const signals = running.map(({ channel, ms }) => ({ channel, runningMs: ms }));
+      this.signalListeners.forEach((listener) => listener(signals));
+    }
     return 'connected';
   }
 

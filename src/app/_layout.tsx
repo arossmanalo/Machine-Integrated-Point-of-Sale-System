@@ -14,6 +14,7 @@ import migrations from '../../drizzle/migrations';
 import { appContext, appDb } from '@/db/client';
 import { bluetoothReceiptPrinter } from '@/printing/BluetoothReceiptPrinter';
 import { AppProvider } from '@/state/AppProvider';
+import { StartWatchProvider } from '@/state/startWatch';
 import { ToastProvider } from '@/state/toast';
 import { Text } from '@/ui/Text';
 import { colors, space } from '@/ui/theme';
@@ -45,12 +46,14 @@ export default function RootLayout() {
       <StatusBar style="dark" />
       <AppProvider ctx={appContext} printer={bluetoothReceiptPrinter}>
         <ToastProvider>
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: colors.background },
-            }}
-          />
+          <StartWatchProvider>
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: colors.background },
+              }}
+            />
+          </StartWatchProvider>
         </ToastProvider>
       </AppProvider>
     </SafeAreaProvider>

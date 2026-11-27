@@ -29,6 +29,7 @@ import {
   prepaidTopUpForNextDryer,
   readReceiptCode,
   RESULT_MESSAGES,
+  startCheck,
   startOrderOnMachine,
   type OverrideReason,
 } from '@/services/machines';
@@ -37,6 +38,7 @@ import { offeredTopUpsOf } from '@/services/topUps';
 import { getOrderDetail, listOrderSummaries } from '@/services/orders';
 import { getSetting } from '@/services/settings';
 import { useActor, useApp } from '@/state/AppProvider';
+import { useWatchStart } from '@/state/startWatch';
 import { useAction, useData, useNow } from '@/state/hooks';
 import { useToast } from '@/state/toast';
 
@@ -62,10 +64,18 @@ export function useCyclePicker(): (machine: MachineRow) => MachineCycleRow[] {
   };
 }
 
+/**
+ * Says how a start went. Given the machine, a start that waits for the machine's running signal
+ * (real-time sync) opens the wait instead of saying "started" straight away.
+ */
 export function useReportStart() {
   const toast = useToast();
-  return (result: StartResult, machineName: string) => {
-    if (result === 'acked') toast(`${machineName} started`);
+  const { ctx } = useApp();
+  const watch = useWatchStart();
+  return (result: StartResult, machineName: string, machineId?: number) => {
+    if (result === 'acked' && machineId !== undefined && startCheck(ctx, machineId).waitingUntil !== null) {
+      watch(machineId, machineName);
+    } else if (result === 'acked') toast(`${machineName} started`);
     else toast(`${machineName}: ${RESULT_MESSAGES[result]}`, 'danger');
   };
 }
@@ -236,7 +246,7 @@ export function StartMachineDialog({ orderId, onClose }: { orderId: string; onCl
       startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode, usesCycles ? cycleId : null, topUp),
     );
     if (!result.ok) return;
-    report(result.value, machine.name);
+    report(result.value, machine.name, machine.id);
     back();
     if (result.value === 'acked' || result.value === 'timeout') onClose();
   }
@@ -510,7 +520,7 @@ export function OrderPickerDialog({
       startOrderOnMachine(c, controller, actor, orderId, machine.id, receiptCode, usesCycles ? cycleId : null, topUp),
     );
     if (!result.ok) return;
-    report(result.value, machine.name);
+    report(result.value, machine.name, machine.id);
     if (result.value === 'acked' || result.value === 'timeout') onClose();
     else back();
   }
@@ -658,7 +668,7 @@ export function OverrideDialog({
       setCode(null);
       return;
     }
-    report(result.value, machine.name);
+    report(result.value, machine.name, machine.id);
     if (result.value === 'acked' || result.value === 'timeout') onClose();
   }
 

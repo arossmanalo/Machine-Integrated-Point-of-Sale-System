@@ -201,6 +201,15 @@ export const machines = sqliteTable('machines', {
    * Null while the signal is off, or with real-time sync off. The machine is in use while set.
    */
   signalSince: integer('signal_since'),
+  /** Real-time sync: this machine's running signal has come on at least once, so it is wired. */
+  signalSeen: bool('signal_seen').notNull().default(false),
+  /**
+   * Real-time sync: a start (`signalWaitLogId`) waits for the running signal until this time; with
+   * none by then it did not start and is given back. Null when nothing is waiting.
+   */
+  signalWaitUntil: integer('signal_wait_until'),
+  /** The latest start that waited for the running signal; a signal soon after a give-back counts it again. */
+  signalWaitLogId: integer('signal_wait_log_id'),
 });
 
 /** Append-only. Nothing in the app edits or deletes these rows except the result update. */
@@ -264,13 +273,17 @@ export const machineUnlocks = sqliteTable(
     overrideReason: text('override_reason'),
     overrideNote: text('override_note'),
     result: text('result', {
-      enum: ['PENDING', 'ACKED', 'REJECTED', 'BUSY', 'FAILED', 'TIMEOUT', 'NOT_CONNECTED', 'DENIED'],
+      enum: ['PENDING', 'ACKED', 'REJECTED', 'BUSY', 'FAILED', 'TIMEOUT', 'NOT_CONNECTED', 'DENIED', 'NO_SIGNAL'],
     }).notNull(),
     resolvedAt: integer('resolved_at'),
     /** Top-ups: centavos added to the order's bill, kept here so the daily report can tally them. */
     charge: integer('charge'),
     /** Multi-cycle: the name of the cycle that was run (stored as text so renames keep history). */
     cycle: text('cycle'),
+    /** Top-ups: the order item that put the charge on the bill, so it can be taken off again. */
+    chargeItemId: integer('charge_item_id'),
+    /** A top-up charged with a start: that start's row, so a start given back takes its top-up too. */
+    startLogId: integer('start_log_id'),
   },
   (t) => [index('unlocks_order').on(t.orderId), index('unlocks_at').on(t.at)],
 );

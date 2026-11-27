@@ -23,6 +23,7 @@ import {
   saveOwnerMachineChanges,
   setMultiCycle,
   setRealTimeSync,
+  startCheck,
   setReceiptScanRequired,
   setSimulateMachines,
   startMachine,
@@ -1223,5 +1224,99 @@ describe('removing a machine', () => {
     controller.failNextStart('failed');
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[1], receiptOf(order));
     expect(() => removeMachine(ctx, developer, washers[1])).toThrow('waiting on Washer 2');
+  });
+});
+
+describe('real-time sync: waiting for a start to show its running signal', () => {
+  /** Turns real-time sync on and lets each machine's signal be seen once, as wired machines do. */
+  async function wired() {
+    const env = await setup();
+    setRealTimeSync(env.ctx, env.owner, true);
+    applyRunningSignals(env.ctx, [1, 2, 3, 4, 5, 6].map((channel) => ({ channel, runningMs: 0 })));
+    env.ctx.advance(MIN);
+    applyRunningSignals(env.ctx, []);
+    env.ctx.advance(MIN);
+    return env;
+  }
+
+  it('does not wait on a machine whose signal was never seen, so its start just counts', async () => {
+    const { ctx, owner, controller, order, washers, log } = await setup();
+    setRealTimeSync(ctx, owner, true);
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
+    expect(startCheck(ctx, washers[0]).waitingUntil).toBeNull();
+    ctx.advance(MIN);
+    applyRunningSignals(ctx, []);
+    expect(log().find((row) => row.orderId === order.id)?.result).toBe('ACKED');
+  });
+
+  it('confirms a start when its signal comes on before the deadline', async () => {
+    const { ctx, controller, order, washers } = await wired();
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
+    // Three pulses of 500 ms on and 500 ms off, then 30 seconds.
+    expect(startCheck(ctx, washers[0]).waitingUntil).toBe(ctx.now() + 3000 + 30000);
+    ctx.advance(20000);
+    applyRunningSignals(ctx, [{ channel: 1, runningMs: 5000 }]);
+    expect(startCheck(ctx, washers[0])).toEqual({ waitingUntil: null, outcome: 'started' });
+    expect(machineUsage(ctx, order.id).WASHER).toBe(1);
+  });
+
+  it('gives a start back when no signal came, and Run machine tries again', async () => {
+    const { ctx, controller, order, washers, machineById, log } = await wired();
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
+    ctx.advance(30000);
+    applyRunningSignals(ctx, []);
+    expect(startCheck(ctx, washers[0]).waitingUntil).not.toBeNull();
+    ctx.advance(4000);
+    applyRunningSignals(ctx, []);
+    expect(startCheck(ctx, washers[0])).toEqual({ waitingUntil: null, outcome: 'no-signal' });
+    expect(log().find((row) => row.orderId === order.id)?.result).toBe('NO_SIGNAL');
+    expect(machineById(washers[0])).toMatchObject({ assignedOrderId: order.id, runEndsAt: ctx.now() });
+    await expect(startMachine(ctx, controller, testEmployee, washers[0])).resolves.toBe('acked');
+    expect(machineUsage(ctx, order.id).WASHER).toBe(1);
+  });
+
+  it('keeps a start counted while the controller gives no reading', async () => {
+    const { ctx, controller, order, washers, log } = await wired();
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
+    ctx.advance(5 * MIN);
+    expect(startCheck(ctx, washers[0]).waitingUntil).not.toBeNull();
+    expect(log().find((row) => row.orderId === order.id)?.result).toBe('ACKED');
+  });
+
+  it('counts a given-back start again when its signal comes on soon after', async () => {
+    const { ctx, controller, order, washers, machineById, log } = await wired();
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
+    ctx.advance(40000);
+    applyRunningSignals(ctx, []);
+    ctx.advance(MIN);
+    applyRunningSignals(ctx, [{ channel: 1, runningMs: 2000 }]);
+    expect(log().find((row) => row.orderId === order.id)?.result).toBe('ACKED');
+    expect(machineById(washers[0])).toMatchObject({ assignedOrderId: null, runOrderId: order.id });
+    expect(startCheck(ctx, washers[0]).outcome).toBe('started');
+  });
+
+  it('takes a top-up charged with the start off the bill when the start is given back', async () => {
+    const { ctx, controller, order, dryers, topUpId, markWashed, log } = await wired();
+    markWashed(order.id);
+    const before = getOrderDetail(ctx, order.id)?.order.total ?? 0;
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, dryers[0], receiptOf(order), null, topUpId(dryers[0], 5));
+    expect(getOrderDetail(ctx, order.id)?.order.total).toBe(before + 2000);
+    await expect(topUpDryer(ctx, controller, testEmployee, dryers[0], topUpId(dryers[0], 15))).rejects.toThrow(
+      'has started',
+    );
+    ctx.advance(2 * MIN);
+    applyRunningSignals(ctx, []);
+    expect(getOrderDetail(ctx, order.id)?.order.total).toBe(before);
+    expect(log().filter((row) => row.kind === 'TOP_UP').map((row) => row.result)).toEqual(['NO_SIGNAL']);
+  });
+
+  it('a test start waits too, and is logged as not started without an order to give back', async () => {
+    const { ctx, developer, controller, washers, machineById } = await wired();
+    await testStart(ctx, controller, developer, washers[2]);
+    expect(startCheck(ctx, washers[2]).waitingUntil).not.toBeNull();
+    ctx.advance(MIN);
+    applyRunningSignals(ctx, []);
+    expect(startCheck(ctx, washers[2]).outcome).toBe('no-signal');
+    expect(machineById(washers[2])?.assignedOrderId).toBeNull();
   });
 });

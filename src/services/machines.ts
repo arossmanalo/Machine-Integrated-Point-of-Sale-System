@@ -15,6 +15,7 @@ import {
 import { machineEarnings, type MachineEarnings } from '@/domain/machineEarnings';
 import { newReceiptToken, overrideCodeFor, parseReceiptCode, tokensMatch } from '@/domain/receiptCode';
 import { periodRange } from '@/domain/reports';
+import { isClosedStatus } from '@/domain/statuses';
 import {
   isValidChannel,
   MAX_CHANNEL,
@@ -48,6 +49,11 @@ import { addDefaultTopUps, offeredTopUpWithMinutes, requireTopUp, saveTopUpEdits
 
 /** A pending row younger than this still holds its allowance (the reply may be on its way). */
 const PENDING_HOLD_MS = 30 * 1000;
+
+/** Real-time sync: how long after its last pulse a started machine has to turn its running signal on. */
+export const SIGNAL_WAIT_MS = 30 * 1000;
+/** A running signal this soon after a start was given back still counts that start. */
+const LATE_SIGNAL_MS = 10 * 60 * 1000;
 
 export const OVERRIDE_REASONS = ['Rewash', 'Machine did not start', 'Maintenance', 'Other'] as const;
 export type OverrideReason = (typeof OVERRIDE_REASONS)[number];
@@ -147,7 +153,9 @@ export function updateMachine(ctx: ServiceContext, actor: Actor, id: number, inp
   requireDeveloper(actor);
   const values = checkMachine(ctx.db, input, id);
   // A machine switched off cannot run the order waiting on it.
-  const release = values.enabled ? {} : { assignedOrderId: null, assignedAt: null, assignedByName: null };
+  const release = values.enabled
+    ? {}
+    : { assignedOrderId: null, assignedAt: null, assignedByName: null, signalWaitUntil: null };
   ctx.db.update(machines).set({ ...values, ...release }).where(eq(machines.id, id)).run();
 }
 
@@ -526,6 +534,8 @@ interface LogEntry {
   charge?: number | null;
   /** Name of the cycle run (Multi-cycle washers). */
   cycle?: string | null;
+  /** Top-ups: the order item that put the charge on the bill. */
+  chargeItemId?: number | null;
 }
 
 function writeLog(ctx: ServiceContext, entry: LogEntry): number {
@@ -547,6 +557,7 @@ function writeLog(ctx: ServiceContext, entry: LogEntry): number {
       resolvedAt: entry.result === 'PENDING' ? null : ctx.now(),
       charge: entry.charge ?? null,
       cycle: entry.cycle ?? null,
+      chargeItemId: entry.chargeItemId ?? null,
     })
     .returning({ id: machineUnlocks.id })
     .get();
@@ -683,9 +694,13 @@ export async function startMachine(
       { ...ctx, db: tx },
       { machine, actor, kind: 'ORDER', orderId: machine.assignedOrderId, result: 'PENDING', cycle: cycle?.name },
     );
+    if (charge) {
+      tx.update(machineUnlocks).set({ startLogId: logId }).where(eq(machineUnlocks.id, charge.logId)).run();
+    }
     return { machine, logId, pulses, charge };
   });
   const result = await sendAndRecord(ctx, controller, claimed.logId, claimed.machine, claimed.pulses);
+  if (result === 'acked') armSignalWait(ctx, machineId, claimed.logId, claimed.pulses);
   if (claimed.charge) {
     // The top-up went out (or not) with the start, so its log row gets the same result.
     ctx.db
@@ -776,6 +791,9 @@ export async function topUpDryer(
         ? undefined
         : tx.select().from(orders).where(eq(orders.id, machine.runOrderId)).get();
     if (machine.type !== 'DRYER') throw new UserFacingError('Only dryers take top-ups.');
+    if (machine.signalWaitUntil !== null) {
+      throw new UserFacingError(`Wait until ${machine.name} has started, then add the top-up.`);
+    }
     const topUp = requireTopUp(tx, machine, topUpId);
     const decision = decideTopUp(machine, policyOrder(order), topUp.price, ctx.now());
     if (!decision.allowed || !order) {
@@ -836,7 +854,15 @@ function chargeTopUp(
     .set({ total: sql`${orders.total} + ${price}` })
     .where(eq(orders.id, orderId))
     .run();
-  const logId = writeLog(ctx, { machine, actor, kind: 'TOP_UP', orderId, result: 'PENDING', charge: price });
+  const logId = writeLog(ctx, {
+    machine,
+    actor,
+    kind: 'TOP_UP',
+    orderId,
+    result: 'PENDING',
+    charge: price,
+    chargeItemId: item.id,
+  });
   return { logId, itemId: item.id, orderId, price };
 }
 
@@ -874,6 +900,8 @@ export function setRealTimeSync(ctx: ServiceContext, actor: Actor, on: boolean):
   ctx.db.transaction((tx) => {
     setSetting(tx, 'realTimeSync', on);
     if (on) return;
+    // A start still waiting for its signal stays counted: nothing can confirm or give it back now.
+    tx.update(machines).set({ signalWaitUntil: null }).run();
     // A machine still running by its signal goes back to a countdown from when it started.
     for (const machine of tx.select().from(machines).all()) {
       if (machine.signalSince === null) continue;
@@ -884,10 +912,99 @@ export function setRealTimeSync(ctx: ServiceContext, actor: Actor, on: boolean):
 }
 
 /**
+ * Real-time sync: after a start the controller accepted, the machine has until its pulses are sent
+ * plus SIGNAL_WAIT_MS to turn its running signal on. Only for a machine whose signal has been seen
+ * before: an unwired or broken input never gives a start back.
+ */
+function armSignalWait(ctx: ServiceContext, machineId: number, logId: number, pulses: PulseSettings): void {
+  if (!getSetting(ctx.db, 'realTimeSync')) return;
+  const machine = ctx.db.select().from(machines).where(eq(machines.id, machineId)).get();
+  if (!machine?.signalSeen) return;
+  const sending = pulses.count * (pulses.onMs + pulses.offMs);
+  ctx.db
+    .update(machines)
+    .set({ signalWaitUntil: ctx.now() + sending + SIGNAL_WAIT_MS, signalWaitLogId: logId })
+    .where(eq(machines.id, machineId))
+    .run();
+}
+
+/** What became of a machine's latest start that waited for its running signal. */
+export interface StartCheck {
+  /** Still waiting for the signal until then; null once decided or when nothing waited. */
+  waitingUntil: number | null;
+  /** The latest waiting start's outcome: started, or given back because no signal came. */
+  outcome: 'started' | 'no-signal' | null;
+}
+
+export function startCheck(ctx: ServiceContext, machineId: number): StartCheck {
+  const machine = requireMachine(ctx.db, machineId);
+  const row =
+    machine.signalWaitLogId === null
+      ? undefined
+      : ctx.db.select().from(machineUnlocks).where(eq(machineUnlocks.id, machine.signalWaitLogId)).get();
+  const outcome = !row ? null : row.result === 'NO_SIGNAL' ? 'no-signal' : 'started';
+  return { waitingUntil: machine.signalWaitUntil, outcome: machine.signalWaitUntil === null ? outcome : null };
+}
+
+/**
+ * A start whose machine never signalled did not run: it stops counting against the order, its
+ * top-up comes off the bill, the machine is free, and an order start goes back on the machine so
+ * Run machine can try again.
+ */
+function giveBackStart(db: Db, machine: MachineRow, now: number): void {
+  const row =
+    machine.signalWaitLogId === null
+      ? undefined
+      : db.select().from(machineUnlocks).where(eq(machineUnlocks.id, machine.signalWaitLogId)).get();
+  if (row) {
+    db.update(machineUnlocks).set({ result: 'NO_SIGNAL', resolvedAt: now }).where(eq(machineUnlocks.id, row.id)).run();
+    const topUps = db.select().from(machineUnlocks).where(eq(machineUnlocks.startLogId, row.id)).all();
+    for (const topUp of topUps) {
+      db.update(machineUnlocks).set({ result: 'NO_SIGNAL', resolvedAt: now }).where(eq(machineUnlocks.id, topUp.id)).run();
+      if (topUp.charge !== null && topUp.chargeItemId !== null && topUp.orderId !== null) {
+        undoTopUpCharge(db, { logId: topUp.id, itemId: topUp.chargeItemId, orderId: topUp.orderId, price: topUp.charge });
+      }
+    }
+  }
+  const order =
+    row?.kind === 'ORDER' && row.orderId !== null
+      ? db.select().from(orders).where(eq(orders.id, row.orderId)).get()
+      : undefined;
+  const reassign =
+    order !== undefined &&
+    order.voidedAt === null &&
+    !isClosedStatus(order.status) &&
+    machine.enabled &&
+    machine.assignedOrderId === null;
+  db.update(machines)
+    .set({
+      signalWaitUntil: null,
+      runEndsAt: machine.runEndsAt === null ? null : Math.min(machine.runEndsAt, now),
+      ...(reassign ? { assignedOrderId: order.id, assignedAt: now, assignedByName: row?.employeeName ?? null } : {}),
+    })
+    .where(eq(machines.id, machine.id))
+    .run();
+}
+
+/**
+ * A running signal soon after its start was given back: the machine did start after all, so the
+ * start counts again and the order comes off the machine. Its top-up stays off the bill.
+ */
+function lateStart(db: Db, machine: MachineRow, now: number): MachineUnlockRow | null {
+  if (machine.signalWaitLogId === null) return null;
+  const row = db.select().from(machineUnlocks).where(eq(machineUnlocks.id, machine.signalWaitLogId)).get();
+  if (!row || row.result !== 'NO_SIGNAL' || now - (row.resolvedAt ?? row.at) > LATE_SIGNAL_MS) return null;
+  db.update(machineUnlocks).set({ result: 'ACKED', resolvedAt: now }).where(eq(machineUnlocks.id, row.id)).run();
+  return row;
+}
+
+/**
  * Real-time sync: applies a fresh reading of the running signals (the machines whose signal is
- * on). A signal coming on puts the machine in use from when it came on; going off ends the run
- * then. A signal that comes on after the machine's countdown ran out (coins, a test start) is a
- * run with no order. Returns whether anything changed, so screens only re-read when needed.
+ * on). A signal coming on puts the machine in use from when it came on and confirms a start
+ * waiting for it; going off ends the run then. A signal that comes on after the machine's
+ * countdown ran out (coins, a test start) is a run with no order. A start whose signal has not
+ * come on by its deadline is given back. Returns whether anything changed, so screens only
+ * re-read when needed.
  */
 export function applyRunningSignals(ctx: ServiceContext, signals: readonly RunningSignal[]): boolean {
   if (!getSetting(ctx.db, 'realTimeSync')) return false;
@@ -899,14 +1016,26 @@ export function applyRunningSignals(ctx: ServiceContext, signals: readonly Runni
       const ms = runningMs.get(machine.hardwareChannel);
       if (ms !== undefined && machine.signalSince === null) {
         const since = now - ms;
+        const late = lateStart(tx, machine, now);
         const ownRun = machine.runEndsAt !== null && machine.runEndsAt > since;
+        const runOrderId = late?.kind === 'ORDER' ? late.orderId : ownRun ? machine.runOrderId : null;
+        const waiting = late?.kind === 'ORDER' && machine.assignedOrderId === late.orderId;
         tx.update(machines)
-          .set({ signalSince: since, runOrderId: ownRun ? machine.runOrderId : null })
+          .set({
+            signalSince: since,
+            signalSeen: true,
+            signalWaitUntil: null,
+            runOrderId,
+            ...(waiting ? { assignedOrderId: null, assignedAt: null, assignedByName: null } : {}),
+          })
           .where(eq(machines.id, machine.id))
           .run();
         changed = true;
       } else if (ms === undefined && machine.signalSince !== null) {
         tx.update(machines).set({ signalSince: null, runEndsAt: now }).where(eq(machines.id, machine.id)).run();
+        changed = true;
+      } else if (ms === undefined && machine.signalWaitUntil !== null && now >= machine.signalWaitUntil) {
+        giveBackStart(tx, machine, now);
         changed = true;
       }
     }
@@ -984,7 +1113,9 @@ export async function overrideStart(
     .set(runFields(machine, orderId, ctx.now(), cycle))
     .where(eq(machines.id, machine.id))
     .run();
-  const result = await sendAndRecord(ctx, controller, logId, machine, startPulsesFor(machine, cycle));
+  const pulses = startPulsesFor(machine, cycle);
+  const result = await sendAndRecord(ctx, controller, logId, machine, pulses);
+  if (result === 'acked') armSignalWait(ctx, machine.id, logId, pulses);
   if (NOTHING_SENT.includes(result)) {
     restoreRun(ctx.db, machine);
     // Nothing reached the machine, so the override receipt can be used again.
@@ -1020,7 +1151,10 @@ export async function testStart(
     cycle: cycle?.name,
   });
   if (!ready) return 'not-connected';
-  return sendAndRecord(ctx, controller, logId, machine, startPulsesFor(machine, cycle));
+  const pulses = startPulsesFor(machine, cycle);
+  const result = await sendAndRecord(ctx, controller, logId, machine, pulses);
+  if (result === 'acked') armSignalWait(ctx, machine.id, logId, pulses);
+  return result;
 }
 
 /**

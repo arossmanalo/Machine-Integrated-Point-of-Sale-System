@@ -30,7 +30,7 @@ import { DEVICE_ONLY_SETTINGS } from './settings';
 
 export const BACKUP_FORMAT = 'laundry-pos-backup';
 /** 2: machine run timers, dryer top-ups and the TOP_UP log kind. */
-export const BACKUP_VERSION = 12;
+export const BACKUP_VERSION = 13;
 
 function readAll(db: Db) {
   return {
@@ -198,6 +198,10 @@ const tableSchemas = {
     assignedCycleId: maybeInt.default(null),
     // Backups before version 12 had no running signals.
     signalSince: maybeInt.default(null),
+    // Backups before version 13 had no start waiting for its running signal.
+    signalSeen: z.boolean().default(false),
+    signalWaitUntil: maybeInt.default(null),
+    signalWaitLogId: maybeInt.default(null),
   }).transform((machine) => ({
     ...machine,
     delicatesPulses: machine.delicatesPulses ?? machine.pulseCount,
@@ -244,10 +248,12 @@ const tableSchemas = {
     kind: z.enum(['ORDER', 'OVERRIDE', 'OVERRIDE_DENIED', 'TEST', 'TOP_UP']),
     overrideReason: maybeText,
     overrideNote: maybeText,
-    result: z.enum(['PENDING', 'ACKED', 'REJECTED', 'BUSY', 'FAILED', 'TIMEOUT', 'NOT_CONNECTED', 'DENIED']),
+    result: z.enum(['PENDING', 'ACKED', 'REJECTED', 'BUSY', 'FAILED', 'TIMEOUT', 'NOT_CONNECTED', 'DENIED', 'NO_SIGNAL']),
     resolvedAt: maybeInt,
     charge: int.nullable().default(null),
     cycle: maybeText.default(null),
+    chargeItemId: maybeInt.default(null),
+    startLogId: maybeInt.default(null),
   }),
 };
 

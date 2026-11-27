@@ -311,7 +311,11 @@ describe('WifiMachineController', () => {
     const { esp, controller } = setup();
     const readings: unknown[] = [];
     controller.onRunningSignals((signals) => readings.push(signals));
+    // An older sketch sends no running list: that is no reading at all.
     await controller.connect();
+    expect(readings).toEqual([]);
+    esp.running = [];
+    await jest.advanceTimersByTimeAsync(timings.healthIntervalMs);
     esp.running = [{ channel: 2, ms: 61000 }];
     await jest.advanceTimersByTimeAsync(timings.healthIntervalMs);
     esp.down = true;
