@@ -201,14 +201,16 @@ export const machines = sqliteTable('machines', {
    * Null while the signal is off, or with real-time sync off. The machine is in use while set.
    */
   signalSince: integer('signal_since'),
-  /** Real-time sync: this machine's running signal has come on at least once, so it is wired. */
-  signalSeen: bool('signal_seen').notNull().default(false),
   /**
-   * Real-time sync: a start (`signalWaitLogId`) waits for the running signal until this time; with
-   * none by then it did not start and is given back. Null when nothing is waiting.
+   * Real-time sync: the start's coins were sent at this time and the machine waits for staff to
+   * press Start on it; its running signal ends the wait. Null when not waiting.
    */
+  awaitingStartAt: integer('awaiting_start_at'),
+  /** Legacy (migration 0014, a 30-second wait that was dropped the same day): unread. */
+  signalSeen: bool('signal_seen').notNull().default(false),
+  /** Legacy (migration 0014): unread. */
   signalWaitUntil: integer('signal_wait_until'),
-  /** The latest start that waited for the running signal; a signal soon after a give-back counts it again. */
+  /** Legacy (migration 0014): unread. */
   signalWaitLogId: integer('signal_wait_log_id'),
 });
 
@@ -280,9 +282,9 @@ export const machineUnlocks = sqliteTable(
     charge: integer('charge'),
     /** Multi-cycle: the name of the cycle that was run (stored as text so renames keep history). */
     cycle: text('cycle'),
-    /** Top-ups: the order item that put the charge on the bill, so it can be taken off again. */
+    /** Legacy (migration 0014): unread. */
     chargeItemId: integer('charge_item_id'),
-    /** A top-up charged with a start: that start's row, so a start given back takes its top-up too. */
+    /** Legacy (migration 0014): unread. */
     startLogId: integer('start_log_id'),
   },
   (t) => [index('unlocks_order').on(t.orderId), index('unlocks_at').on(t.at)],

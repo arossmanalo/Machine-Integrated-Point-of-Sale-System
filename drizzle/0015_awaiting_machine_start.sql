@@ -1,0 +1,1 @@
+ALTER TABLE `machines` ADD `awaiting_start_at` integer;

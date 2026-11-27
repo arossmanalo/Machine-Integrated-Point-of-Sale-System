@@ -26,6 +26,8 @@ export interface PolicyMachine {
   runEndsAt: number | null;
   /** Real-time sync: when the machine's running signal came on, while it is on. */
   signalSince: number | null;
+  /** Real-time sync: coins sent at this time; the machine waits for staff to press Start. */
+  awaitingStartAt: number | null;
 }
 
 /**
@@ -51,11 +53,18 @@ export function shopPriceFor(list: readonly ShopTopUpPrice[], minutes: number): 
 export const RUN_MINUTES_LIMITS = { min: 1, max: 240 } as const;
 
 /**
- * In use while its running signal is on (real-time sync) or its countdown has time left. Before
- * the signal comes on, the countdown keeps a just-started machine in use.
+ * In use while it waits for staff to press Start or its running signal is on (real-time sync), or
+ * while its countdown has time left.
  */
-export function isRunning(machine: Pick<PolicyMachine, 'runEndsAt' | 'signalSince'>, now: number): boolean {
-  return machine.signalSince !== null || (machine.runEndsAt !== null && machine.runEndsAt > now);
+export function isRunning(
+  machine: Pick<PolicyMachine, 'runEndsAt' | 'signalSince' | 'awaitingStartAt'>,
+  now: number,
+): boolean {
+  return (
+    machine.awaitingStartAt !== null ||
+    machine.signalSince !== null ||
+    (machine.runEndsAt !== null && machine.runEndsAt > now)
+  );
 }
 
 /** Whole minutes the machine has been running by its signal, rounded down. */
@@ -116,6 +125,13 @@ function orderProblem(order: PolicyOrder): MachineDecision | null {
 function runningProblem(machine: PolicyMachine, now: number): MachineDecision | null {
   if (!isRunning(machine, now)) return null;
   const running = `${machine.name} is still running${machine.runOrderId ? ` ${machine.runOrderId}` : ''}`;
+  if (machine.awaitingStartAt !== null) {
+    return deny(
+      'machine-running',
+      `${machine.name} has its coins${machine.runOrderId ? ` for ${machine.runOrderId}` : ''} and is waiting for ` +
+        'someone to press Start on it. Start it, or tap Mark as done if it will not be used.',
+    );
+  }
   if (machine.signalSince !== null) {
     return deny('machine-running', `${running} (for ${minutesRunning(machine, now)} min). Wait for it to finish.`);
   }

@@ -73,7 +73,7 @@ export function useReportStart() {
   const { ctx } = useApp();
   const watch = useWatchStart();
   return (result: StartResult, machineName: string, machineId?: number) => {
-    if (result === 'acked' && machineId !== undefined && startCheck(ctx, machineId).waitingUntil !== null) {
+    if (result === 'acked' && machineId !== undefined && startCheck(ctx, machineId).awaitingStart) {
       watch(machineId, machineName);
     } else if (result === 'acked') toast(`${machineName} started`);
     else toast(`${machineName}: ${RESULT_MESSAGES[result]}`, 'danger');
@@ -391,7 +391,9 @@ function MachineTile({
     ? 'Switched off'
     : running
       ? `In use, ${
-          machine.signalSince !== null
+          machine.awaitingStartAt !== null
+            ? 'waiting for Start'
+            : machine.signalSince !== null
             ? `running ${minutesRunning(machine, now)} min`
             : `${minutesLeft(machine, now)} min left`
         }${machine.runOrderId ? ` · ${machine.runOrderId}` : ''}`

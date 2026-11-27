@@ -23,6 +23,7 @@ const washer = {
   runOrderId: null,
   runEndsAt: null,
   signalSince: null,
+  awaitingStartAt: null,
 };
 
 function check(overrides: Partial<AssignCheck>): AssignCheck {

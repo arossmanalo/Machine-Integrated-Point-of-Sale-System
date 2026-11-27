@@ -192,7 +192,9 @@ export default function Machines() {
                       accessibilityLabel={`${machine.name}${machine.enabled ? '' : ', switched off'}${
                         !running
                           ? ''
-                          : machine.signalSince !== null
+                          : machine.awaitingStartAt !== null
+                            ? ', coins sent, press Start on the machine'
+                            : machine.signalSince !== null
                             ? `, running for ${elapsed(machine.signalSince, now)}`
                             : `, in use, ${countdown(machine.runEndsAt ?? now, now)} left`
                       }`}
@@ -222,7 +224,9 @@ export default function Machines() {
                         <Text variant="bodyStrong" style={styles.name}>
                           {machine.name}
                         </Text>
-                        {running ? (
+                        {machine.awaitingStartAt !== null ? (
+                          <Badge label="Press Start" tone="accent" />
+                        ) : running ? (
                           <Badge label="In use" tone="warning" />
                         ) : waiting !== null ? (
                           <Badge label="Did not start" tone="danger" />
@@ -230,6 +234,17 @@ export default function Machines() {
                           <Badge label="Free" tone="success" />
                         ) : null}
                       </Row>
+                      {machine.awaitingStartAt !== null && (
+                        <>
+                          <Text>Coins sent. Press Start on the machine.</Text>
+                          <Text variant="caption" tone="muted">
+                            {`${runOrder ? `${runOrder} · ${data.customers.get(runOrder) ?? ''} · ` : 'No order · '}coins sent ${formatShopTime(machine.awaitingStartAt)}`}
+                          </Text>
+                          <Row wrap>
+                            <Button label="Mark as done" kind="quiet" onPress={() => void finish(machine)} busy={action.busy} />
+                          </Row>
+                        </>
+                      )}
                       {running && machine.signalSince !== null && (
                         <>
                           <Text variant="figure" numeric>
