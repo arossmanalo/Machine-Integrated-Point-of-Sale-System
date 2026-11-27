@@ -1,0 +1,1 @@
+ALTER TABLE `machines` ADD `signal_since` integer;

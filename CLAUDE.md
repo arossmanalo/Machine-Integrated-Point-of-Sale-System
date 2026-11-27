@@ -52,6 +52,7 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 - Receipt QR codes (2026-11-21): `src/domain/receiptCode.ts`. Each order has a random `qrToken`; the code is `LPOS1:<order id>:<token>`, printed by `buildReceipt` as a raster picture (`qrRasterBytes`, GS v 0 in 64-row bands, drawn with `qrcode-generator`), because many cheap 58 mm printers ignore the native ESC/POS QR command. The code holds no counter: its uses are the order's allowance (one washer and one dryer per load). The service rejects a wrong or another order's code before anything is assigned or logged. **TEMPORARY:** `TEST_RECEIPT_CODE` (`LPOS1:TEST`, image in `docs/test-receipt-qr.png`) is accepted for every open order until the printer arrives, at the user's request; anyone with it can start any order, so remove it before real use. Scanning uses `expo-camera` (native, app 1.2.0). The owner or developer can switch scanning off with the `requireReceiptScan` setting (Manage › Machines, default on, saved through `setReceiptScanRequired`); `startOrderOnMachine` then takes `null` as the code.
 - Dry only (2026-11-23): service `DRY_ONLY` (`DRY_ONLY_SERVICE`), priced by the `dryOnlyPricePerLoad` setting (default ₱100); `machineAllowance(order, type)` gives it dryers only. No 10+1 promo, no loyalty loads, no auto-consumed supplies. Wash-dry-fold dryers wait for the load's washer: `decideAssignment` refuses dryer n until n washes are over (`washer-first`): counted washer starts minus washers still counting down for the order (`washProgress`).
 - Each load allows one washer start and one dryer start. If a start sends nothing (`rejected`, `busy`, `failed`, `not-connected`), the order stays assigned to the machine ("Did not start") so **Run machine** retries it; **Remove** takes it off. Such assignments are released when the order is voided or completed, or the machine is switched off.
+- Real-time sync (2026-11-27): the `realTimeSync` setting (`setRealTimeSync`, owner rights; the controller is rebuilt with 3 s checks). `MachineController.onRunningSignals` passes each fresh `/status` reading (never while unreachable) to `applyRunningSignals` in `AppProvider`, which stores `machines.signalSince` (migration 0013) on a signal's rising edge (`now - ms`) and on its falling edge clears it and sets `runEndsAt = now`. `isRunning` = signal on, or countdown left: until the signal comes on, a start's countdown holds the machine (fail closed); a signal that comes on after the countdown ran out (coins, tests) sets `runOrderId` null ("No order"). `markRunDone` refuses while the signal is on. Switching sync off turns a signalled run back into a countdown from `signalSince + runMinutes`. The Machines tab shows a count-up from `signalSince`. Backup version 12.
 - In use: each machine has a run time (`runMinutes`). A start sets `runOrderId` and `runEndsAt`; while `runEndsAt` is in the future the machine shows a countdown and cannot be assigned or started (owner override still can). **Mark as done** ends it early. Test starts set no timer.
 - Dryer top-ups (2026-11-22, types 2026-11-24): each dryer has its own top-up types in `dryer_top_ups` (name, minutes, pulses, price, enabled), edited in `src/services/topUps.ts` (`addTopUp` to one/all/selected dryers and `updateTopUps`, developer only; the owner changes on/off, coins and price through `saveOwnerMachineChanges`). A new dryer gets 5/10/15/20 minutes at the shop prices (`addDefaultTopUps`). Migration 0012 copied the old fixed columns (`topUpPrice*`, `topUpPulse*`, kept but no longer read) into the table and the old `orderTopUpPrices` setting into `shopTopUps`. Offered top-ups need a price. They are added only while the dryer is still running for an open order (not after the timer ends or Mark as done), by top-up id. A top-up adds an order item and the price to the order total and logs a `TOP_UP` row with `charge`; all of it is undone if nothing was sent. Top-ups can also be paid with the order (2026-11-22): `orders.prepaidTopUpMinutes`/`prepaidTopUpLoads` at the shop price for that length in the `shopTopUps` setting (`orderTopUpChoices` lists lengths with a shop price that some dryer offers; `saveShopTopUpPrices`, owner rights, also prices every offered top-up of that length), charged as an order item; `startMachine` adds the minutes and the pulses of the dryer's offered top-up of that length for the order's first `prepaidTopUpLoads` counted dryer starts, and a dryer without one is refused before it is assigned. Without a prepaid top-up, the start screen can add one (`extraTopUpId`): charged like a top-up while drying (`chargeTopUp`, its own `TOP_UP` log row) and undone with the start if nothing was sent.
 - Multi-cycle (2026-11-22, own cycles 2026-11-24): the `multiCycle` setting (`setMultiCycle`, owner or developer). Washers' cycles live in `machine_cycles` (name, pulses, minutes, enabled), edited in `src/services/cycles.ts` (`addCycle` to one/all/selected washers, `updateCycles`); a new washer gets Delicates/Light/Medium/Heavy (`addDefaultCycles`). Migration 0010 copied the old fixed-cycle columns into it and left those columns unread (an older bundle can still run). `machineUsesCycles` is the one rule for asking: Multi-cycle on, a washer, at least one cycle switched on. The cycle id is picked on the confirm screen, passed to `startOrderOnMachine`, kept as `assignedCycleId` for a retry, and its name logged in `machine_unlocks.cycle`. Overrides and tests take a cycle id (else the first one switched on); `testTopUp` sends a dryer's pulses for one top-up length (Testing mode asks which).
@@ -62,35 +63,26 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 
 - One LED per machine stands in for the machine's coin input. The hardware side (relays or optocouplers on each machine's coin input, mounting) will be done by my dad later.
 - Hardware (2026-11-25): ESP32-S3 DevKitC-1 style board with an ESP32-S3-WROOM-1 N16R8 module, two USB-C ports and an RGB LED, on a screw-terminal base. Replaced the 14-channel ESP32 DevKit (WROOM-32, HW-394). LEDs each through a 220Ω resistor, with a shared GND rail. The LED is off when idle and lights only during each pulse (`ACTIVE_LEVEL = HIGH` in the sketch).
-- 23 channels. Each channel is one screw terminal on the board, labelled with its GPIO number:
+- 11 channels (2026-11-27), one per machine, each a pair of neighbouring screw terminals labelled with their GPIO numbers: the start output and the machine's running-signal input. Terminal 4 is the link light.
 
-  | Channel | Terminal | Green strip (USB ports at the top) | ESP32-S3 pin |
+  | Channel | Start (output) | Running signal (input) | Green strip (USB ports at the top) |
   |---|---|---|---|
-  | 1 | IO14 | right strip | GPIO 14 |
-  | 2 | IO13 | right strip | GPIO 13 |
-  | 3 | IO12 | right strip | GPIO 12 |
-  | 4 | IO11 | right strip | GPIO 11 |
-  | 5 | IO10 | right strip | GPIO 10 |
-  | 6 | IO9 | right strip | GPIO 9 |
-  | 7 | IO8 | right strip | GPIO 8 |
-  | 8 | IO18 | right strip | GPIO 18 |
-  | 9 | IO17 | right strip | GPIO 17 |
-  | 10 | IO16 | right strip | GPIO 16 |
-  | 11 | IO15 | right strip | GPIO 15 |
-  | 12 | IO7 | right strip | GPIO 7 |
-  | 13 | IO6 | right strip | GPIO 6 |
-  | 14 | IO5 | right strip | GPIO 5 |
-  | 15 | IO4 | right strip | GPIO 4 |
-  | 16 | IO21 | left strip | GPIO 21 |
-  | 17 | IO47 | left strip | GPIO 47 |
-  | 18 | IO39 | left strip | GPIO 39 |
-  | 19 | IO40 | left strip | GPIO 40 |
-  | 20 | IO41 | left strip | GPIO 41 |
-  | 21 | IO42 | left strip | GPIO 42 |
-  | 22 | IO2 | left strip | GPIO 2 |
-  | 23 | IO1 | left strip | GPIO 1 |
+  | 1 | IO14 | IO13 | right strip |
+  | 2 | IO12 | IO11 | right strip |
+  | 3 | IO10 | IO9 | right strip |
+  | 4 | IO8 | IO18 | right strip |
+  | 5 | IO17 | IO16 | right strip |
+  | 6 | IO15 | IO7 | right strip |
+  | 7 | IO6 | IO5 | right strip |
+  | 8 | IO21 | IO47 | left strip |
+  | 9 | IO39 | IO40 | left strip |
+  | 10 | IO41 | IO42 | left strip |
+  | 11 | IO2 | IO1 | left strip |
+  | link light | IO4 | | right strip |
 
-- These avoid the boot-strapping pins (0, 3, 45, 46), native USB (19, 20), serial RX/TX (43, 44), flash (26–32), the octal PSRAM of R8 modules (35–37) and 38/48 (one drives the RGB LED). Not yet checked for power-on blips on the real board: test with an LED on each pin and drop any that blinks at boot. The list lives in `LOCK_PINS` in the sketch and `LOCK_CHANNEL_TERMINALS` in `protocol.ts`; change both together. The sketch refuses to compile for anything but the ESP32-S3. More than 23 machines needs an I/O expander (MCP23017 or PCF8575) or a second board.
+- These avoid the boot-strapping pins (0, 3, 45, 46), native USB (19, 20), serial RX/TX (43, 44), flash (26–32), the octal PSRAM of R8 modules (35–37) and 38/48 (one drives the RGB LED). Not yet checked for power-on blips on the real board: test with an LED on each output and drop any that blinks at boot. The lists live in `OUTPUT_PINS`/`INPUT_PINS`/`LINK_LED_PIN` in the sketch and `MACHINE_CHANNEL_TERMINALS` in `protocol.ts` (a test compares them); change both together. The sketch refuses to compile for anything but the ESP32-S3. More than 11 machines needs an I/O expander (MCP23017 or PCF8575) or a second board.
+- Running signal inputs: the machines give 5 V while running; the S3 pins take 3.3 V, so each input goes through a divider (10k/20k) or an optocoupler (`INPUT_ACTIVE_LEVEL` LOW for an optocoupler pulling to GND). Inputs use `INPUT_PULLDOWN` (unwired = not running), count as on after `INPUT_ON_MS` (500 ms) and off after `INPUT_OFF_MS` (10 s). Serial prints `RUNNING <n>` and `STOPPED <n>`.
+- Link light (GPIO 4): off without Wi-Fi, blinking on Wi-Fi when no `/status` came in the last 45 s (`APP_SEEN_TIMEOUT_MS`), steady with both. Any `/status` request counts, so it shows that something is asking, not proof that it is this tablet.
 - `WiFi.setSleep(false)` is required: with modem sleep on, the tablet intermittently could not reach the ESP32.
 - Connection: the ESP32 and the tablet are both on the shop Wi-Fi (2.4 GHz). The developer enters the ESP32's address and the key in Manage › Machines. The ESP32 is powered separately (USB charger).
 - Fixed address (2026-11-21): the router gave the ESP32 a new address after a restart and the app lost it, so `config.h` sets `STATIC_IP`. Since the Wi-Fi change on 2026-11-22 it is 192.168.123.200 (gateway 192.168.123.1; the router hands out 192.168.123.x). After changing Wi-Fi, check the new router's range the same way: boot once without `STATIC_IP` and read the `READY <address>` line on serial. If another device ever takes .200, pick another free address, upload again and change it in the app.
@@ -98,7 +90,7 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 
 ### HTTP protocol (the contract between app and ESP32)
 
-- `GET /status` → `{"device":"laundry-locks","channels":23,"busy":[3],"lastAccepted":"<hex>"}`. The app checks it on connect and every 20 s, since Wi-Fi gives no unplug event. `busy` lists channels still sending pulses; `lastAccepted` is the challenge of the last start carried out.
+- `GET /status` → `{"device":"laundry-locks","channels":11,"busy":[3],"running":[{"channel":2,"ms":61000}],"lastAccepted":"<hex>"}`. The app checks it on connect and every 20 s (3 s with real-time sync), since Wi-Fi gives no unplug event; a check never starts while the last one is waiting. `busy` lists channels still sending pulses; `running` lists channels whose running signal is on and for how long (a missing `running`, from an older sketch, parses as none); `lastAccepted` is the challenge of the last start carried out.
 - `GET /challenge` → `{"challenge":"<32 hex>"}`, single use, expires after 10 s.
 - `POST /start`, form body `channel=<n>&pulses=<count>&onMs=<ms>&offMs=<ms>&challenge=<hex>&signature=<hex>`, where signature = hex HMAC-SHA256(key, `S<n>:<count>:<onMs>:<offMs>:<challenge>`). Replies `200 {"ok":true,"channel":n}` as soon as the start is accepted (the pulses follow), or `4xx {"ok":false,"error":"bad-channel"|"bad-pulses"|"busy"|"bad-signature"|"stale-challenge"}`. Every attempt uses up the challenge.
 - Pulse limits (`PULSE_LIMITS` in `protocol.ts`, `MAX_PULSES`/`MIN_PULSE_MS`/`MAX_PULSE_MS` in the sketch): 1–50 pulses, 20–5000 ms on and off. Each machine stores its own count, on-time and off-time (Manage › Machines, defaults 1 × 500 ms / 500 ms).
@@ -131,5 +123,5 @@ Stop employees from using the washers and dryers for personal laundry. Machines 
 
 ### Possible later upgrades (not in scope yet)
 
-- Sensing whether a machine is actually running (current sensing), to confirm a start
+- Logging or alerting when a machine runs with no order (real-time sync already shows it as "No order")
 - Sending logs off-device so the owner can review them remotely

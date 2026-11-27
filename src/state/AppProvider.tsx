@@ -13,9 +13,10 @@ import type { Actor, Db, ServiceContext } from '@/db/types';
 import type { ControllerState, MachineController } from '@/machines/MachineController';
 import { MockMachineController } from '@/machines/MockMachineController';
 import { normalizeAddress } from '@/machines/protocol';
-import { WifiMachineController } from '@/machines/WifiMachineController';
+import { DEFAULT_TIMINGS, REAL_TIME_TIMINGS, WifiMachineController } from '@/machines/WifiMachineController';
 import type { ReceiptPrinter } from '@/printing/ReceiptPrinter';
 import { restoreSession } from '@/services/auth';
+import { applyRunningSignals } from '@/services/machines';
 import { getSetting } from '@/services/settings';
 
 interface AppState {
@@ -28,7 +29,7 @@ interface AppState {
   /** Bumped after every write so screens re-read the database. */
   version: number;
   refresh: () => void;
-  /** Rebuild the machine controller after its settings (simulate, address, key) change. */
+  /** Rebuild the machine controller after its settings (simulate, address, key, real-time sync) change. */
   reloadLockController: () => void;
 }
 
@@ -36,10 +37,14 @@ const AppContext = createContext<AppState | null>(null);
 
 function makeController(db: Db): MachineController {
   if (getSetting(db, 'simulateMachines')) return new MockMachineController();
-  return new WifiMachineController({
-    baseUrl: normalizeAddress(getSetting(db, 'lockControllerAddress')),
-    key: getSetting(db, 'lockControllerKey'),
-  });
+  return new WifiMachineController(
+    {
+      baseUrl: normalizeAddress(getSetting(db, 'lockControllerAddress')),
+      key: getSetting(db, 'lockControllerKey'),
+    },
+    undefined,
+    getSetting(db, 'realTimeSync') ? REAL_TIME_TIMINGS : DEFAULT_TIMINGS,
+  );
 }
 
 export function AppProvider({
@@ -68,6 +73,14 @@ export function AppProvider({
   }, [controller]);
 
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
+
+  useEffect(
+    () =>
+      controller.onRunningSignals((signals) => {
+        if (applyRunningSignals(ctx, signals)) refresh();
+      }),
+    [controller, ctx, refresh],
+  );
 
   const reloadLockController = useCallback(() => setController(makeController(ctx.db)), [ctx.db]);
 

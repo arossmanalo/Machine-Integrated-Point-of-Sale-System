@@ -1,10 +1,13 @@
 import { createHmac } from 'crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import type { PulseSettings } from '../MachineController';
 import { MockMachineController } from '../MockMachineController';
 import {
-  channelTerminal,
+  channelTerminals,
   DEVICE_NAME,
+  MACHINE_CHANNEL_TERMINALS,
   MAX_CHANNEL,
   normalizeAddress,
   pulsesProblem,
@@ -32,6 +35,8 @@ class FakeEsp32 {
   garbleNext = 0;
   /** Channels still sending pulses. */
   busy = new Set<number>();
+  /** Running signals to report; undefined acts like a sketch from before the running signals. */
+  running: { channel: number; ms: number }[] | undefined = undefined;
   starts: { channel: number; pulses: PulseSettings }[] = [];
   log: string[] = [];
   private challenge: string | null = null;
@@ -49,7 +54,8 @@ class FakeEsp32 {
     }
     if (path === '/status') {
       const busy = [...this.busy].sort((a, b) => a - b);
-      return { status: 200, json: { device: this.device, channels: 6, busy, lastAccepted: this.lastAccepted } };
+      const running = this.running === undefined ? {} : { running: this.running };
+      return { status: 200, json: { device: this.device, channels: 6, busy, ...running, lastAccepted: this.lastAccepted } };
     }
     if (path === '/challenge') {
       this.counter += 1;
@@ -125,13 +131,26 @@ describe('protocol', () => {
     expect(normalizeAddress('192.168.1.50:99999')).toBeNull();
   });
 
-  it('names the board terminal for each of the 23 channels', () => {
-    expect(MAX_CHANNEL).toBe(23);
-    expect(channelTerminal(1)).toBe('IO14');
-    expect(channelTerminal(16)).toBe('IO21');
-    expect(channelTerminal(23)).toBe('IO1');
-    expect(channelTerminal(0)).toBeNull();
-    expect(channelTerminal(24)).toBeNull();
+  it('names the start and signal terminals of each of the 11 channels', () => {
+    expect(MAX_CHANNEL).toBe(11);
+    expect(channelTerminals(1)).toEqual({ start: 'IO14', signal: 'IO13' });
+    expect(channelTerminals(11)).toEqual({ start: 'IO2', signal: 'IO1' });
+    expect(channelTerminals(0)).toBeNull();
+    expect(channelTerminals(12)).toBeNull();
+  });
+
+  it('uses the same pins as the sketch, with terminal 4 left for the link light', () => {
+    const sketch = readFileSync(join(__dirname, '../../../lock_controller/lock_controller.ino'), 'utf8');
+    const list = (name: string) => {
+      const line = sketch.split('\n').find((text) => text.startsWith(`const int ${name}[] = {`)) ?? '';
+      return line
+        .slice(line.indexOf('{') + 1, line.indexOf('}'))
+        .split(',')
+        .map((pin) => `IO${pin.trim()}`);
+    };
+    expect(list('OUTPUT_PINS')).toEqual(MACHINE_CHANNEL_TERMINALS.map((channel) => channel.start));
+    expect(list('INPUT_PINS')).toEqual(MACHINE_CHANNEL_TERMINALS.map((channel) => channel.signal));
+    expect(/const int LINK_LED_PIN = 4;/.test(sketch)).toBe(true);
   });
 
   it('signs the channel and every pulse setting, exactly as the ESP32 computes it', () => {
@@ -285,6 +304,37 @@ describe('WifiMachineController', () => {
     const checks = esp.log.length;
     await jest.advanceTimersByTimeAsync(timings.healthIntervalMs * 3);
     expect(esp.log).toHaveLength(checks);
+  });
+
+  it('passes on each fresh reading of the running signals, and none while unreachable', async () => {
+    jest.useFakeTimers();
+    const { esp, controller } = setup();
+    const readings: unknown[] = [];
+    controller.onRunningSignals((signals) => readings.push(signals));
+    await controller.connect();
+    esp.running = [{ channel: 2, ms: 61000 }];
+    await jest.advanceTimersByTimeAsync(timings.healthIntervalMs);
+    esp.down = true;
+    await jest.advanceTimersByTimeAsync(timings.healthIntervalMs);
+    expect(readings).toEqual([[], [{ channel: 2, runningMs: 61000 }]]);
+  });
+
+  it('never starts a status check while the last one is still waiting', async () => {
+    jest.useFakeTimers();
+    const slow = new FakeEsp32();
+    let open = 0;
+    let most = 0;
+    const http = async (request: HttpRequest): Promise<HttpReply> => {
+      open += 1;
+      most = Math.max(most, open);
+      await new Promise((resolve) => setTimeout(resolve, timings.healthIntervalMs * 2.5));
+      open -= 1;
+      return slow.http(request);
+    };
+    const controller = track(new WifiMachineController({ baseUrl: BASE, key: KEY }, http, timings));
+    void controller.connect();
+    await jest.advanceTimersByTimeAsync(timings.healthIntervalMs * 10);
+    expect(most).toBe(1);
   });
 
   it('reconnects on its own when a start finds it offline', async () => {

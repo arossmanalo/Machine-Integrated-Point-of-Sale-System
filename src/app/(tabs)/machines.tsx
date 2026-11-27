@@ -46,10 +46,18 @@ import { colors, MIN_TOUCH, radius, space } from '@/ui/theme';
 /** Same order as in the shop, where dryers are stacked on top of washers. */
 const SHOP_ROWS: readonly MachineType[] = ['DRYER', 'WASHER'];
 
+function minutesAndSeconds(seconds: number): string {
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
 /** "12:05" minutes and seconds left, rounded up so it never shows 0:00 while still running. */
 function countdown(endsAt: number, now: number): string {
-  const seconds = Math.max(0, Math.ceil((endsAt - now) / 1000));
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  return minutesAndSeconds(Math.max(0, Math.ceil((endsAt - now) / 1000)));
+}
+
+/** "12:05" minutes and seconds the machine has been running, by its running signal. */
+function elapsed(since: number, now: number): string {
+  return minutesAndSeconds(Math.max(0, Math.floor((now - since) / 1000)));
 }
 
 export default function Machines() {
@@ -182,7 +190,11 @@ export default function Machines() {
                       key={machine.id}
                       accessibilityRole="button"
                       accessibilityLabel={`${machine.name}${machine.enabled ? '' : ', switched off'}${
-                        running ? `, in use, ${countdown(machine.runEndsAt ?? now, now)} left` : ''
+                        !running
+                          ? ''
+                          : machine.signalSince !== null
+                            ? `, running for ${elapsed(machine.signalSince, now)}`
+                            : `, in use, ${countdown(machine.runEndsAt ?? now, now)} left`
                       }`}
                       accessibilityHint={
                         tappable
@@ -218,7 +230,18 @@ export default function Machines() {
                           <Badge label="Free" tone="success" />
                         ) : null}
                       </Row>
-                      {running && machine.runEndsAt !== null && (
+                      {running && machine.signalSince !== null && (
+                        <>
+                          <Text variant="figure" numeric>
+                            {elapsed(machine.signalSince, now)}
+                          </Text>
+                          <Text variant="caption" tone="muted">
+                            {`${runOrder ? `${runOrder} · ${data.customers.get(runOrder) ?? ''} · ` : 'No order · '}running since ${formatShopTime(machine.signalSince)}`}
+                          </Text>
+                          {topUp && <Row wrap>{topUp}</Row>}
+                        </>
+                      )}
+                      {running && machine.signalSince === null && machine.runEndsAt !== null && (
                         <>
                           <Text variant="figure" numeric>
                             {countdown(machine.runEndsAt, now)}

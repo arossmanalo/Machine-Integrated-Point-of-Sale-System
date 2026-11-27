@@ -11,8 +11,19 @@
 // or turn on Tools > USB CDC On Boot to use the other port.
 // Outputs avoid the boot-strapping pins (0, 3, 45, 46), the native USB pins (19, 20), the serial
 // pins (43, 44 = RX/TX), the flash pins (26-32), the octal PSRAM pins of R8 modules (35-37) and
-// 38 and 48, one of which drives the board's RGB LED. That leaves these 23.
-// Wiring per LED (prototype): GPIO -> 220 ohm resistor -> LED long leg (+), short leg (-) -> GND.
+// 38 and 48, one of which drives the board's RGB LED. Of the 23 pins left, 22 make 11 machine
+// channels (an output and an input each) and GPIO 4 is the link light.
+//
+// Inputs: each machine's "running" signal. The ESP32-S3 pins take 3.3 V at most: a 5 V signal
+// must go through a voltage divider (signal - 10k - pin - 20k - GND) or an optocoupler, never
+// straight to the pin. With the divider the input is active HIGH; with an optocoupler pulling the
+// pin to GND, set INPUT_ACTIVE_LEVEL to LOW. An unwired input reads as not running.
+//
+// Link light (GPIO 4): off without Wi-Fi, blinking on Wi-Fi when the app has not checked in for
+// APP_SEEN_TIMEOUT_MS, steady when both are fine.
+//
+// Wiring per LED (outputs and the link light, prototype): GPIO -> 220 ohm resistor -> LED long
+// leg (+), short leg (-) -> GND.
 // With ACTIVE_LEVEL = HIGH the LED is off while idle and lights only during each pulse.
 // Real machines: the GPIO drives a relay or optocoupler on the machine's coin input, never the
 // machine directly. Check what level that module switches on before setting ACTIVE_LEVEL.
@@ -33,11 +44,25 @@
 #error "This pin list is for the ESP32-S3. Pick Tools > Board > ESP32S3 Dev Module."
 #endif
 
-// Channel n uses LOCK_PINS[n - 1]. With the USB ports at the top: channels 1-15 run down the
-// right strip (14 13 12 11 10 9 8 18 17 16 15 7 6 5 4), channels 16-23 down the left strip
-// (21 47 39 40 41 42 2 1). Keep in step with LOCK_CHANNEL_TERMINALS in src/machines/protocol.ts.
-const int LOCK_PINS[] = {14, 13, 12, 11, 10, 9, 8, 18, 17, 16, 15, 7, 6, 5, 4, 21, 47, 39, 40, 41, 42, 2, 1};
-const int NUM_CHANNELS = sizeof(LOCK_PINS) / sizeof(LOCK_PINS[0]);
+// Channel n sends its start pulses on OUTPUT_PINS[n - 1] and reads its running signal on
+// INPUT_PINS[n - 1]: neighbouring terminals, output above input with the USB ports at the top.
+// Right strip: 14/13, 12/11, 10/9, 8/18, 17/16, 15/7, 6/5, then the link light on 4.
+// Left strip: 21/47, 39/40, 41/42, 2/1.
+// Keep in step with MACHINE_CHANNEL_TERMINALS in src/machines/protocol.ts.
+const int OUTPUT_PINS[] = {14, 12, 10, 8, 17, 15, 6, 21, 39, 41, 2};
+const int INPUT_PINS[] = {13, 11, 9, 18, 16, 7, 5, 47, 40, 42, 1};
+const int NUM_CHANNELS = sizeof(OUTPUT_PINS) / sizeof(OUTPUT_PINS[0]);
+const int LINK_LED_PIN = 4;
+const int LINK_LED_ON = HIGH;
+const unsigned long LINK_BLINK_MS = 500;
+// The app checks in every few seconds (every 20 s with real-time sync off), so this is safely longer.
+const unsigned long APP_SEEN_TIMEOUT_MS = 45000;
+// The level a machine's input has while it runs.
+const int INPUT_ACTIVE_LEVEL = HIGH;
+// A running signal counts once it holds this long; a stop only after this long, so a short dip
+// between wash phases does not end the run.
+const unsigned long INPUT_ON_MS = 500;
+const unsigned long INPUT_OFF_MS = 10000;
 // The level an output takes during a pulse. HIGH lights the prototype LED and drives most relay
 // and optocoupler modules; an active-LOW module needs LOW here.
 const int ACTIVE_LEVEL = HIGH;
@@ -56,8 +81,18 @@ struct Train {
   unsigned long nextAt;      // when the output changes next
 };
 
+struct Input {
+  bool raw;                  // the level read last, active or not
+  unsigned long rawSince;    // when the raw level last changed
+  bool running;              // the level after the hold times
+  unsigned long runningSince;
+};
+
 WebServer server(80);
 Train trains[NUM_CHANNELS];
+Input inputs[NUM_CHANNELS];
+bool appSeen = false;
+unsigned long appSeenAt = 0;                        // when the app last asked for /status
 char challenge[33] = "";                            // empty = no challenge outstanding
 unsigned long challengeIssuedAt = 0;
 char lastAccepted[33] = "";                         // the challenge of the last start carried out
@@ -66,10 +101,14 @@ void setup() {
   Serial.begin(115200);
   for (int i = 0; i < NUM_CHANNELS; i++) {
     // Set the level before switching to output, so no machine sees a pulse at boot.
-    digitalWrite(LOCK_PINS[i], IDLE_LEVEL);
-    pinMode(LOCK_PINS[i], OUTPUT);
+    digitalWrite(OUTPUT_PINS[i], IDLE_LEVEL);
+    pinMode(OUTPUT_PINS[i], OUTPUT);
     trains[i].remaining = 0;
+    pinMode(INPUT_PINS[i], INPUT_ACTIVE_LEVEL == HIGH ? INPUT_PULLDOWN : INPUT_PULLUP);
+    inputs[i] = {false, millis(), false, 0};
   }
+  digitalWrite(LINK_LED_PIN, LINK_LED_ON == HIGH ? LOW : HIGH);
+  pinMode(LINK_LED_PIN, OUTPUT);
 
   WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t) {
     Serial.print("READY ");
@@ -108,7 +147,7 @@ void loop() {
     Train& t = trains[i];
     if (t.remaining == 0 || (long)(now - t.nextAt) < 0) continue;
     if (t.high) {
-      digitalWrite(LOCK_PINS[i], IDLE_LEVEL);
+      digitalWrite(OUTPUT_PINS[i], IDLE_LEVEL);
       t.high = false;
       t.remaining -= 1;
       t.nextAt = now + t.offMs;
@@ -117,11 +156,38 @@ void loop() {
         Serial.println(i + 1);
       }
     } else {
-      digitalWrite(LOCK_PINS[i], ACTIVE_LEVEL);
+      digitalWrite(OUTPUT_PINS[i], ACTIVE_LEVEL);
       t.high = true;
       t.nextAt = now + t.onMs;
     }
   }
+
+  readInputs(now);
+  showLink(now);
+}
+
+void readInputs(unsigned long now) {
+  for (int i = 0; i < NUM_CHANNELS; i++) {
+    Input& in = inputs[i];
+    bool active = digitalRead(INPUT_PINS[i]) == INPUT_ACTIVE_LEVEL;
+    if (active != in.raw) {
+      in.raw = active;
+      in.rawSince = now;
+    }
+    if (in.raw == in.running || now - in.rawSince < (in.raw ? INPUT_ON_MS : INPUT_OFF_MS)) continue;
+    in.running = in.raw;
+    // The run started when the signal first came, not when the hold time ran out.
+    if (in.running) in.runningSince = in.rawSince;
+    Serial.print(in.running ? "RUNNING " : "STOPPED ");
+    Serial.println(i + 1);
+  }
+}
+
+void showLink(unsigned long now) {
+  bool wifi = WiFi.status() == WL_CONNECTED;
+  bool app = appSeen && now - appSeenAt < APP_SEEN_TIMEOUT_MS;
+  bool on = wifi && (app || (now / LINK_BLINK_MS) % 2 == 0);
+  digitalWrite(LINK_LED_PIN, on ? LINK_LED_ON : (LINK_LED_ON == HIGH ? LOW : HIGH));
 }
 
 void handleStatus() {
@@ -131,9 +197,18 @@ void handleStatus() {
     if (busy.length() > 0) busy += ",";
     busy += String(i + 1);
   }
+  unsigned long now = millis();
+  String running = "";
+  for (int i = 0; i < NUM_CHANNELS; i++) {
+    if (!inputs[i].running) continue;
+    if (running.length() > 0) running += ",";
+    running += String("{\"channel\":") + (i + 1) + ",\"ms\":" + (now - inputs[i].runningSince) + "}";
+  }
+  appSeen = true;
+  appSeenAt = now;
   server.send(200, "application/json",
               String("{\"device\":\"laundry-locks\",\"channels\":") + NUM_CHANNELS + ",\"busy\":[" + busy +
-                  "],\"lastAccepted\":\"" + lastAccepted + "\"}");
+                  "],\"running\":[" + running + "],\"lastAccepted\":\"" + lastAccepted + "\"}");
 }
 
 void handleChallenge() {

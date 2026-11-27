@@ -11,6 +11,7 @@ import {
   listMachines,
   saveOwnerMachineChanges,
   setMultiCycle,
+  setRealTimeSync,
   setReceiptScanRequired,
 } from '@/services/machines';
 import { getSetting } from '@/services/settings';
@@ -26,6 +27,11 @@ import { Text } from '../Text';
 import { TextField } from '../TextField';
 import { space } from '../theme';
 
+/** The Real-time sync switch's explanation, the same for the owner and the developer. */
+export const REAL_TIME_SYNC_TEXT =
+  'Machines report when they start and stop. A running machine shows how long it has been running instead of ' +
+  'a countdown, and it is free as soon as it stops.';
+
 /** What the owner calls a start signal: one coin, as if dropped in the machine's slot. */
 export function coins(count: number): string {
   return `${count} coin${count === 1 ? '' : 's'}`;
@@ -39,7 +45,7 @@ export function coins(count: number): string {
 export function MachineOverview() {
   const actor = useActor();
   const action = useAction();
-  const { controller, controllerState } = useApp();
+  const { controller, controllerState, reloadLockController } = useApp();
   const [viewing, setViewing] = useState<MachineRow | null>(null);
   const machines = useData(listMachines);
   const cycles = useData(listCycles);
@@ -47,6 +53,7 @@ export function MachineOverview() {
   const settings = useData((c) => ({
     receiptScan: getSetting(c.db, 'requireReceiptScan'),
     multiCycle: getSetting(c.db, 'multiCycle'),
+    realTimeSync: getSetting(c.db, 'realTimeSync'),
   }));
   const topUpsOf = (machine: MachineRow) => topUps.filter((topUp) => topUp.machineId === machine.id);
   const cyclesOf = (machine: MachineRow) =>
@@ -85,6 +92,15 @@ export function MachineOverview() {
           label="Multi-cycle"
           value={settings.multiCycle}
           onChange={(on) => void action.run((c) => setMultiCycle(c, actor, on))}
+        />
+        <Toggle
+          label="Real-time sync"
+          description={REAL_TIME_SYNC_TEXT}
+          value={settings.realTimeSync}
+          onChange={async (on) => {
+            const result = await action.run((c) => setRealTimeSync(c, actor, on));
+            if (result.ok) reloadLockController();
+          }}
         />
         {action.error && <Notice tone="danger">{action.error}</Notice>}
       </Section>

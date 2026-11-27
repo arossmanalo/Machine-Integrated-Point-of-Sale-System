@@ -10,6 +10,7 @@ import {
   MACHINE_TYPE_LABELS,
   machineAllowance,
   minutesLeft,
+  minutesRunning,
   type MachineType,
 } from '@/domain/machinePolicy';
 import type { Earned } from '@/domain/machineEarnings';
@@ -379,7 +380,11 @@ function MachineTile({
   const state = !machine.enabled
     ? 'Switched off'
     : running
-      ? `In use, ${minutesLeft(machine, now)} min left${machine.runOrderId ? ` · ${machine.runOrderId}` : ''}`
+      ? `In use, ${
+          machine.signalSince !== null
+            ? `running ${minutesRunning(machine, now)} min`
+            : `${minutesLeft(machine, now)} min left`
+        }${machine.runOrderId ? ` · ${machine.runOrderId}` : ''}`
       : waitingOther
         ? `Waiting to start ${machine.assignedOrderId}`
         : mine

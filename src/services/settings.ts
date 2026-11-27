@@ -33,6 +33,8 @@ const settingSchemas = {
   gcashQrFile: z.string().nullable(),
   /** Staff pick Delicates, Light, Medium or Heavy before a machine runs; each has its own pulses. */
   multiCycle: z.boolean(),
+  /** Machines report their running signal: in use while it is on, with a count-up timer. */
+  realTimeSync: z.boolean(),
   /**
    * Prices for a dryer top-up taken with a new order, by minutes, before the dryer is known.
    * Price 0 means not offered on new orders. Replaced `orderTopUpPrices` in migration 0012.
@@ -63,6 +65,7 @@ export const DEFAULT_SETTINGS: Settings = {
   gcashQrFile: null,
   shopTopUps: DEFAULT_TOP_UP_MINUTES.map((minutes) => ({ minutes, price: 0 })),
   multiCycle: false,
+  realTimeSync: false,
 };
 
 function parseStored<K extends SettingKey>(key: K, raw: string | undefined): Settings[K] {

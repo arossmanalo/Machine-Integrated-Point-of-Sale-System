@@ -9,7 +9,8 @@ import type { PulseSettings } from './MachineController';
  * The HTTP contract with the ESP32 sketch in lock_controller/lock_controller.ino.
  * Keep this file, the sketch and CLAUDE.md in step.
  *
- *   GET  /status     -> {"device":"laundry-locks","channels":23,"busy":[3],"lastAccepted":"<hex>"}
+ *   GET  /status     -> {"device":"laundry-locks","channels":11,"busy":[3],
+ *                        "running":[{"channel":2,"ms":61000}],"lastAccepted":"<hex>"}
  *   GET  /challenge  -> {"challenge":"<32 hex chars>"}   single use, expires after 10 s
  *   POST /start      form body channel=<n>&pulses=<count>&onMs=<ms>&offMs=<ms>&challenge=<hex>&signature=<hex>
  *                    -> 200 {"ok":true,"channel":n}   accepted; the pulses follow
@@ -17,22 +18,39 @@ import type { PulseSettings } from './MachineController';
  *
  * A start sends `count` pulses of `onMs`, each followed by `offMs`, like a coin slot. Outputs are
  * idle otherwise. `busy` lists channels still pulsing; `lastAccepted` is the challenge of the last
- * start carried out, so a start whose reply was lost can be checked.
+ * start carried out, so a start whose reply was lost can be checked. `running` lists the machines
+ * whose running signal is on, with how long it has been on.
  * signature = hex(HMAC-SHA256(key, "S<n>:<count>:<onMs>:<offMs>:<challenge>")). The key is a
  * passphrase set in both the app and the sketch, so a phone on the same Wi-Fi cannot start a
  * machine without the POS.
  */
 export const DEVICE_NAME = 'laundry-locks';
 
+/** The two board terminals of one machine channel: its start pulses go out, its running signal comes in. */
+export interface ChannelTerminals {
+  start: string;
+  signal: string;
+}
+
 /**
- * The board terminal behind each channel (channel n is entry n - 1), in strip order on the
- * ESP32-S3 board. Matches LOCK_PINS in the sketch: IO14 is the terminal labelled 14, GPIO 14.
+ * The board terminals behind each channel (channel n is entry n - 1) on the ESP32-S3 board.
+ * Matches OUTPUT_PINS and INPUT_PINS in the sketch: IO14 is the terminal labelled 14, GPIO 14.
+ * Terminal 4 is the controller's link light, not a channel.
  */
-export const LOCK_CHANNEL_TERMINALS = [
-  'IO14', 'IO13', 'IO12', 'IO11', 'IO10', 'IO9', 'IO8', 'IO18', 'IO17', 'IO16', 'IO15', 'IO7', 'IO6', 'IO5',
-  'IO4', 'IO21', 'IO47', 'IO39', 'IO40', 'IO41', 'IO42', 'IO2', 'IO1',
-] as const;
-export const MAX_CHANNEL = LOCK_CHANNEL_TERMINALS.length;
+export const MACHINE_CHANNEL_TERMINALS: readonly ChannelTerminals[] = [
+  { start: 'IO14', signal: 'IO13' },
+  { start: 'IO12', signal: 'IO11' },
+  { start: 'IO10', signal: 'IO9' },
+  { start: 'IO8', signal: 'IO18' },
+  { start: 'IO17', signal: 'IO16' },
+  { start: 'IO15', signal: 'IO7' },
+  { start: 'IO6', signal: 'IO5' },
+  { start: 'IO21', signal: 'IO47' },
+  { start: 'IO39', signal: 'IO40' },
+  { start: 'IO41', signal: 'IO42' },
+  { start: 'IO2', signal: 'IO1' },
+];
+export const MAX_CHANNEL = MACHINE_CHANNEL_TERMINALS.length;
 export const MIN_KEY_LENGTH = 12;
 
 /** Bounds for one start. Keep in step with MAX_PULSES, MIN_PULSE_MS and MAX_PULSE_MS in the sketch. */
@@ -42,8 +60,8 @@ export function isValidChannel(channel: number): boolean {
   return Number.isInteger(channel) && channel >= 1 && channel <= MAX_CHANNEL;
 }
 
-export function channelTerminal(channel: number): string | null {
-  return isValidChannel(channel) ? LOCK_CHANNEL_TERMINALS[channel - 1] : null;
+export function channelTerminals(channel: number): ChannelTerminals | null {
+  return isValidChannel(channel) ? (MACHINE_CHANNEL_TERMINALS[channel - 1] ?? null) : null;
 }
 
 export function pulsesProblem(pulses: PulseSettings): string | null {
@@ -82,6 +100,13 @@ export const statusResponse = z.object({
   channels: z.number().int().nonnegative(),
   /** Channels still sending the pulses of a start. */
   busy: z.array(z.number().int()),
+  /**
+   * Machines whose running signal is on, and for how many milliseconds. A sketch from before the
+   * running signals sends none.
+   */
+  running: z
+    .array(z.object({ channel: z.number().int(), ms: z.number().int().nonnegative() }))
+    .default([]),
   /** Challenge of the last start the ESP32 carried out; empty until the first one. */
   lastAccepted: z.string(),
 });

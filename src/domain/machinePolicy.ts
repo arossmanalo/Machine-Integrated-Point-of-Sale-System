@@ -24,6 +24,8 @@ export interface PolicyMachine {
   assignedOrderId: string | null;
   runOrderId: string | null;
   runEndsAt: number | null;
+  /** Real-time sync: when the machine's running signal came on, while it is on. */
+  signalSince: number | null;
 }
 
 /**
@@ -48,8 +50,17 @@ export function shopPriceFor(list: readonly ShopTopUpPrice[], minutes: number): 
 
 export const RUN_MINUTES_LIMITS = { min: 1, max: 240 } as const;
 
-export function isRunning(machine: Pick<PolicyMachine, 'runEndsAt'>, now: number): boolean {
-  return machine.runEndsAt !== null && machine.runEndsAt > now;
+/**
+ * In use while its running signal is on (real-time sync) or its countdown has time left. Before
+ * the signal comes on, the countdown keeps a just-started machine in use.
+ */
+export function isRunning(machine: Pick<PolicyMachine, 'runEndsAt' | 'signalSince'>, now: number): boolean {
+  return machine.signalSince !== null || (machine.runEndsAt !== null && machine.runEndsAt > now);
+}
+
+/** Whole minutes the machine has been running by its signal, rounded down. */
+export function minutesRunning(machine: Pick<PolicyMachine, 'signalSince'>, now: number): number {
+  return machine.signalSince === null ? 0 : Math.max(0, Math.floor((now - machine.signalSince) / 60000));
 }
 
 /** Whole minutes left, rounded up, so "1 min" shows until the run really ends. */
@@ -104,11 +115,13 @@ function orderProblem(order: PolicyOrder): MachineDecision | null {
 
 function runningProblem(machine: PolicyMachine, now: number): MachineDecision | null {
   if (!isRunning(machine, now)) return null;
-  const left = minutesLeft(machine, now);
+  const running = `${machine.name} is still running${machine.runOrderId ? ` ${machine.runOrderId}` : ''}`;
+  if (machine.signalSince !== null) {
+    return deny('machine-running', `${running} (for ${minutesRunning(machine, now)} min). Wait for it to finish.`);
+  }
   return deny(
     'machine-running',
-    `${machine.name} is still running${machine.runOrderId ? ` ${machine.runOrderId}` : ''} ` +
-      `(${left} min left). Wait for it, or tap Mark as done if it already finished.`,
+    `${running} (${minutesLeft(machine, now)} min left). Wait for it, or tap Mark as done if it already finished.`,
   );
 }
 

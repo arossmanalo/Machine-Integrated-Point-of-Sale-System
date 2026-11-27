@@ -3,6 +3,7 @@ import type {
   ControllerState,
   MachineController,
   PulseSettings,
+  RunningSignal,
   StartResult,
   Unsubscribe,
 } from './MachineController';
@@ -15,6 +16,7 @@ export class MockMachineController implements MachineController {
   readonly starts: { channel: number; pulses: PulseSettings }[] = [];
   private current: ControllerState = { status: 'disconnected', detail: null };
   private listeners = new Set<(state: ControllerState) => void>();
+  private signalListeners = new Set<(signals: readonly RunningSignal[]) => void>();
   private nextResult: StartResult | null = null;
 
   constructor(private readonly latencyMs = 150) {}
@@ -42,6 +44,18 @@ export class MockMachineController implements MachineController {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  onRunningSignals(listener: (signals: readonly RunningSignal[]) => void): Unsubscribe {
+    this.signalListeners.add(listener);
+    return () => {
+      this.signalListeners.delete(listener);
+    };
+  }
+
+  /** Report these running signals, as the ESP32 would on its next status check. */
+  reportRunning(signals: readonly RunningSignal[]): void {
+    this.signalListeners.forEach((listener) => listener(signals));
   }
 
   async start(hardwareChannel: number, pulses: PulseSettings): Promise<StartResult> {

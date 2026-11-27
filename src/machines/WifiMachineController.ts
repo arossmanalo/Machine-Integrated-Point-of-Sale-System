@@ -5,6 +5,7 @@ import type {
   ControllerState,
   MachineController,
   PulseSettings,
+  RunningSignal,
   StartResult,
   Unsubscribe,
 } from './MachineController';
@@ -43,11 +44,15 @@ export interface WifiConfig {
 
 export interface WifiTimings {
   requestTimeoutMs: number;
-  /** Wi-Fi gives no unplug event, so the controller asks the ESP32 how it is this often. */
+  /**
+   * Wi-Fi gives no unplug event, so the controller asks the ESP32 how it is this often. The same
+   * check reads the running signals, so real-time sync uses a shorter interval.
+   */
   healthIntervalMs: number;
 }
 
 export const DEFAULT_TIMINGS: WifiTimings = { requestTimeoutMs: 3000, healthIntervalMs: 20000 };
+export const REAL_TIME_TIMINGS: WifiTimings = { requestTimeoutMs: 3000, healthIntervalMs: 3000 };
 
 const DETAILS = {
   notConfigured: 'The machine connection is not set up yet. Contact support.',
@@ -96,6 +101,9 @@ export class WifiMachineController implements MachineController {
   readonly kind = 'wifi' as const;
   private current: ControllerState = { status: 'disconnected', detail: null };
   private listeners = new Set<(state: ControllerState) => void>();
+  private signalListeners = new Set<(signals: readonly RunningSignal[]) => void>();
+  /** A status check is on its way; the next tick waits, so an old reply never follows a newer one. */
+  private checking = false;
   private queue: Promise<unknown> = Promise.resolve();
   private connecting: Promise<ConnectResult> | null = null;
   private healthTimer: ReturnType<typeof setInterval> | null = null;
@@ -116,6 +124,13 @@ export class WifiMachineController implements MachineController {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+    };
+  }
+
+  onRunningSignals(listener: (signals: readonly RunningSignal[]) => void): Unsubscribe {
+    this.signalListeners.add(listener);
+    return () => {
+      this.signalListeners.delete(listener);
     };
   }
 
@@ -159,7 +174,7 @@ export class WifiMachineController implements MachineController {
   private startHealthChecks(): void {
     if (this.healthTimer !== null) return;
     this.healthTimer = setInterval(() => {
-      if (this.connecting === null) void this.checkStatus();
+      if (this.connecting === null && !this.checking) void this.checkStatus();
     }, this.timings.healthIntervalMs);
   }
 
@@ -186,6 +201,15 @@ export class WifiMachineController implements MachineController {
   }
 
   private async checkStatus(): Promise<ConnectResult> {
+    this.checking = true;
+    try {
+      return await this.readStatus();
+    } finally {
+      this.checking = false;
+    }
+  }
+
+  private async readStatus(): Promise<ConnectResult> {
     const reply = await this.getChecked('/status', statusResponse);
     if (reply.kind === 'unreachable') {
       this.setState({ status: 'disconnected', detail: DETAILS.unreachable });
@@ -196,6 +220,8 @@ export class WifiMachineController implements MachineController {
       return 'failed';
     }
     this.setState(this.keyRejected ? { status: 'error', detail: DETAILS.badKey } : { status: 'ready', detail: null });
+    const signals = reply.data.running.map(({ channel, ms }) => ({ channel, runningMs: ms }));
+    this.signalListeners.forEach((listener) => listener(signals));
     return 'connected';
   }
 

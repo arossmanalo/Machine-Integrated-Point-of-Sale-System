@@ -22,34 +22,29 @@ In **Manage › Machines**, turn on **Multi-cycle** to make staff pick a cycle b
 
 **Start pulses.** A start works like dropping coins in the machine's slot: it sends a number of pulses, each a set length, with a gap between them. Set all three per machine: **Number of pulses** (1 to 50), **Pulse length** and **Gap between** (20 to 5000 milliseconds; 1000 ms is one second). The defaults are 1 pulse of 500 ms with a 500 ms gap. To give other machines the same pulses, pick **All machines** or **Selected machines** under **Use these pulses on** before saving; their run time and top-up settings are left alone.
 
-The machine controller (ESP32-S3) has 23 channels. Wire each machine to the terminal for its channel; the app shows the terminal next to each machine. The terminal is the number printed on the board (IO14 is the terminal labelled 14).
+The machine controller (ESP32-S3) has 11 channels, one per machine. Each channel has two neighbouring terminals: the **start** terminal sends the coin pulses to the machine, and the **signal** terminal reads the machine's running signal. The app shows both next to each machine. The terminal is the number printed on the board (IO14 is the terminal labelled 14).
 
-| Channel | Terminal | Green strip (USB ports at the top) | ESP32-S3 pin |
+| Channel | Start (output) | Running signal (input) | Green strip (USB ports at the top) |
 |---|---|---|---|
-| 1 | IO14 | right strip | GPIO 14 |
-| 2 | IO13 | right strip | GPIO 13 |
-| 3 | IO12 | right strip | GPIO 12 |
-| 4 | IO11 | right strip | GPIO 11 |
-| 5 | IO10 | right strip | GPIO 10 |
-| 6 | IO9 | right strip | GPIO 9 |
-| 7 | IO8 | right strip | GPIO 8 |
-| 8 | IO18 | right strip | GPIO 18 |
-| 9 | IO17 | right strip | GPIO 17 |
-| 10 | IO16 | right strip | GPIO 16 |
-| 11 | IO15 | right strip | GPIO 15 |
-| 12 | IO7 | right strip | GPIO 7 |
-| 13 | IO6 | right strip | GPIO 6 |
-| 14 | IO5 | right strip | GPIO 5 |
-| 15 | IO4 | right strip | GPIO 4 |
-| 16 | IO21 | left strip | GPIO 21 |
-| 17 | IO47 | left strip | GPIO 47 |
-| 18 | IO39 | left strip | GPIO 39 |
-| 19 | IO40 | left strip | GPIO 40 |
-| 20 | IO41 | left strip | GPIO 41 |
-| 21 | IO42 | left strip | GPIO 42 |
-| 22 | IO2 | left strip | GPIO 2 |
-| 23 | IO1 | left strip | GPIO 1 |
+| 1 | IO14 | IO13 | right strip |
+| 2 | IO12 | IO11 | right strip |
+| 3 | IO10 | IO9 | right strip |
+| 4 | IO8 | IO18 | right strip |
+| 5 | IO17 | IO16 | right strip |
+| 6 | IO15 | IO7 | right strip |
+| 7 | IO6 | IO5 | right strip |
+| 8 | IO21 | IO47 | left strip |
+| 9 | IO39 | IO40 | left strip |
+| 10 | IO41 | IO42 | left strip |
+| 11 | IO2 | IO1 | left strip |
+| link light | IO4 | | right strip |
 
-Leave the other terminals free: some of them switch on briefly while the board starts, which could start a machine.
+**The running signal is 5 V; the board takes 3.3 V at most.** Never wire a machine's 5 V signal straight to a signal terminal: it can destroy the board. Put a voltage divider in between (machine signal → 10 kΩ → signal terminal → 20 kΩ → GND, with the machine's ground joined to the board's GND), or an optocoupler. With an optocoupler that pulls the terminal to GND while the machine runs, set `INPUT_ACTIVE_LEVEL` to `LOW` in the sketch. An unwired signal terminal reads as "not running".
+
+**Link light (IO4).** An LED on terminal 4 (through 220 Ω to GND) shows the controller's connection: **off** with no Wi-Fi, **blinking** on Wi-Fi when the app has not checked in for 45 seconds (the tablet app is closed or asleep, the address in the app is wrong, or Simulate machines is on), **steady** when it is on Wi-Fi and the app is checking in.
+
+Leave the other terminals free: some of them switch on briefly while the board starts, which could start a machine. Before wiring real machines, put an LED on each start terminal and on the link light, and power the board on and off a few times: any LED that blinks at power-on must not drive a machine.
+
+**Real-time sync.** In **Manage › Machines**, **Real-time sync** (the owner can switch it too) makes the app read each machine's running signal every 3 seconds instead of checking the controller every 20. After a start the machine counts down as before until its signal comes on; from then on the Machines tab shows how long it has been running, it stays in use for as long as the signal is on (even past its run time), and it is free as soon as the signal has been off for 10 seconds (`INPUT_OFF_MS` in the sketch, so a short dip between wash phases does not end the run). **Mark as done** is hidden while the signal is on. A machine whose signal comes on without a start from the app (coins, a Test start) shows as in use with **No order**. If the controller cannot be reached, the last reading stands. Switching real-time sync off puts a running machine back on a countdown from when its signal came on.
 
 **Testing the machines.** The **Machines** tab looks the same for the developer as for staff until the developer turns on **Testing mode** at the bottom of the tab. Testing mode shows **Test start** on each free machine, which sends its pulses without an order, sets no countdown and is logged as a test, and **Create test order**. A test order is Pay later, takes no supplies, and lets you try the staff flow: tap a free machine, pick the test order and start it. Tap **Void test order** when you are done so it does not stay in the open jobs. With the LED prototype, the LED stays off and blinks once per pulse.

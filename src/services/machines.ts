@@ -23,7 +23,7 @@ import {
   PULSE_LIMITS,
   pulsesProblem,
 } from '@/machines/protocol';
-import type { MachineController, PulseSettings, StartResult } from '@/machines/MachineController';
+import type { MachineController, PulseSettings, RunningSignal, StartResult } from '@/machines/MachineController';
 import {
   dryerTopUps,
   machineCycles,
@@ -352,7 +352,7 @@ function countedStarts(db: Db, now: number, orderId: string): { type: MachineTyp
 function washProgress(db: Db, now: number, orderId: string): { washedLoads: number; washingLoads: number } {
   const started = countedStarts(db, now, orderId).filter((start) => start.type === 'WASHER').length;
   const washing = db
-    .select({ runEndsAt: machines.runEndsAt })
+    .select({ runEndsAt: machines.runEndsAt, signalSince: machines.signalSince })
     .from(machines)
     .where(and(eq(machines.type, 'WASHER'), eq(machines.runOrderId, orderId)))
     .all()
@@ -839,7 +839,56 @@ export function prepaidTopUpForNextDryer(ctx: ServiceContext, orderId: string): 
 export function markRunDone(ctx: ServiceContext, machineId: number): void {
   const machine = requireMachine(ctx.db, machineId);
   if (!isRunning(machine, ctx.now())) return;
+  if (machine.signalSince !== null) {
+    throw new UserFacingError(`${machine.name} reports that it is still running. It frees itself when it stops.`);
+  }
   ctx.db.update(machines).set({ runEndsAt: ctx.now() }).where(eq(machines.id, machineId)).run();
+}
+
+/** Owner or developer: machines report when they really run, instead of counting down. */
+export function setRealTimeSync(ctx: ServiceContext, actor: Actor, on: boolean): void {
+  requireOwnerRights(actor);
+  ctx.db.transaction((tx) => {
+    setSetting(tx, 'realTimeSync', on);
+    if (on) return;
+    // A machine still running by its signal goes back to a countdown from when it started.
+    for (const machine of tx.select().from(machines).all()) {
+      if (machine.signalSince === null) continue;
+      const end = Math.max(machine.runEndsAt ?? 0, machine.signalSince + machine.runMinutes * 60000);
+      tx.update(machines).set({ signalSince: null, runEndsAt: end }).where(eq(machines.id, machine.id)).run();
+    }
+  });
+}
+
+/**
+ * Real-time sync: applies a fresh reading of the running signals (the machines whose signal is
+ * on). A signal coming on puts the machine in use from when it came on; going off ends the run
+ * then. A signal that comes on after the machine's countdown ran out (coins, a test start) is a
+ * run with no order. Returns whether anything changed, so screens only re-read when needed.
+ */
+export function applyRunningSignals(ctx: ServiceContext, signals: readonly RunningSignal[]): boolean {
+  if (!getSetting(ctx.db, 'realTimeSync')) return false;
+  const now = ctx.now();
+  const runningMs = new Map(signals.map((signal) => [signal.channel, signal.runningMs]));
+  return ctx.db.transaction((tx) => {
+    let changed = false;
+    for (const machine of tx.select().from(machines).all()) {
+      const ms = runningMs.get(machine.hardwareChannel);
+      if (ms !== undefined && machine.signalSince === null) {
+        const since = now - ms;
+        const ownRun = machine.runEndsAt !== null && machine.runEndsAt > since;
+        tx.update(machines)
+          .set({ signalSince: since, runOrderId: ownRun ? machine.runOrderId : null })
+          .where(eq(machines.id, machine.id))
+          .run();
+        changed = true;
+      } else if (ms === undefined && machine.signalSince !== null) {
+        tx.update(machines).set({ signalSince: null, runEndsAt: now }).where(eq(machines.id, machine.id)).run();
+        changed = true;
+      }
+    }
+    return changed;
+  });
 }
 
 export interface OverrideInput {

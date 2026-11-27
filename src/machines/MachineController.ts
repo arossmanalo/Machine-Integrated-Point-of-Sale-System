@@ -33,6 +33,12 @@ export interface ControllerState {
 
 export type Unsubscribe = () => void;
 
+/** A machine whose running signal is on, and for how long it has been on. */
+export interface RunningSignal {
+  channel: number;
+  runningMs: number;
+}
+
 export interface MachineController {
   readonly kind: 'mock' | 'wifi';
   connect(): Promise<ConnectResult>;
@@ -40,6 +46,11 @@ export interface MachineController {
   state(): ControllerState;
   onStateChange(listener: (state: ControllerState) => void): Unsubscribe;
   start(hardwareChannel: number, pulses: PulseSettings): Promise<StartResult>;
+  /**
+   * Called with every fresh reading of the machines' running signals: the machines whose signal
+   * is on. Not called while the controller cannot be reached, so silence never reads as "stopped".
+   */
+  onRunningSignals(listener: (signals: readonly RunningSignal[]) => void): Unsubscribe;
 }
 
 export const STATUS_LABELS: Record<ControllerStatus, string> = {

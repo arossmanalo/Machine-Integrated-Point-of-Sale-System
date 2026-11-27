@@ -6,6 +6,7 @@ import {
   isRunning,
   machineAllowance,
   minutesLeft,
+  minutesRunning,
   shopPriceFor,
   type AssignCheck,
 } from '../machinePolicy';
@@ -21,6 +22,7 @@ const washer = {
   assignedOrderId: null,
   runOrderId: null,
   runEndsAt: null,
+  signalSince: null,
 };
 
 function check(overrides: Partial<AssignCheck>): AssignCheck {
@@ -119,6 +121,17 @@ describe('machine runs', () => {
     expect(decideStart(running, openOrder, NOW)).toMatchObject({ allowed: false, reason: 'machine-running' });
     expect(isRunning(running, NOW + 90 * 1000)).toBe(false);
     expect(decideStart(running, openOrder, NOW + 90 * 1000)).toEqual({ allowed: true });
+  });
+
+  it('with a running signal, is in use while the signal is on, whatever the countdown says', () => {
+    const signalled = { ...washer, runOrderId: 'T0002', runEndsAt: NOW - MIN, signalSince: NOW - 12 * MIN - 5000 };
+    expect(isRunning(signalled, NOW)).toBe(true);
+    expect(minutesRunning(signalled, NOW)).toBe(12);
+    expect(decideStart({ ...signalled, assignedOrderId: 'T0001' }, openOrder, NOW)).toMatchObject({
+      allowed: false,
+      message: expect.stringContaining('for 12 min'),
+    });
+    expect(isRunning({ ...signalled, signalSince: null }, NOW)).toBe(false);
   });
 
   it('a top-up adds its minutes to the end of the run', () => {

@@ -10,7 +10,7 @@ import {
 } from '@/domain/machinePolicy';
 import { formatPeso } from '@/domain/money';
 import { STATUS_LABELS } from '@/machines/MachineController';
-import { channelTerminal, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress, pulsesProblem } from '@/machines/protocol';
+import { channelTerminals, MAX_CHANNEL, MIN_KEY_LENGTH, normalizeAddress, pulsesProblem } from '@/machines/protocol';
 import { changeOwnerPin } from '@/services/auth';
 import {
   addMachine,
@@ -19,6 +19,7 @@ import {
   RESULT_MESSAGES,
   saveLockController,
   setMultiCycle,
+  setRealTimeSync,
   setReceiptScanRequired,
   setSimulateMachines,
   testStart,
@@ -35,7 +36,7 @@ import { Badge, Choice, Dialog, Toggle } from '@/ui/controls';
 import { EmptyState, ListRow, Notice, Panel, Row, Screen, Section } from '@/ui/layout';
 import { AddCycleDialog, CycleTable, draftsProblem, toDraft, toEdits, type CycleDraft } from '@/ui/machines/CycleSettings';
 import { useCyclePicker } from '@/ui/machines/MachineDialogs';
-import { MachineOverview } from '@/ui/machines/MachineOverview';
+import { MachineOverview, REAL_TIME_SYNC_TEXT } from '@/ui/machines/MachineOverview';
 import {
   AddTopUpDialog,
   TopUpTable,
@@ -47,6 +48,20 @@ import {
 import { ManageScreen } from '@/ui/ManagerGate';
 import { Text } from '@/ui/Text';
 import { TextField } from '@/ui/TextField';
+
+function terminalsLabel(channel: number): string {
+  const terminals = channelTerminals(channel);
+  return terminals ? `${terminals.start}, signal ${terminals.signal}` : 'not on the board';
+}
+
+function wiringHint(channel: number): string {
+  const terminals = channelTerminals(channel);
+  if (!terminals) return `A number from 1 to ${MAX_CHANNEL}.`;
+  return (
+    `Wire the machine's coin input to terminal ${terminals.start} and its running signal to ` +
+    `${terminals.signal} on the machine controller.`
+  );
+}
 
 function pulseSummary(machine: MachineRow): string {
   return `${machine.pulseCount} × ${machine.pulseOnMs} ms on, ${machine.pulseOffMs} ms off`;
@@ -103,6 +118,7 @@ function MachineSetup() {
   const simulate = useData((c) => getSetting(c.db, 'simulateMachines'));
   const receiptScan = useData((c) => getSetting(c.db, 'requireReceiptScan'));
   const multiCycle = useData((c) => getSetting(c.db, 'multiCycle'));
+  const realTimeSync = useData((c) => getSetting(c.db, 'realTimeSync'));
   const cyclesFor = useCyclePicker();
   const allTopUps = useData(listTopUps);
   const topUpsFor = (machine: MachineRow) => allTopUps.filter((topUp) => topUp.machineId === machine.id);
@@ -187,6 +203,15 @@ function MachineSetup() {
           value={receiptScan}
           onChange={(value) => void action.run((c) => setReceiptScanRequired(c, actor, value))}
         />
+        <Toggle
+          label="Real-time sync"
+          description={`${REAL_TIME_SYNC_TEXT} Needs each machine's running signal wired to its channel's signal terminal; the app checks every 3 seconds instead of every 20.`}
+          value={realTimeSync}
+          onChange={async (value) => {
+            const result = await action.run((c) => setRealTimeSync(c, actor, value));
+            if (result.ok) reloadLockController();
+          }}
+        />
       </Section>
 
       <Section
@@ -213,7 +238,7 @@ function MachineSetup() {
                 key={machine.id}
                 title={machine.name}
                 subtitle={`${MACHINE_TYPE_LABELS[machine.type]} · channel ${machine.hardwareChannel} (${
-                  channelTerminal(machine.hardwareChannel) ?? 'not on the board'
+                  terminalsLabel(machine.hardwareChannel)
                 }) · ${machineSummary(machine, cyclesFor(machine), topUpsFor(machine))}`}
                 right={
                   <Row>
@@ -356,11 +381,7 @@ function MachineDialog({
         value={channelText}
         onChangeText={(text) => setChannelText(text.replace(/\D/g, ''))}
         keyboardType="number-pad"
-        hint={
-          channelTerminal(Number(channelText)) === null
-            ? `A number from 1 to ${MAX_CHANNEL}.`
-            : `Wire this machine to terminal ${channelTerminal(Number(channelText))} on the machine controller.`
-        }
+        hint={wiringHint(Number(channelText))}
       />
       <Text variant="label">Start pulses</Text>
       <Text tone="muted">

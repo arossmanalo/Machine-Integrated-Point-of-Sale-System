@@ -146,7 +146,10 @@ export const machines = sqliteTable('machines', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
   type: text('type', { enum: ['WASHER', 'DRYER'] }).notNull(),
-  /** Which machine controller channel (1 to 23, see LOCK_CHANNEL_TERMINALS) starts this machine. */
+  /**
+   * Which machine controller channel (1 to 11, see MACHINE_CHANNEL_TERMINALS) starts this machine
+   * and carries its running signal.
+   */
   hardwareChannel: integer('hardware_channel').notNull(),
   enabled: bool('enabled').notNull().default(true),
   sortOrder: integer('sort_order').notNull().default(0),
@@ -193,6 +196,11 @@ export const machines = sqliteTable('machines', {
   runOrderId: text('run_order_id').references(() => orders.id),
   /** When the latest run ends. The machine is in use while this is in the future. */
   runEndsAt: integer('run_ends_at'),
+  /**
+   * Real-time sync: when the machine's running signal came on, while it is on (app clock).
+   * Null while the signal is off, or with real-time sync off. The machine is in use while set.
+   */
+  signalSince: integer('signal_since'),
 });
 
 /** Append-only. Nothing in the app edits or deletes these rows except the result update. */

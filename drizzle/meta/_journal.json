@@ -92,6 +92,13 @@
       "when": 1795528245808,
       "tag": "0012_dryer_top_up_types",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1795756234059,
+      "tag": "0013_machine_running_signal",
+      "breakpoints": true
     }
   ]
 }

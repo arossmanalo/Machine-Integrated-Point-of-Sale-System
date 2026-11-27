@@ -30,7 +30,7 @@ import { DEVICE_ONLY_SETTINGS } from './settings';
 
 export const BACKUP_FORMAT = 'laundry-pos-backup';
 /** 2: machine run timers, dryer top-ups and the TOP_UP log kind. */
-export const BACKUP_VERSION = 11;
+export const BACKUP_VERSION = 12;
 
 function readAll(db: Db) {
   return {
@@ -196,6 +196,8 @@ const tableSchemas = {
     assignedCycle: maybeText.default(null),
     // Backups before version 9 named the waiting cycle (assignedCycle) instead of pointing at it.
     assignedCycleId: maybeInt.default(null),
+    // Backups before version 12 had no running signals.
+    signalSince: maybeInt.default(null),
   }).transform((machine) => ({
     ...machine,
     delicatesPulses: machine.delicatesPulses ?? machine.pulseCount,
