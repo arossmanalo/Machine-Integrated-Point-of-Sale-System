@@ -17,6 +17,7 @@ import {
   markRunDone,
   overrideStart,
   readReceiptCode,
+  removeMachine,
   applyRunningSignals,
   saveLockController,
   saveOwnerMachineChanges,
@@ -1195,5 +1196,32 @@ describe('real-time sync', () => {
     applyRunningSignals(ctx, [{ channel: 3, runningMs: 5 * MIN }]);
     setRealTimeSync(ctx, owner, false);
     expect(machineById(washers[2])).toMatchObject({ signalSince: null, runEndsAt: ctx.now() + 25 * MIN });
+  });
+});
+
+describe('removing a machine', () => {
+  it('removes it with its cycles and top-ups, frees its channel and keeps its log', async () => {
+    const { ctx, owner, developer, controller, order, dryers, washers, machineById, log } = await setup();
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
+    expect(() => removeMachine(ctx, owner, dryers[2])).toThrow();
+    removeMachine(ctx, developer, dryers[2]);
+    expect(machineById(dryers[2])).toBeUndefined();
+    expect(listTopUps(ctx).some((topUp) => topUp.machineId === dryers[2])).toBe(false);
+    expect(addMachine(ctx, developer, machine('Dryer 4', 'DRYER', 6))).toBeGreaterThan(0);
+
+    ctx.advance(31 * MIN);
+    expect(listCycles(ctx).some((cycle) => cycle.machineId === washers[0])).toBe(true);
+    removeMachine(ctx, developer, washers[0]);
+    expect(listCycles(ctx).some((cycle) => cycle.machineId === washers[0])).toBe(false);
+    expect(log().some((row) => row.machineName === 'Washer 1' && row.orderId === order.id)).toBe(true);
+  });
+
+  it('refuses while the machine runs or an order waits on it', async () => {
+    const { ctx, developer, controller, order, washers } = await setup();
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
+    expect(() => removeMachine(ctx, developer, washers[0])).toThrow('still running');
+    controller.failNextStart('failed');
+    await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[1], receiptOf(order));
+    expect(() => removeMachine(ctx, developer, washers[1])).toThrow('waiting on Washer 2');
   });
 });

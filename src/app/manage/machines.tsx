@@ -16,6 +16,7 @@ import {
   addMachine,
   applyPulsesToMachines,
   listMachines,
+  removeMachine,
   RESULT_MESSAGES,
   saveLockController,
   setMultiCycle,
@@ -312,6 +313,7 @@ function MachineDialog({
   const [topUpEdits, setTopUpEdits] = useState<Record<number, TopUpDraft>>({});
   const topUpDrafts = storedTopUps.map((topUp) => topUpEdits[topUp.id] ?? toTopUpDraft(topUp));
   const [addingTopUp, setAddingTopUp] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const pulses = { count: Number(countText), onMs: Number(onText), offMs: Number(offText) };
   const pulseError = pulsesProblem(pulses);
   const runMinutes = Number(runText);
@@ -362,6 +364,11 @@ function MachineDialog({
     if (result.ok) onClose();
   }
 
+  async function remove(id: number) {
+    const result = await action.run((c) => removeMachine(c, actor, id));
+    if (result.ok) onClose();
+  }
+
   return (
     <Dialog
       visible
@@ -369,8 +376,16 @@ function MachineDialog({
       onClose={onClose}
       actions={
         <>
+          {machine &&
+            (confirmRemove ? (
+              <Button label="Yes, remove" kind="danger" busy={action.busy} onPress={() => void remove(machine.id)} />
+            ) : (
+              <Button label="Remove machine" kind="danger" onPress={() => setConfirmRemove(true)} />
+            ))}
           <Button label="Cancel" kind="secondary" onPress={onClose} />
-          <Button label={machine ? 'Save changes' : 'Add machine'} onPress={save} busy={action.busy} disabled={invalid} />
+          {!confirmRemove && (
+            <Button label={machine ? 'Save changes' : 'Add machine'} onPress={save} busy={action.busy} disabled={invalid} />
+          )}
         </>
       }
     >
@@ -474,6 +489,12 @@ function MachineDialog({
         value={enabled}
         onChange={setEnabled}
       />
+      {confirmRemove && machine && (
+        <Notice tone="danger">
+          {`${machine.name} and its cycles and top-ups will be removed, and channel ${machine.hardwareChannel} will be free. ` +
+            'Its past runs stay in the machine log and reports.'}
+        </Notice>
+      )}
       {action.error && <Notice tone="danger">{action.error}</Notice>}
       {addingTopUp && machine && (
         <AddTopUpDialog

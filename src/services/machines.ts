@@ -151,6 +151,29 @@ export function updateMachine(ctx: ServiceContext, actor: Actor, id: number, inp
   ctx.db.update(machines).set({ ...values, ...release }).where(eq(machines.id, id)).run();
 }
 
+/**
+ * Developer only: removes a machine with its cycles and top-ups, freeing its channel. Its starts
+ * stay in the machine log and reports under its name. Refused while it runs or an order waits on
+ * it, so no order loses a machine it was given.
+ */
+export function removeMachine(ctx: ServiceContext, actor: Actor, id: number): void {
+  requireDeveloper(actor);
+  ctx.db.transaction((tx) => {
+    const machine = requireMachine(tx, id);
+    if (isRunning(machine, ctx.now())) {
+      throw new UserFacingError(`${machine.name} is still running. Remove it once it has finished.`);
+    }
+    if (machine.assignedOrderId !== null) {
+      throw new UserFacingError(
+        `${machine.assignedOrderId} is waiting on ${machine.name}. Tap Remove on the Machines tab first.`,
+      );
+    }
+    tx.delete(machineCycles).where(eq(machineCycles.machineId, id)).run();
+    tx.delete(dryerTopUps).where(eq(dryerTopUps.machineId, id)).run();
+    tx.delete(machines).where(eq(machines.id, id)).run();
+  });
+}
+
 /** What the owner may change on a machine. Timings, wiring and the cycles themselves are not here. */
 export interface OwnerMachineChanges {
   enabled: boolean;
