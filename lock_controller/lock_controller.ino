@@ -169,6 +169,24 @@ void loop() {
 
   readInputs(now);
   showLink(now);
+  if (Serial.available() > 0) printState();
+}
+
+// Any character sent over serial prints the Wi-Fi state and every output's level, to check a
+// board that does not appear on the network.
+void printState() {
+  while (Serial.available() > 0) Serial.read();
+  Serial.print("STATE wifi=");
+  Serial.print(WiFi.status());
+  Serial.print(" ip=");
+  Serial.print(WiFi.localIP());
+  Serial.print(" rssi=");
+  Serial.print(WiFi.RSSI());
+  Serial.print(" link=");
+  Serial.print(digitalRead(LINK_LED_PIN));
+  Serial.print(" outputs=");
+  for (int i = 0; i < NUM_CHANNELS; i++) Serial.print(digitalRead(OUTPUT_PINS[i]));
+  Serial.println();
 }
 
 void readInputs(unsigned long now) {
