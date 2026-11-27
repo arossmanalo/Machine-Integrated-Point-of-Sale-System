@@ -1144,11 +1144,13 @@ describe('multi-cycle', () => {
 
 describe('real-time sync', () => {
   it('only the owner or developer switches it, and signals count only while it is on', async () => {
-    const { ctx, owner, washers, machineById } = await setup();
+    const { ctx, owner, developer, controller, washers, machineById } = await setup();
     expect(() => setRealTimeSync(ctx, testEmployee, true)).toThrow();
+    await testStart(ctx, controller, developer, washers[0]);
     expect(applyRunningSignals(ctx, [{ channel: 1, runningMs: 0 }])).toBe(false);
     expect(machineById(washers[0])?.signalSince).toBeNull();
     setRealTimeSync(ctx, owner, true);
+    await testStart(ctx, controller, developer, washers[0]);
     expect(getSetting(ctx.db, 'realTimeSync')).toBe(true);
     expect(applyRunningSignals(ctx, [{ channel: 1, runningMs: 0 }])).toBe(true);
     expect(applyRunningSignals(ctx, [{ channel: 1, runningMs: 3000 }])).toBe(false);
@@ -1232,19 +1234,26 @@ describe('real-time sync', () => {
     expect(machineById(washers[2])).toMatchObject({ runOrderId: null, awaitingStartAt: null, signalSince: ctx.now() });
   });
 
-  it('shows a machine running without coins from the app as in use with no order', async () => {
+  it('ignores a signal on a machine the app sent no coins to', async () => {
     const { ctx, owner, controller, order, washers, machineById } = await setup();
     setRealTimeSync(ctx, owner, true);
-    applyRunningSignals(ctx, [{ channel: 2, runningMs: 1000 }]);
-    expect(machineById(washers[1])).toMatchObject({ runOrderId: null, signalSince: ctx.now() - 1000 });
+    expect(applyRunningSignals(ctx, [{ channel: 2, runningMs: 1000 }])).toBe(false);
+    expect(machineById(washers[1])).toMatchObject({ runOrderId: null, signalSince: null });
+    // Coins sent while the signal is already on: it counts as started from the coins.
     await expect(
       startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[1], receiptOf(order)),
-    ).rejects.toThrow('still running');
+    ).resolves.toBe('acked');
+    const sent = ctx.now();
+    ctx.advance(5000);
+    applyRunningSignals(ctx, [{ channel: 2, runningMs: 60000 }]);
+    expect(machineById(washers[1])).toMatchObject({ runOrderId: order.id, signalSince: sent, awaitingStartAt: null });
   });
 
   it('switching it off goes back to a countdown from when the machine started or got its coins', async () => {
-    const { ctx, owner, controller, order, washers, machineById } = await setup();
+    const { ctx, owner, developer, controller, order, washers, machineById } = await setup();
     setRealTimeSync(ctx, owner, true);
+    await testStart(ctx, controller, developer, washers[2]);
+    ctx.advance(5 * MIN);
     applyRunningSignals(ctx, [{ channel: 3, runningMs: 5 * MIN }]);
     await startOrderOnMachine(ctx, controller, testEmployee, order.id, washers[0], receiptOf(order));
     ctx.advance(MIN);

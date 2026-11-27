@@ -31,7 +31,7 @@ The washers and dryers only start for an order, and only with that order's recei
 - **For testing only:** until the receipt printer arrives, one test QR code (`docs/test-receipt-qr.png`) works for every open order. On the Machines tab you then pick the order from the list. Anyone holding a copy of it can start machines for any order, so it is removed before the shop relies on receipts.
 
 - While a machine runs, the **Machines** tab shows **In use** with a countdown and the order. Nobody can start it again until the countdown ends. If it finished early, tap **Mark as done**.
-- With **Real-time sync** on, the machine tells the app when it is really running: the Machines tab then shows how long it has been running instead of a countdown, and the machine is free as soon as it stops. A machine running with **No order** was started without the app.
+- With **Real-time sync** on, the machine tells the app when it is really running: the Machines tab then shows how long it has been running instead of a countdown, and the machine is free as soon as it stops.
 - With **Real-time sync** on, **Run machine** sends the coins and the app says **Press Start on Washer 1**: choose the program on the machine and press its Start button. The app sees the machine start by itself and shows how long it has been running. If the machine will not be used after all, tap **Mark as done**.
 - If a start did not go out (offline, busy), the machine shows **Did not start**. Tap **Run machine** to try again (no new scan needed), or **Remove** to take the order off.
 - If the order has used all its washers or dryers, tapping a machine for it opens **Owner override** instead: the owner enters the PIN, or you scan the order's override receipt (see Overrides).

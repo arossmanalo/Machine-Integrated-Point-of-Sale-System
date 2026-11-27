@@ -916,8 +916,8 @@ export function startCheck(ctx: ServiceContext, machineId: number): StartCheck {
 /**
  * Real-time sync: applies a fresh reading of the running signals (the machines whose signal is
  * on). A signal coming on means staff pressed Start: the machine runs from then, for the order
- * whose coins it was waiting with. A signal with no coins from the app (coins in the slot) is a
- * run with no order. A signal going off ends the run and frees the machine. Returns whether
+ * whose coins it was waiting with. A signal on a machine the app sent no coins to is ignored:
+ * only starts from the app count. A signal going off ends the run and frees the machine. Returns whether
  * anything changed, so screens only re-read when needed.
  */
 export function applyRunningSignals(ctx: ServiceContext, signals: readonly RunningSignal[]): boolean {
@@ -929,10 +929,14 @@ export function applyRunningSignals(ctx: ServiceContext, signals: readonly Runni
     for (const machine of tx.select().from(machines).all()) {
       const ms = runningMs.get(machine.hardwareChannel);
       if (ms !== undefined && machine.signalSince === null) {
-        const since = now - ms;
-        const ownRun = machine.awaitingStartAt !== null || (machine.runEndsAt !== null && machine.runEndsAt > since);
+        const signalFrom = now - ms;
+        const counting = machine.runEndsAt !== null && machine.runEndsAt > signalFrom;
+        // Only a start from the app counts: a signal on a machine without its coins is ignored.
+        if (machine.awaitingStartAt === null && !counting) continue;
+        // A signal already on before the coins went out counts from when the coins were sent.
+        const since = Math.max(signalFrom, machine.awaitingStartAt ?? signalFrom);
         tx.update(machines)
-          .set({ signalSince: since, awaitingStartAt: null, runOrderId: ownRun ? machine.runOrderId : null })
+          .set({ signalSince: since, awaitingStartAt: null })
           .where(eq(machines.id, machine.id))
           .run();
         changed = true;
