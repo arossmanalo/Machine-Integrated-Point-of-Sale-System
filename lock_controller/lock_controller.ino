@@ -114,6 +114,11 @@ void setup() {
     Serial.print("READY ");
     Serial.println(WiFi.localIP());
   }, ARDUINO_EVENT_WIFI_STA_GOT_IP);
+  // Why the Wi-Fi dropped or never joined, e.g. 201 = network not found, 15 or 204 = wrong password.
+  WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
+    Serial.print("WIFI-LOST ");
+    Serial.println(info.wifi_sta_disconnected.reason);
+  }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   WiFi.mode(WIFI_STA);
 #ifdef STATIC_IP
   // A fixed address, so the one saved in the app stays right after the router restarts.
